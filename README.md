@@ -110,6 +110,14 @@ All configuration is via environment variables (or a `.env` file):
 | `DATA_DIR` | `/data` | Directory where the SQLite database, SSH key files, and known_hosts are stored. Mount this as a Docker volume. |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated list of allowed CORS origins. Leave unset when running behind Nginx (same-origin). Set to your frontend URL (e.g. `https://cloudshell.example.com`) when running the backend standalone. |
 
+### Secret key generation
+
+To generate a secure secret key, run the following command:
+
+```bash
+openssl rand -hex 32
+```
+
 ## Development Setup
 
 ### Prerequisites
