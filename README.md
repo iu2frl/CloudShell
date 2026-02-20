@@ -2,7 +2,7 @@
 
 > A self-hosted, Docker-deployable web SSH gateway — open your SSH sessions right in the browser, no client software required.
 
-Inspired by [ShellNGN](https://shellngn.com/), built to be free, open, and self-hosted.
+I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free, open, and self-hosted.
 
 ---
 
@@ -20,8 +20,6 @@ Inspired by [ShellNGN](https://shellngn.com/), built to be free, open, and self-
 - **Error boundary** — graceful recovery screen for unexpected frontend errors
 - **Docker Compose deploy** — single command to run in production
 
----
-
 ## 🚀 Quick Start (Docker Compose)
 
 ```bash
@@ -37,8 +35,6 @@ Open **<http://localhost:8080>** and log in with your configured credentials.
 > [!IMPORTANT]
 > Put CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS. SSH credentials are encrypted at rest but the web traffic should be HTTPS.
 
----
-
 ## ⚙️ Configuration
 
 All configuration is via environment variables (or a `.env` file):
@@ -50,8 +46,6 @@ All configuration is via environment variables (or a `.env` file):
 | `ADMIN_PASSWORD` | `changeme` | Initial login password. After first login you can change it via the UI. |
 | `TOKEN_TTL_HOURS` | `8` | JWT lifetime in hours. The frontend silently refreshes 10 minutes before expiry. |
 | `DATA_DIR` | `/data` | Directory where the SQLite database, SSH key files, and known_hosts are stored. Mount this as a Docker volume. |
-
----
 
 ## 🛠️ Development Setup
 
@@ -90,8 +84,6 @@ Open **<http://localhost:5173>**
 ```bash
 cd frontend && npm run build
 ```
-
----
 
 ## 🐳 Docker
 
@@ -137,8 +129,6 @@ make dev      # start backend + frontend dev servers locally (no Docker)
 make test     # run backend integration tests locally
 ```
 
----
-
 ## 🏗️ Architecture
 
 ```text
@@ -165,8 +155,6 @@ Browser (xterm.js)
 - **Credentials** are encrypted with AES-256-GCM; the key is derived from `SECRET_KEY` via PBKDF2-HMAC-SHA256 (260 000 iterations)
 - **SSH private keys** are stored as encrypted `.enc` files under `DATA_DIR/keys/`, never in plaintext
 - **known_hosts** is persisted at `DATA_DIR/known_hosts` with accept-new policy
-
----
 
 ## 📁 Project Structure
 
@@ -210,8 +198,6 @@ CloudShell/
 └── SPECS.md
 ```
 
----
-
 ## 🔐 Security Notes
 
 | Concern | Mitigation |
@@ -222,22 +208,6 @@ CloudShell/
 | Token in WebSocket | Passed as `?token=` query param on WS upgrade; use HTTPS/WSS in production |
 | Host key verification | `known_hosts` file persisted in `DATA_DIR`; accept-new policy |
 | Admin password | bcrypt-hashed in DB after first change; env-var fallback on first boot only |
-
----
-
-## 📋 Milestones
-
-| Milestone | Status | Scope |
-| --- | --- | --- |
-| M1 | ✅ | Project scaffold, Docker, FastAPI, React + xterm.js |
-| M2 | ✅ | Device CRUD API + UI, SQLite persistence, CI |
-| M3 | ✅ | WebSocket SSH proxy, binary frames, resize, reconnect |
-| M4 | ✅ | SSH key auth, AES-256-GCM credential encryption |
-| M5 | ✅ | JWT auth, session expiry, token refresh, change-password |
-| M6 | ✅ | UI polish, toasts, error boundary, README |
-| M7 | ✅ | Docker Compose single-command deploy, public release |
-
----
 
 ## ✨ Vibecoded?
 
