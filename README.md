@@ -111,12 +111,16 @@ docker compose up -d
 
 Open **<http://localhost:8080>** and log in with your configured credentials.
 
-> [!IMPORTANT]
-> Put CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS. SSH credentials are encrypted at rest but web traffic should be HTTPS.
-
-Prebuilt images are available on GHCR - see **[docs/configuration.md](docs/configuration.md)** for a ready-to-use `docker-compose.yml` snippet and all environment variable options.
-
 ## Security
+
+> [!IMPORTANT]
+> **I discourage publishing CloudShell publicly, make it accessible only within a secure network.**
+>
+> Even if strong authentication is used, always assume that the environment may be compromised.
+>
+> - Protect the application protecting it with a firewall and any other security measures.
+> - Regularly rotate secrets and review access logs.
+> - It is advised to put CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS. SSH credentials are encrypted on disk but web traffic should be HTTPS.
 
 CloudShell is designed with defense-in-depth for the sensitive data it handles:
 
@@ -145,9 +149,6 @@ CloudShell is designed with defense-in-depth for the sensitive data it handles:
 
 For more details on configuration and recommended hardening, see
 [docs/configuration.md](docs/configuration.md).
-
-> [!IMPORTANT]
-> Even if strong authentication is used, always assume that the environment may be compromised. Protect the application protecting it with a firewall and any other security measures. **I discourage publishing it publicly.** Regularly rotate secrets and review access logs.
 
 ## Documentation
 
