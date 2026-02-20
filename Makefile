@@ -1,4 +1,6 @@
-.PHONY: help dev build build-backend build-frontend up down logs restart shell test
+.PHONY: h  @echo "  make build-backend    Build the backend image only"
+	@echo "  make build-frontend   Build the frontend image only"
+	@echo "  make smoke-test       Run the two-container Docker smoke test locally"p dev build build-backend build-frontend smoke-test up down logs restart shell test
 
 COMPOSE = docker compose
 
@@ -36,6 +38,9 @@ build-backend:
 
 build-frontend:
 	docker build -f Dockerfile.frontend -t cloudshell-frontend .
+
+smoke-test:
+	bash scripts/smoke-test-docker.sh cloudshell-backend cloudshell-frontend
 
 up:
 	@if [ ! -f .env ]; then \
