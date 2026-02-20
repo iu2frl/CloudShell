@@ -46,6 +46,7 @@ All configuration is via environment variables (or a `.env` file):
 | `ADMIN_PASSWORD` | `changeme` | Initial login password. After first login you can change it via the UI. |
 | `TOKEN_TTL_HOURS` | `8` | JWT lifetime in hours. The frontend silently refreshes 10 minutes before expiry. |
 | `DATA_DIR` | `/data` | Directory where the SQLite database, SSH key files, and known_hosts are stored. Mount this as a Docker volume. |
+| `CORS_ORIGINS` | *(unset)* | Comma-separated list of allowed CORS origins. Leave unset when running behind Nginx (same-origin). Set to your frontend URL (e.g. `https://cloudshell.example.com`) when running the backend standalone. |
 
 ## 🛠️ Development Setup
 
@@ -79,30 +80,21 @@ npm run dev   # Vite dev server on :5173, proxies /api → :8000
 
 Open **<http://localhost:5173>**
 
-### Build (production bundle copied into `backend/static/`)
+### Build (production bundle)
 
 ```bash
-cd frontend && npm run build
+cd frontend && npm run build   # output goes into the Nginx image via Dockerfile.frontend
 ```
 
 ## 🐳 Docker
 
-### Build image
+### Build both images
 
 ```bash
-docker build -t cloudshell .
-```
-
-### Run standalone
-
-```bash
-docker run -d \
-  -p 8080:8000 \
-  -v cloudshell_data:/data \
-  -e SECRET_KEY=changeme \
-  -e ADMIN_USER=admin \
-  -e ADMIN_PASSWORD=changeme \
-  cloudshell
+make build
+# or individually:
+docker build -f Dockerfile.backend  -t cloudshell-backend  .
+docker build -f Dockerfile.frontend -t cloudshell-frontend .
 ```
 
 ### Docker Compose
@@ -119,24 +111,36 @@ docker compose down -v        # stop + delete data volume
 A `Makefile` is included for common tasks:
 
 ```bash
-make up       # build image + start stack (copies .env.example if no .env exists)
-make down     # stop the stack
-make logs     # tail container logs
-make restart  # restart the container
-make shell    # open a shell inside the running container
-make build    # build the Docker image only
-make dev      # start backend + frontend dev servers locally (no Docker)
-make test     # run backend integration tests locally
+make build            # build both Docker images
+make build-backend    # build the backend image only
+make build-frontend   # build the frontend image only
+make smoke-test       # run the two-container Docker smoke test locally
+make up               # build images + start stack (copies .env.example if no .env exists)
+make down             # stop the stack
+make logs             # tail container logs
+make restart          # restart all containers
+make shell            # open a shell inside the running backend container
+make dev              # start backend + frontend dev servers locally (no Docker)
+make test             # run backend integration tests locally
 ```
 
 ## 🏗️ Architecture
 
 ```text
 Browser (xterm.js)
-      │  HTTP REST + WebSocket
+      │  HTTP REST + WebSocket (:8080)
       ▼
 ┌─────────────────────────────────────────┐
-│          FastAPI Backend (:8000)         │
+│         Nginx Frontend (:80)            │
+│                                         │
+│  /              React SPA (static)      │
+│  /api/*         proxy → backend:8000    │
+│  /api/terminal/ws/*  WebSocket proxy    │
+└──────────────────┬──────────────────────┘
+                   │  HTTP (internal Docker network)
+                   ▼
+┌─────────────────────────────────────────┐
+│          FastAPI Backend (:8000)        │
 │                                         │
 │  /api/auth/*      JWT login/logout      │
 │  /api/devices/*   Device CRUD           │
@@ -150,7 +154,7 @@ Browser (xterm.js)
          Remote SSH Target(s)
 ```
 
-- The **browser** only speaks HTTP/WebSocket to CloudShell — SSH traffic never leaves the server
+- The **browser** only speaks HTTP/WebSocket to the Nginx container — the backend is never exposed to the host
 - **WebSocket frames** are binary; resize events are JSON control frames `{"type":"resize","cols":N,"rows":N}`
 - **Credentials** are encrypted with AES-256-GCM; the key is derived from `SECRET_KEY` via PBKDF2-HMAC-SHA256 (260 000 iterations)
 - **SSH private keys** are stored as encrypted `.enc` files under `DATA_DIR/keys/`, never in plaintext
@@ -191,7 +195,15 @@ CloudShell/
 │           ├── Login.tsx
 │           └── Dashboard.tsx         # Multi-tab layout
 │
-├── Dockerfile                # Multi-stage build (node → python)
+├── nginx/
+│   └── default.conf          # Nginx config: SPA serving, /api/ proxy, WebSocket proxy
+│
+├── scripts/
+│   └── smoke-test-docker.sh  # Two-container Docker smoke test
+│
+├── Dockerfile.backend        # FastAPI backend image
+├── Dockerfile.frontend       # Node build → nginx:alpine image
+├── Dockerfile.monolith       # Legacy monolith build (not used in production)
 ├── docker-compose.yml
 ├── requirements.txt
 ├── .env.example
