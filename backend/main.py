@@ -13,9 +13,9 @@ from backend.routers import auth_router, devices_router, keys_router, terminal_r
 
 VERSION = "1.0.0"
 
-# Configure application logging so our log.info/debug calls are visible
+# Configure application logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(levelname)s: [%(name)s] %(message)s",
 )
 

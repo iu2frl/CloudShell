@@ -212,8 +212,8 @@ async def stream_session(session_id: str, websocket: WebSocket) -> None:
                     except (json.JSONDecodeError, KeyError, ValueError):
                         pass  # Not a control frame — fall through and send as-is
                 process.stdin.write(message)
-        except Exception as exc:  # noqa: BLE001
-            log.debug("ws_to_ssh ended for %s: %s", session_id[:8], exc)
+        except Exception:  # noqa: BLE001
+            log.debug("ws_to_ssh ended for %s", session_id[:8])
 
     async def ssh_to_ws() -> None:
         """Read from SSH stdout, write binary frames to WebSocket."""
@@ -227,8 +227,8 @@ async def stream_session(session_id: str, websocket: WebSocket) -> None:
                 if isinstance(chunk, str):
                     chunk = chunk.encode()
                 await websocket.send_bytes(chunk)
-        except Exception as exc:  # noqa: BLE001
-            log.debug("ssh_to_ws ended for %s: %s", session_id[:8], exc)
+        except Exception:  # noqa: BLE001
+            log.debug("ssh_to_ws ended for %s", session_id[:8])
 
     log.info("Streaming session %s", session_id[:8])
     _, pending = await asyncio.wait(
