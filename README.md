@@ -2,6 +2,13 @@
 
 > A self-hosted, Docker-deployable web SSH gateway — open your SSH sessions right in the browser, no client software required.
 
+[![License: GPL v3](https://img.shields.io/badge/license-GPL--v3-blue.svg)](https://github.com/iu2frl/CloudShell/blob/main/LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-yellow.svg)](https://www.python.org/)
+[![Node 18+](https://img.shields.io/badge/node-18%2B-green.svg)](https://nodejs.org/)
+[![React 18](https://img.shields.io/badge/react-18-61DAFB.svg?logo=react&logoColor=white)](https://react.dev/)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![CI](https://github.com/iu2frl/CloudShell/actions/workflows/api-tests.yml/badge.svg)](https://github.com/iu2frl/CloudShell/actions/workflows/api-tests.yml)
+
 I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free, open, and self-hosted.
 
 ---
