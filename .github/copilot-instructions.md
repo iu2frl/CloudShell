@@ -6,6 +6,7 @@
 
 - Strict NO EMOJI policy
 - Test coverage for all new features and bug fixes
+- Keep files as small as possible, split components into separate files to improve readability and maintainability.
 
 ### Python
 
