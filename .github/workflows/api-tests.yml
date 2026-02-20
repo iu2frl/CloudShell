@@ -81,17 +81,28 @@ jobs:
           import sys, json
           d = json.load(sys.stdin)
           assert d['status'] == 'ok', f'Expected ok, got {d}'
-          print('✅ Health OK')
+          assert d['version'] == '1.0.0', f'Unexpected version: {d[\"version\"]}'
+          assert isinstance(d['uptime_seconds'], int), 'uptime_seconds must be int'
+          assert d['uptime_seconds'] >= 0, 'uptime_seconds must be non-negative'
+          print('Health OK')
           "
 
       - name: Test login with valid credentials
         run: |
-          TOKEN=$(curl -sf -X POST http://localhost:8000/api/auth/token \
+          RESP=$(curl -sf -X POST http://localhost:8000/api/auth/token \
             -d "username=admin&password=admin" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            | python3 -c "import sys,json; t=json.load(sys.stdin); print(t['access_token'])")
+            -H "Content-Type: application/x-www-form-urlencoded")
+          echo "$RESP"
+          TOKEN=$(echo "$RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert 'access_token' in d, 'access_token missing'
+          assert d['token_type'] == 'bearer', f'bad token_type: {d[\"token_type\"]}'
+          assert 'expires_at' in d, 'expires_at missing from token response'
+          print(d['access_token'])
+          ")
           echo "TOKEN=${TOKEN}" >> "$GITHUB_ENV"
-          echo "✅ Login OK (token length: ${#TOKEN})"
+          echo "Login OK (token length: ${#TOKEN})"
 
       - name: Test login with wrong password returns 401
         run: |
@@ -99,13 +110,21 @@ jobs:
             -d "username=admin&password=wrongpassword" \
             -H "Content-Type: application/x-www-form-urlencoded")
           echo "HTTP status: $HTTP"
-          [ "$HTTP" = "401" ] && echo "✅ Reject wrong password OK" || (echo "❌ Expected 401, got $HTTP" && exit 1)
+          [ "$HTTP" = "401" ] && echo "Reject wrong password OK" || (echo "Expected 401, got $HTTP" && exit 1)
+
+      - name: Test login with wrong username returns 401
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/api/auth/token \
+            -d "username=nobody&password=admin" \
+            -H "Content-Type: application/x-www-form-urlencoded")
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "401" ] && echo "Reject wrong username OK" || (echo "Expected 401, got $HTTP" && exit 1)
 
       - name: Test unauthenticated request returns 401
         run: |
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/devices/)
           echo "HTTP status: $HTTP"
-          [ "$HTTP" = "401" ] && echo "✅ Unauthenticated rejected OK" || (echo "❌ Expected 401, got $HTTP" && exit 1)
+          [ "$HTTP" = "401" ] && echo "Unauthenticated rejected OK" || (echo "Expected 401, got $HTTP" && exit 1)
 
       # ── Device CRUD tests ────────────────────────────────────────────────────
       - name: Test list devices (empty)
@@ -144,7 +163,27 @@ jobs:
           print(d['id'])
           ")
           echo "DEVICE_ID=${DEVICE_ID}" >> "$GITHUB_ENV"
-          echo "✅ Create device OK (id=$DEVICE_ID)"
+          echo "Create device OK (id=$DEVICE_ID)"
+
+      - name: Test create password-auth device without password returns 400
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/devices/ \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"bad","hostname":"1.2.3.4","port":22,"username":"u","auth_type":"password"}')
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "400" ] && echo "Missing password -> 400 OK" || (echo "Expected 400, got $HTTP" && exit 1)
+
+      - name: Test create key-auth device without private_key returns 400
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/devices/ \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"bad","hostname":"1.2.3.4","port":22,"username":"u","auth_type":"key"}')
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "400" ] && echo "Missing private_key -> 400 OK" || (echo "Expected 400, got $HTTP" && exit 1)
 
       - name: Test get device by id
         run: |
@@ -155,7 +194,7 @@ jobs:
           d = json.load(sys.stdin)
           assert str(d['id']) == os.environ['DEVICE_ID']
           assert d['name'] == 'Test Router'
-          print('✅ Get device OK')
+          print('Get device OK')
           "
 
       - name: Test list devices (one item)
@@ -166,7 +205,7 @@ jobs:
           import sys, json
           d = json.load(sys.stdin)
           assert len(d) == 1, f'Expected 1 device, got {len(d)}'
-          print('✅ List one device OK')
+          print('List one device OK')
           "
 
       - name: Test update device
@@ -183,8 +222,18 @@ jobs:
           assert d['port'] == 2222, f'Port not updated: {d}'
           assert d['hostname'] == '192.168.1.1', 'Hostname should be unchanged'
           assert d['updated_at'] != d['created_at'], 'updated_at should differ from created_at'
-          print('✅ Update device OK')
+          print('Update device OK')
           "
+
+      - name: Test update non-existent device returns 404
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PUT http://localhost:8000/api/devices/99999 \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name": "ghost"}')
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "404" ] && echo "Update non-existent device -> 404 OK" || (echo "Expected 404, got $HTTP" && exit 1)
 
       - name: Test delete device
         run: |
@@ -192,7 +241,15 @@ jobs:
             -H "Authorization: Bearer $TOKEN" \
             http://localhost:8000/api/devices/$DEVICE_ID)
           echo "HTTP status: $HTTP"
-          [ "$HTTP" = "204" ] && echo "✅ Delete device OK" || (echo "❌ Expected 204, got $HTTP" && exit 1)
+          [ "$HTTP" = "204" ] && echo "Delete device OK" || (echo "Expected 204, got $HTTP" && exit 1)
+
+      - name: Test delete non-existent device returns 404
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            -H "Authorization: Bearer $TOKEN" \
+            http://localhost:8000/api/devices/99999)
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "404" ] && echo "Delete non-existent device -> 404 OK" || (echo "Expected 404, got $HTTP" && exit 1)
 
       - name: Test list devices (empty after delete)
         run: |
@@ -202,7 +259,7 @@ jobs:
           import sys, json
           d = json.load(sys.stdin)
           assert d == [], f'Expected empty list after delete, got {d}'
-          print('✅ Empty list after delete OK')
+          print('Empty list after delete OK')
           "
 
       - name: Test get deleted device returns 404
@@ -211,15 +268,23 @@ jobs:
             -H "Authorization: Bearer $TOKEN" \
             http://localhost:8000/api/devices/$DEVICE_ID)
           echo "HTTP status: $HTTP"
-          [ "$HTTP" = "404" ] && echo "✅ 404 on deleted device OK" || (echo "❌ Expected 404, got $HTTP" && exit 1)
+          [ "$HTTP" = "404" ] && echo "404 on deleted device OK" || (echo "Expected 404, got $HTTP" && exit 1)
 
       # ── Frontend build artefact ───────────────────────────────────────────────
       - name: Test backend serves frontend bundle
         run: |
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/)
-          [ "$HTTP" = "200" ] && echo "✅ Frontend served OK" || (echo "❌ Expected 200, got $HTTP" && exit 1)
+          [ "$HTTP" = "200" ] && echo "Frontend served OK" || (echo "Expected 200, got $HTTP" && exit 1)
 
       # ── SSH error handling ────────────────────────────────────────────────────
+      - name: Test SSH session on non-existent device returns 404
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            "http://localhost:8000/api/terminal/session/99999")
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "404" ] && echo "Terminal session non-existent device -> 404 OK" || (echo "Expected 404, got $HTTP" && exit 1)
+
       - name: Test SSH to closed port returns 502
         run: |
           DEVICE=$(curl -sf -X POST http://localhost:8000/api/devices/ \
@@ -240,8 +305,8 @@ jobs:
           echo "HTTP: $HTTP"
           curl -sf -X DELETE -H "Authorization: Bearer $TOKEN" \
             "http://localhost:8000/api/devices/${SSH_DEV_ID}" || true
-          [ "$HTTP" = "502" ] && echo "✅ SSH connection refused → 502 OK" \
-            || (echo "❌ Expected 502, got $HTTP" && exit 1)
+          [ "$HTTP" = "502" ] && echo "SSH connection refused -> 502 OK" \
+            || (echo "Expected 502, got $HTTP" && exit 1)
 
       # ── SSH key auth tests ───────────────────────────────────────────────────
       - name: Test generate SSH key pair
@@ -253,9 +318,16 @@ jobs:
           d = json.load(sys.stdin)
           assert d['private_key'].startswith('-----BEGIN OPENSSH PRIVATE KEY-----'), 'bad private_key'
           assert d['public_key'].startswith('ssh-rsa '), 'bad public_key'
-          print('✅ Key pair generation OK')
+          print('Key pair generation OK')
           "
           echo "KEYPAIR_PRIV=$(echo $KEYPAIR | python3 -c "import sys,json; print(json.load(sys.stdin)['private_key'])" | base64 -w0)" >> "$GITHUB_ENV"
+
+      - name: Test generate SSH key pair requires auth
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/keys/generate)
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "401" ] && echo "Unauthenticated key generate -> 401 OK" || (echo "Expected 401, got $HTTP" && exit 1)
 
       - name: Test create key-auth device
         run: |
@@ -292,24 +364,57 @@ jobs:
           KEY_FILENAME=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_filename'])")
           echo "KEY_DEV_ID=${KEY_DEV_ID}" >> "$GITHUB_ENV"
           echo "KEY_FILENAME=${KEY_FILENAME}" >> "$GITHUB_ENV"
-          echo "✅ Key-auth device created OK (id=$KEY_DEV_ID, file=$KEY_FILENAME)"
+          echo "Key-auth device created OK (id=$KEY_DEV_ID, file=$KEY_FILENAME)"
 
       - name: Test encrypted key file exists, no plaintext .pem
         run: |
           [ -f "$DATA_DIR/keys/$KEY_FILENAME" ] \
-            && echo "✅ .enc key file exists OK" \
-            || (echo "❌ .enc file missing" && exit 1)
+            && echo ".enc key file exists OK" \
+            || (echo ".enc file missing" && exit 1)
           ls "$DATA_DIR/keys/"*.pem 2>/dev/null \
-            && (echo "❌ Plaintext .pem should not exist" && exit 1) \
-            || echo "✅ No plaintext .pem OK"
+            && (echo "Plaintext .pem should not exist" && exit 1) \
+            || echo "No plaintext .pem OK"
+
+      - name: Test update key-auth device rotates key file
+        run: |
+          # Generate a second key pair
+          KEYPAIR2=$(curl -sf -X POST http://localhost:8000/api/keys/generate \
+            -H "Authorization: Bearer $TOKEN")
+          PRIV2_B64=$(echo "$KEYPAIR2" | python3 -c \
+            "import sys,json,base64; print(base64.b64encode(json.load(sys.stdin)['private_key'].encode()).decode())")
+          OLD_FILENAME="$KEY_FILENAME"
+
+          # Update the device with the new key
+          RESP=$(PRIV2_B64="$PRIV2_B64" python3 -c "
+          import urllib.request, json, os, base64
+          token  = os.environ['TOKEN']
+          dev_id = os.environ['KEY_DEV_ID']
+          priv2  = base64.b64decode(os.environ['PRIV2_B64']).decode()
+          payload = json.dumps({'private_key': priv2}).encode()
+          req = urllib.request.Request(
+              f'http://localhost:8000/api/devices/{dev_id}',
+              data=payload,
+              headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+              method='PUT'
+          )
+          print(urllib.request.urlopen(req).read().decode())
+          ")
+          echo "$RESP"
+          NEW_FILENAME=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_filename'])")
+
+          [ -f "$DATA_DIR/keys/$NEW_FILENAME" ] \
+            && echo "Rotated .enc key file exists OK" \
+            || (echo "New .enc file missing after key rotation" && exit 1)
+          echo "KEY_FILENAME=${NEW_FILENAME}" >> "$GITHUB_ENV"
+          echo "Key rotation OK (old=$OLD_FILENAME, new=$NEW_FILENAME)"
 
       - name: Test delete key-auth device removes key file
         run: |
           curl -sf -X DELETE -H "Authorization: Bearer $TOKEN" \
             "http://localhost:8000/api/devices/$KEY_DEV_ID"
           [ ! -f "$DATA_DIR/keys/$KEY_FILENAME" ] \
-            && echo "✅ .enc key removed on device delete OK" \
-            || (echo "❌ .enc still present after delete" && exit 1)
+            && echo ".enc key removed on device delete OK" \
+            || (echo ".enc still present after delete" && exit 1)
 
       # ── Auth / session tests (M5) ─────────────────────────────────────────
       - name: Test /auth/me returns username and expiry
@@ -321,7 +426,7 @@ jobs:
           d = json.load(sys.stdin)
           assert d['username'] == 'admin', f'bad username: {d}'
           assert 'expires_at' in d, 'expires_at missing'
-          print('✅ /me OK')
+          print('/me OK')
           "
 
       - name: Test token refresh issues new token and revokes old one
@@ -333,13 +438,48 @@ jobs:
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
             http://localhost:8000/api/auth/me -H "Authorization: Bearer $TOKEN")
           [ "$HTTP" = "401" ] \
-            && echo "✅ Old token revoked after refresh OK" \
-            || (echo "❌ Expected 401 for old token, got $HTTP" && exit 1)
+            && echo "Old token revoked after refresh OK" \
+            || (echo "Expected 401 for old token, got $HTTP" && exit 1)
           # New token must work
           curl -sf http://localhost:8000/api/auth/me \
             -H "Authorization: Bearer $NEW_TOKEN" > /dev/null
-          echo "✅ New token valid after refresh OK"
+          echo "New token valid after refresh OK"
           echo "TOKEN=$NEW_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Test refresh with already-revoked token returns 401
+        run: |
+          # TOKEN was just replaced above; the old one is already revoked
+          # Attempt to refresh the old (revoked) token again
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/auth/refresh \
+            -H "Authorization: Bearer $TOKEN")
+          # TOKEN here is the NEW token; get the old one via a second refresh to test
+          # Instead, log in fresh and immediately revoke via logout, then try refresh
+          TEMP_TOKEN=$(curl -sf -X POST http://localhost:8000/api/auth/token \
+            -d "username=admin&password=admin" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          # Logout revokes TEMP_TOKEN
+          curl -sf -X POST http://localhost:8000/api/auth/logout \
+            -H "Authorization: Bearer $TEMP_TOKEN" -o /dev/null
+          # Refresh should now return 401
+          HTTP2=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/auth/refresh \
+            -H "Authorization: Bearer $TEMP_TOKEN")
+          [ "$HTTP2" = "401" ] \
+            && echo "Refresh with revoked token -> 401 OK" \
+            || (echo "Expected 401 for revoked token refresh, got $HTTP2" && exit 1)
+
+      - name: Test change-password rejects wrong current password
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/auth/change-password \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"current_password":"wrongpassword","new_password":"doesnotmatter99"}')
+          [ "$HTTP" = "401" ] \
+            && echo "Wrong current password -> 401 OK" \
+            || (echo "Expected 401, got $HTTP" && exit 1)
 
       - name: Test change-password endpoint
         run: |
@@ -349,21 +489,21 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"current_password":"admin","new_password":"newpass99"}')
           [ "$HTTP" = "204" ] \
-            && echo "✅ change-password 204 OK" \
-            || (echo "❌ Expected 204, got $HTTP" && exit 1)
+            && echo "change-password 204 OK" \
+            || (echo "Expected 204, got $HTTP" && exit 1)
           # Old env-var password should now be rejected
           HTTP2=$(curl -s -o /dev/null -w "%{http_code}" \
             -X POST http://localhost:8000/api/auth/token \
             -d "username=admin&password=admin")
           [ "$HTTP2" = "401" ] \
-            && echo "✅ Old password rejected after change OK" \
-            || (echo "❌ Old password still accepted: $HTTP2" && exit 1)
+            && echo "Old password rejected after change OK" \
+            || (echo "Old password still accepted: $HTTP2" && exit 1)
           # Login with new password
           NEW_TOKEN=$(curl -sf -X POST http://localhost:8000/api/auth/token \
             -d "username=admin&password=newpass99" \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
           echo "TOKEN=$NEW_TOKEN" >> "$GITHUB_ENV"
-          echo "✅ Login with new password OK"
+          echo "Login with new password OK"
 
       - name: Test change-password rejects too-short new password
         run: |
@@ -373,8 +513,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"current_password":"newpass99","new_password":"short"}')
           [ "$HTTP" = "422" ] \
-            && echo "✅ Short password → 422 OK" \
-            || (echo "❌ Expected 422, got $HTTP" && exit 1)
+            && echo "Short password -> 422 OK" \
+            || (echo "Expected 422, got $HTTP" && exit 1)
 
       - name: Test logout revokes token
         run: |
@@ -384,8 +524,18 @@ jobs:
             http://localhost:8000/api/auth/me \
             -H "Authorization: Bearer $TOKEN")
           [ "$HTTP" = "401" ] \
-            && echo "✅ Token revoked after logout → 401 OK" \
-            || (echo "❌ Expected 401 after logout, got $HTTP" && exit 1)
+            && echo "Token revoked after logout -> 401 OK" \
+            || (echo "Expected 401 after logout, got $HTTP" && exit 1)
+
+      - name: Test logout is idempotent
+        run: |
+          # Logging out an already-revoked token must not error
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/auth/logout \
+            -H "Authorization: Bearer $TOKEN")
+          [ "$HTTP" = "204" ] \
+            && echo "Double logout -> 204 OK" \
+            || (echo "Expected 204 on double logout, got $HTTP" && exit 1)
 
       # ── Teardown ─────────────────────────────────────────────────────────────
       - name: Stop backend server
