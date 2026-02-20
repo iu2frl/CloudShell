@@ -24,18 +24,23 @@ Terminal screen:
 
 ## Features
 
-- **Web terminal** — full xterm.js terminal emulator with ANSI/VT100 support, copy/paste, and proper resize (SIGWINCH propagation)
-- **Multi-tab sessions** — open multiple SSH connections to different devices simultaneously
-- **Device manager** — add, edit, and delete SSH targets with name, host, port, and credentials
-- **Password & SSH key auth** — store passwords or PEM private keys, both encrypted at rest (AES-256-GCM)
-- **Built-in key generator** — generate RSA-4096 key pairs directly from the UI; copy the public key to paste into `authorized_keys`
-- **Key file upload** — load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
-- **JWT session auth** — login page, configurable session TTL, silent token refresh, and token revocation on logout
-- **Change password** — update the admin password at runtime without restarting
-- **Session expiry badge** — live countdown in the header turns yellow/red as the session approaches expiry
-- **Toast notifications** — non-blocking feedback for every action
-- **Error boundary** — graceful recovery screen for unexpected frontend errors
-- **Docker Compose deploy** — single command to run in production
+- [x] **Web terminal** — full xterm.js terminal emulator with ANSI/VT100 support, copy/paste, and proper resize (SIGWINCH propagation)
+- [x] **Multi-tab sessions** — open multiple SSH connections to different devices simultaneously
+- [x] **Device manager** — add, edit, and delete SSH targets with name, host, port, and credentials
+- [x] **Password & SSH key auth** — store passwords or PEM private keys, both encrypted at rest (AES-256-GCM)
+- [x] **Built-in key generator** — generate RSA-4096 key pairs directly from the UI; copy the public key to paste into `authorized_keys`
+- [x] **Key file upload** — load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
+- [x] **JWT session auth** — login page, configurable session TTL, silent token refresh, and token revocation on logout
+- [x] **Change password** — update the admin password at runtime without restarting
+- [x] **Session expiry badge** — live countdown in the header turns yellow/red as the session approaches expiry
+- [x] **Toast notifications** — non-blocking feedback for every action
+- [x] **Error boundary** — graceful recovery screen for unexpected frontend errors
+- [x] **Docker Compose deploy** — single command to run in production
+- [ ] **SFTP** — secure file transfer over SSH
+- [ ] **File manager** — browse and manage files on the remote server
+- [ ] **Multi-user support** — allow multiple users to access the same CloudShell instance
+- [ ] **Audit logging** — track user actions and changes for compliance and troubleshooting
+- [ ] **VNC** — access remote desktops over VNC
 
 ## Quick Start
 
