@@ -243,6 +243,12 @@ async def stream_session(session_id: str, websocket: WebSocket) -> None:
 
     log.info("Session %s stream ended", session_id[:8])
 
+    # Close the WebSocket cleanly so the browser detects the disconnect.
+    try:
+        await websocket.close(code=1000)
+    except Exception:  # noqa: BLE001
+        pass
+
 
 async def close_session(session_id: str) -> None:
     entry = _sessions.pop(session_id, None)
