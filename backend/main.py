@@ -6,13 +6,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from backend.config import get_settings
 from backend.database import init_db
 from backend.routers import auth_router, devices_router, keys_router, terminal_router
 
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 VERSION = "1.0.0"
 
 log = logging.getLogger(__name__)
@@ -41,7 +39,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tightened in production via env
+    allow_origins=os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else [],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,9 +73,3 @@ async def health():
         "version": VERSION,
         "uptime_seconds": uptime_s,
     }
-
-
-# ── Static frontend ───────────────────────────────────────────────────────────
-
-if os.path.isdir(STATIC_DIR):
-    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="frontend")

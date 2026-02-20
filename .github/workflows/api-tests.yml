@@ -23,6 +23,8 @@ jobs:
       ADMIN_USER: admin
       ADMIN_PASSWORD: admin
       TOKEN_TTL_HOURS: "1"
+      # Allow all origins in CI — Nginx handles this in production
+      CORS_ORIGINS: "*"
 
     steps:
       - name: Checkout
@@ -271,10 +273,12 @@ jobs:
           [ "$HTTP" = "404" ] && echo "404 on deleted device OK" || (echo "Expected 404, got $HTTP" && exit 1)
 
       # ── Frontend build artefact ───────────────────────────────────────────────
-      - name: Test backend serves frontend bundle
+      - name: Test backend API root is not serving static files
         run: |
+          # Backend no longer serves the frontend bundle; / should return 404
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/)
-          [ "$HTTP" = "200" ] && echo "Frontend served OK" || (echo "Expected 200, got $HTTP" && exit 1)
+          [ "$HTTP" = "404" ] && echo "Backend correctly returns 404 on / (Nginx serves frontend)" \
+            || (echo "Expected 404, got $HTTP" && exit 1)
 
       # ── SSH error handling ────────────────────────────────────────────────────
       - name: Test SSH session on non-existent device returns 404
