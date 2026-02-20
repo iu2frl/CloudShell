@@ -33,6 +33,12 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 ALGORITHM = "HS256"
 
 
+def _get_boot_id() -> str:
+    """Return the current process boot ID (imported lazily to avoid circular imports)."""
+    from backend.main import BOOT_ID  # noqa: PLC0415
+    return BOOT_ID
+
+
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
 class Token(BaseModel):
@@ -58,7 +64,7 @@ def _make_token(username: str) -> tuple[str, datetime, str]:
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(hours=settings.token_ttl_hours)
     jti = str(uuid.uuid4())
-    payload = {"sub": username, "exp": expire, "jti": jti}
+    payload = {"sub": username, "exp": expire, "jti": jti, "bid": _get_boot_id()}
     encoded = jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
     return encoded, expire, jti
 
@@ -113,6 +119,12 @@ async def get_current_user(
     except JWTError as exc:
         raise credentials_exception from exc
 
+    if payload.get("bid") != _get_boot_id():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session invalidated by server restart",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if await _is_revoked(jti, db):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -141,6 +153,12 @@ async def _get_payload(
     jti: str | None = payload.get("jti")
     if not jti:
         raise credentials_exception
+    if payload.get("bid") != _get_boot_id():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session invalidated by server restart",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if await _is_revoked(jti, db):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

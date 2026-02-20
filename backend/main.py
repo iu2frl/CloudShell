@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -12,6 +13,12 @@ from backend.database import init_db
 from backend.routers import auth_router, devices_router, keys_router, terminal_router
 
 VERSION = os.getenv("APP_VERSION", "dev")
+
+# ── Boot identity ─────────────────────────────────────────────────────────────
+# A fresh random UUID is generated each time the process starts.
+# Every JWT embeds this value; tokens issued before the current boot are
+# rejected at validation time, effectively expiring all sessions on restart.
+BOOT_ID: str = str(uuid.uuid4())
 
 # Configure application logging
 logging.basicConfig(
