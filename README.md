@@ -10,7 +10,7 @@
 
 ## Motivation
 
-I really liked the idea behind some existing tools like [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free, open, and self-hosted.
+I really liked the idea behind some existing tools like [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free and open.
 
 - Is it better than ShellNGN? Hell no!
 - Does it work? Yes!
