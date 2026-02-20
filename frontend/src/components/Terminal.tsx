@@ -3,21 +3,23 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { openSession, terminalWsUrl } from "../api/client";
-import { RefreshCw, Wifi, WifiOff, Loader } from "lucide-react";
+import { Device, openSession, terminalWsUrl } from "../api/client";
+import { RefreshCw, Wifi, WifiOff, Loader, Copy } from "lucide-react";
+import { useToast } from "./Toast";
 
 type ConnState = "connecting" | "connected" | "disconnected" | "error";
 
 interface TerminalProps {
-  deviceId: number;
+  device: Device;
 }
 
-export function Terminal({ deviceId }: TerminalProps) {
+export function Terminal({ device }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef    = useRef<XTerm | null>(null);
   const fitRef      = useRef<FitAddon | null>(null);
   const wsRef       = useRef<WebSocket | null>(null);
   const [connState, setConnState] = useState<ConnState>("connecting");
+  const toast = useToast();
 
   // ── Build the xterm instance once ──────────────────────────────────────────
   useEffect(() => {
@@ -66,29 +68,29 @@ export function Terminal({ deviceId }: TerminalProps) {
     const fit  = fitRef.current;
     if (!term || !fit) return;
 
-    // Close any existing socket first
     wsRef.current?.close();
     setConnState("connecting");
     term.writeln("\x1b[36mCloudShell\x1b[0m — connecting…");
 
     let sessionId: string;
     try {
-      sessionId = await openSession(deviceId);
+      sessionId = await openSession(device.id);
     } catch (err) {
-      term.writeln(`\r\n\x1b[31m[connection failed: ${err}]\x1b[0m`);
+      const msg = String(err);
+      term.writeln(`\r\n\x1b[31m[connection failed: ${msg}]\x1b[0m`);
       setConnState("error");
+      toast.error(`${device.name}: ${msg}`);
       return;
     }
 
     const url = terminalWsUrl(sessionId);
     const ws  = new WebSocket(url);
-    ws.binaryType = "arraybuffer";   // receive raw bytes
+    ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
     ws.onopen = () => {
       setConnState("connected");
       term.clear();
-      // Send initial size
       const { rows, cols } = term;
       ws.send(JSON.stringify({ type: "resize", cols, rows }));
     };
@@ -104,20 +106,17 @@ export function Terminal({ deviceId }: TerminalProps) {
       const clean = e.wasClean && e.code === 1000;
       setConnState(clean ? "disconnected" : "error");
       term.writeln(`\r\n\x1b[33m[disconnected${clean ? "" : ` code=${e.code}`}]\x1b[0m`);
+      if (!clean) toast.info(`${device.name}: connection closed`);
     };
 
-    ws.onerror = () => {
-      setConnState("error");
-    };
+    ws.onerror = () => { setConnState("error"); };
 
-    // Forward keystrokes as raw bytes
     term.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(new TextEncoder().encode(data));
       }
     });
 
-    // Resize observer → fit + notify SSH
     const ro = new ResizeObserver(() => {
       try { fit.fit(); } catch { /* ignore */ }
       const { rows, cols } = term;
@@ -126,39 +125,60 @@ export function Terminal({ deviceId }: TerminalProps) {
       }
     });
     if (containerRef.current) ro.observe(containerRef.current);
-
-    // Cleanup when the component for this tab is hidden/removed
     ws.addEventListener("close", () => ro.disconnect());
-  }, [deviceId]);
+  }, [device.id, device.name, toast]);
 
-  // Initial connect
   useEffect(() => { connect(); }, [connect]);
+
+  // ── Copy session info ────────────────────────────────────────────────────────
+  const copyInfo = () => {
+    navigator.clipboard.writeText(`${device.username}@${device.hostname}:${device.port}`);
+    toast.info("Copied to clipboard");
+  };
 
   // ── Status badge ────────────────────────────────────────────────────────────
   const badge: Record<ConnState, { icon: React.ReactNode; label: string; cls: string }> = {
-    connecting:   { icon: <Loader    size={12} className="animate-spin" />, label: "Connecting",   cls: "text-yellow-400 border-yellow-700" },
-    connected:    { icon: <Wifi      size={12} />,                          label: "Connected",    cls: "text-green-400  border-green-700"  },
-    disconnected: { icon: <WifiOff   size={12} />,                          label: "Disconnected", cls: "text-slate-400  border-slate-600"  },
-    error:        { icon: <WifiOff   size={12} />,                          label: "Error",        cls: "text-red-400    border-red-700"    },
+    connecting:   { icon: <Loader  size={12} className="animate-spin" />, label: "Connecting",   cls: "text-yellow-400 border-yellow-700" },
+    connected:    { icon: <Wifi    size={12} />,                          label: "Connected",    cls: "text-green-400  border-green-700"  },
+    disconnected: { icon: <WifiOff size={12} />,                          label: "Disconnected", cls: "text-slate-400  border-slate-600"  },
+    error:        { icon: <WifiOff size={12} />,                          label: "Error",        cls: "text-red-400    border-red-700"    },
   };
   const b = badge[connState];
 
   return (
     <div className="flex flex-col h-full gap-0">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-3 py-1 bg-slate-900 border border-slate-700 rounded-t-lg flex-shrink-0">
-        <div className={`flex items-center gap-1.5 text-xs border rounded px-2 py-0.5 ${b.cls}`}>
-          {b.icon}
-          <span>{b.label}</span>
+      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-t-lg flex-shrink-0 gap-3">
+        {/* Device label */}
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-medium text-slate-200 truncate">{device.name}</span>
+          <span className="text-xs text-slate-500 truncate hidden sm:block">
+            {device.username}@{device.hostname}:{device.port}
+          </span>
         </div>
-        <button
-          onClick={connect}
-          title="Reconnect"
-          className="icon-btn"
-          disabled={connState === "connecting" || connState === "connected"}
-        >
-          <RefreshCw size={13} className={connState === "connecting" ? "animate-spin" : ""} />
-        </button>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Status badge */}
+          <div className={`flex items-center gap-1.5 text-xs border rounded px-2 py-0.5 ${b.cls}`}>
+            {b.icon}
+            <span className="hidden sm:inline">{b.label}</span>
+          </div>
+
+          {/* Copy SSH target */}
+          <button onClick={copyInfo} title="Copy SSH target" className="icon-btn">
+            <Copy size={12} />
+          </button>
+
+          {/* Reconnect */}
+          <button
+            onClick={connect}
+            title="Reconnect"
+            className="icon-btn"
+            disabled={connState === "connecting" || connState === "connected"}
+          >
+            <RefreshCw size={13} className={connState === "connecting" ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
       {/* xterm viewport */}

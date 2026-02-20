@@ -46,3 +46,9 @@ body {
 .xterm-viewport {
   overflow-y: auto !important;
 }
+
+/* Toast slide-in */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
