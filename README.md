@@ -8,7 +8,13 @@
 [![React 18](https://img.shields.io/badge/react-18-61DAFB.svg?logo=react&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free, open, and self-hosted.
+## Motivation
+
+I really liked the idea behind some existing tools like [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free, open, and self-hosted.
+
+- Is it better than ShellNGN? Hell no!
+- Does it work? Yes!
+- Is it free? Absolutely!
 
 ## Screenshots
 
