@@ -6,7 +6,7 @@ I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not 
 
 ---
 
-## ✨ Features
+## Features
 
 - **Web terminal** — full xterm.js terminal emulator with ANSI/VT100 support, copy/paste, and proper resize (SIGWINCH propagation)
 - **Multi-tab sessions** — open multiple SSH connections to different devices simultaneously
@@ -20,7 +20,7 @@ I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not 
 - **Error boundary** — graceful recovery screen for unexpected frontend errors
 - **Docker Compose deploy** — single command to run in production
 
-## 🚀 Quick Start (Docker Compose)
+## Quick Start (Docker Compose)
 
 ```bash
 git clone https://github.com/youruser/CloudShell
@@ -35,7 +35,7 @@ Open **<http://localhost:8080>** and log in with your configured credentials.
 > [!IMPORTANT]
 > Put CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS. SSH credentials are encrypted at rest but the web traffic should be HTTPS.
 
-## ⚙️ Configuration
+## Configuration
 
 All configuration is via environment variables (or a `.env` file):
 
@@ -48,7 +48,7 @@ All configuration is via environment variables (or a `.env` file):
 | `DATA_DIR` | `/data` | Directory where the SQLite database, SSH key files, and known_hosts are stored. Mount this as a Docker volume. |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated list of allowed CORS origins. Leave unset when running behind Nginx (same-origin). Set to your frontend URL (e.g. `https://cloudshell.example.com`) when running the backend standalone. |
 
-## 🛠️ Development Setup
+## Development Setup
 
 ### Prerequisites
 
@@ -86,7 +86,7 @@ Open **<http://localhost:5173>**
 cd frontend && npm run build   # output goes into the Nginx image via Dockerfile.frontend
 ```
 
-## 🐳 Docker
+## Docker
 
 ### Build both images
 
@@ -124,7 +124,7 @@ make dev              # start backend + frontend dev servers locally (no Docker)
 make test             # run backend integration tests locally
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 ```text
 Browser (xterm.js)
@@ -160,7 +160,7 @@ Browser (xterm.js)
 - **SSH private keys** are stored as encrypted `.enc` files under `DATA_DIR/keys/`, never in plaintext
 - **known_hosts** is persisted at `DATA_DIR/known_hosts` with accept-new policy
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 CloudShell/
@@ -210,7 +210,7 @@ CloudShell/
 └── SPECS.md
 ```
 
-## 🔐 Security Notes
+## Security Notes
 
 | Concern | Mitigation |
 | --- | --- |
@@ -221,10 +221,10 @@ CloudShell/
 | Host key verification | `known_hosts` file persisted in `DATA_DIR`; accept-new policy |
 | Admin password | bcrypt-hashed in DB after first change; env-var fallback on first boot only |
 
-## ✨ Vibecoded?
+## Vibecoded?
 
 ✨ AF ✨
 
-## 📄 License
+## License
 
-MIT
+GNU General Public License v3.0 — see [LICENSE](LICENSE) for the full text.
