@@ -25,7 +25,7 @@
 - Aim for 100% test coverage on new features
 - Include tests for edge cases and error conditions
 - Run tests on every merge request
-- When performing tests on the dev machine, prefer writing them as scripts and running them from the command line instead of plain text commands
+- When performing tests on the dev machine, prefer writing them as scripts and running them from the command line instead of plain text inline commands
 
 ## Security considerations
 
