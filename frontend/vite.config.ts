@@ -14,7 +14,9 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../backend/static',
+    // In dev/local: output goes to backend/static for FastAPI to serve
+    // In Docker: output goes to dist/ which the Dockerfile copies to backend/static
+    outDir: process.env.DOCKER_BUILD ? 'dist' : '../backend/static',
     emptyOutDir: true,
   },
 })

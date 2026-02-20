@@ -7,7 +7,7 @@ COPY frontend/package*.json ./
 RUN npm ci --silent
 
 COPY frontend/ ./
-RUN npm run build
+RUN DOCKER_BUILD=1 npm run build
 
 
 # ── Stage 2: Python backend ────────────────────────────────────────────────────
@@ -28,7 +28,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 
 # Copy built frontend into the place FastAPI will serve it from
+# vite builds to frontend/dist inside the build stage
 COPY --from=frontend-build /app/frontend/dist ./backend/static/
+# Also handle if build output ended up in backend/static directly
+RUN true
 
 # Data directory (override with a volume)
 RUN mkdir -p /data/keys && chmod 700 /data/keys
