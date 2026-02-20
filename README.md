@@ -12,10 +12,6 @@ I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not 
 
 ## Screenshots
 
-Login screen:
-
-![Login Screen](./images/login.png)
-
 Terminal screen:
 
 ![Terminal Screen](./images/main.png)
