@@ -7,7 +7,9 @@ import { Device, openSession, terminalWsUrl } from "../api/client";
 import { RefreshCw, Wifi, WifiOff, Loader, Copy } from "lucide-react";
 import { useToast } from "./Toast";
 
-type ConnState = "connecting" | "connected" | "disconnected" | "error";
+type ConnState = "connecting" | "connected" | "disconnected" | "error" | "failed";
+
+const MAX_RETRIES = 3;
 
 interface TerminalProps {
   device: Device;
@@ -18,6 +20,7 @@ export function Terminal({ device }: TerminalProps) {
   const xtermRef    = useRef<XTerm | null>(null);
   const fitRef      = useRef<FitAddon | null>(null);
   const wsRef       = useRef<WebSocket | null>(null);
+  const retriesRef  = useRef(0);
   const [connState, setConnState] = useState<ConnState>("connecting");
   const toast = useToast();
 
@@ -68,6 +71,12 @@ export function Terminal({ device }: TerminalProps) {
     const fit  = fitRef.current;
     if (!term || !fit) return;
 
+    if (retriesRef.current >= MAX_RETRIES) {
+      term.writeln(`\r\n\x1b[31m[max retries (${MAX_RETRIES}) reached — click reconnect to try again]\x1b[0m`);
+      setConnState("failed");
+      return;
+    }
+
     wsRef.current?.close();
     setConnState("connecting");
     term.writeln("\x1b[36mCloudShell\x1b[0m — connecting…");
@@ -76,9 +85,15 @@ export function Terminal({ device }: TerminalProps) {
     try {
       sessionId = await openSession(device.id);
     } catch (err) {
+      retriesRef.current += 1;
       const msg = String(err);
       term.writeln(`\r\n\x1b[31m[connection failed: ${msg}]\x1b[0m`);
-      setConnState("error");
+      if (retriesRef.current >= MAX_RETRIES) {
+        term.writeln(`\r\n\x1b[31m[max retries (${MAX_RETRIES}) reached — click reconnect to try again]\x1b[0m`);
+        setConnState("failed");
+      } else {
+        setConnState("error");
+      }
       toast.error(`${device.name}: ${msg}`);
       return;
     }
@@ -89,6 +104,7 @@ export function Terminal({ device }: TerminalProps) {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      retriesRef.current = 0;
       setConnState("connected");
       term.clear();
       const { rows, cols } = term;
@@ -142,6 +158,7 @@ export function Terminal({ device }: TerminalProps) {
     connected:    { icon: <Wifi    size={12} />,                          label: "Connected",    cls: "text-green-400  border-green-700"  },
     disconnected: { icon: <WifiOff size={12} />,                          label: "Disconnected", cls: "text-slate-400  border-slate-600"  },
     error:        { icon: <WifiOff size={12} />,                          label: "Error",        cls: "text-red-400    border-red-700"    },
+    failed:       { icon: <WifiOff size={12} />,                          label: "Failed",       cls: "text-red-600    border-red-800"    },
   };
   const b = badge[connState];
 
@@ -171,7 +188,7 @@ export function Terminal({ device }: TerminalProps) {
 
           {/* Reconnect */}
           <button
-            onClick={connect}
+            onClick={() => { retriesRef.current = 0; connect(); }}
             title="Reconnect"
             className="icon-btn"
             disabled={connState === "connecting" || connState === "connected"}

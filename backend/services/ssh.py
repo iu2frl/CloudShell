@@ -39,17 +39,63 @@ _sessions: dict[str, _Session] = {}
 
 # ── known_hosts helper ────────────────────────────────────────────────────────
 
+# ── known_hosts / accept-new policy ──────────────────────────────────────────
+
 def _known_hosts_path() -> str | None:
     """Return the known_hosts file path if DATA_DIR is set, else None (trust-all)."""
     data_dir = os.environ.get("DATA_DIR")
     if not data_dir:
         return None
     path = os.path.join(data_dir, "known_hosts")
-    # Touch the file so asyncssh can read/write it
     os.makedirs(data_dir, exist_ok=True)
     if not os.path.exists(path):
-        open(path, "w").close()
+        open(path, "w", encoding="utf-8").close()
     return path
+
+
+def _make_accept_new_client(known_hosts_path: str) -> type:
+    """
+    Return an SSHClient subclass implementing OpenSSH's accept-new policy:
+
+    - If the host is already in known_hosts, the key MUST match (strict).
+    - If the host is not yet known, the key is accepted and persisted.
+    """
+    class _AcceptNewClient(asyncssh.SSHClient):
+        """SSHClient with accept-new host key policy."""
+
+        def validate_host_public_key(
+            self,
+            host: str,
+            addr: str,
+            port: int,
+            key: asyncssh.SSHKey,
+        ) -> bool:
+            """Accept new hosts; enforce stored key for known hosts."""
+            try:
+                known = asyncssh.read_known_hosts(known_hosts_path)
+                trusted, _, _ = known.match(host, addr, port)[:3]
+            except Exception:  # noqa: BLE001
+                trusted = []
+
+            if trusted:
+                # Host is known — check whether the presented key matches
+                presented = key.export_public_key().decode()
+                for stored_key in trusted:
+                    if stored_key.export_public_key().decode() == presented:
+                        return True
+                log.warning(
+                    "Host key mismatch for %s — rejecting connection", host
+                )
+                return False
+
+            # Host is new — persist the key and accept it
+            entry = f"{host} {key.export_public_key().decode().strip()}\n"
+            with open(known_hosts_path, "a", encoding="utf-8") as f:
+                f.write(entry)
+            log.info("Learned new host key for %s — added to known_hosts", host)
+            return True
+
+    return _AcceptNewClient
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -65,22 +111,31 @@ async def create_session(
     """
     Open an SSH connection and return a session_id.
 
-    known_hosts="auto"  → use /data/known_hosts (accept-new policy)
+    known_hosts="auto"  → accept-new policy backed by /data/known_hosts
     known_hosts=None    → disable host-key checking entirely (dev only)
-    known_hosts=<path>  → use that file explicitly
+    known_hosts=<path>  → strict checking against that file
     """
     session_id = str(uuid.uuid4())
-
-    if known_hosts == "auto":
-        known_hosts = _known_hosts_path()
 
     connect_kwargs: dict[str, Any] = {
         "host": hostname,
         "port": port,
         "username": username,
-        # asyncssh accepts a path string, None (no check), or asyncssh.KnownHostsPolicy
-        "known_hosts": known_hosts,
     }
+
+    if known_hosts == "auto":
+        kh_path = _known_hosts_path()
+        if kh_path:
+            # Use accept-new client: validates known hosts strictly,
+            # persists new host keys on first connection.
+            connect_kwargs["client_factory"] = _make_accept_new_client(kh_path)
+            connect_kwargs["known_hosts"] = None  # validation done in client
+        else:
+            # No DATA_DIR — disable host-key checking (dev/test only)
+            connect_kwargs["known_hosts"] = None
+    else:
+        connect_kwargs["known_hosts"] = known_hosts
+
     if password is not None:
         connect_kwargs["password"] = password
     if private_key_path is not None:
