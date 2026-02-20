@@ -159,10 +159,27 @@ async def stream_session(session_id: str, websocket: WebSocket) -> None:
 
     conn = entry.conn
 
+    # Wait for an initial resize frame from the browser so the PTY is created
+    # with the correct dimensions rather than the hardcoded 80x24 fallback.
+    cols, rows = 220, 50  # sensible fallback if no resize frame arrives in time
+    try:
+        msg = await asyncio.wait_for(websocket.receive(), timeout=3.0)
+        raw = msg.get("bytes") or (msg.get("text", "").encode() if msg.get("text") else None)
+        if raw:
+            try:
+                ctrl = json.loads(raw)
+                if ctrl.get("type") == "resize":
+                    cols = int(ctrl["cols"])
+                    rows = int(ctrl["rows"])
+            except (json.JSONDecodeError, KeyError, ValueError):
+                pass
+    except asyncio.TimeoutError:
+        pass
+
     try:
         process: asyncssh.SSHClientProcess = await conn.create_process(
             term_type="xterm-256color",
-            term_size=(80, 24),
+            term_size=(cols, rows),
             encoding=None,   # raw bytes — no codec in the bridge layer
             stderr=asyncssh.STDOUT,  # merge stderr into stdout stream
         )
@@ -201,7 +218,12 @@ async def stream_session(session_id: str, websocket: WebSocket) -> None:
     async def ssh_to_ws() -> None:
         """Read from SSH stdout, write binary frames to WebSocket."""
         try:
-            async for chunk in process.stdout:
+            while True:
+                # Read whatever is available immediately — don't wait to fill a buffer.
+                # This ensures character echoes from bash readline arrive without delay.
+                chunk = await process.stdout.read(4096)
+                if not chunk:
+                    break
                 if isinstance(chunk, str):
                     chunk = chunk.encode()
                 await websocket.send_bytes(chunk)
