@@ -313,6 +313,82 @@ jobs:
             && echo "✅ .enc key removed on device delete OK" \
             || (echo "❌ .enc still present after delete" && exit 1)
 
+      # ── Auth / session tests (M5) ─────────────────────────────────────────
+      - name: Test /auth/me returns username and expiry
+        run: |
+          ME=$(curl -sf http://localhost:8000/api/auth/me \
+            -H "Authorization: Bearer $TOKEN")
+          echo "$ME" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d['username'] == 'admin', f'bad username: {d}'
+          assert 'expires_at' in d, 'expires_at missing'
+          print('✅ /me OK')
+          "
+
+      - name: Test token refresh issues new token and revokes old one
+        run: |
+          RESP=$(curl -sf -X POST http://localhost:8000/api/auth/refresh \
+            -H "Authorization: Bearer $TOKEN")
+          NEW_TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          # Old token must now be revoked
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost:8000/api/auth/me -H "Authorization: Bearer $TOKEN")
+          [ "$HTTP" = "401" ] \
+            && echo "✅ Old token revoked after refresh OK" \
+            || (echo "❌ Expected 401 for old token, got $HTTP" && exit 1)
+          # New token must work
+          curl -sf http://localhost:8000/api/auth/me \
+            -H "Authorization: Bearer $NEW_TOKEN" > /dev/null
+          echo "✅ New token valid after refresh OK"
+          echo "TOKEN=$NEW_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Test change-password endpoint
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/auth/change-password \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"current_password":"admin","new_password":"newpass99"}')
+          [ "$HTTP" = "204" ] \
+            && echo "✅ change-password 204 OK" \
+            || (echo "❌ Expected 204, got $HTTP" && exit 1)
+          # Old env-var password should now be rejected
+          HTTP2=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/auth/token \
+            -d "username=admin&password=admin")
+          [ "$HTTP2" = "401" ] \
+            && echo "✅ Old password rejected after change OK" \
+            || (echo "❌ Old password still accepted: $HTTP2" && exit 1)
+          # Login with new password
+          NEW_TOKEN=$(curl -sf -X POST http://localhost:8000/api/auth/token \
+            -d "username=admin&password=newpass99" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          echo "TOKEN=$NEW_TOKEN" >> "$GITHUB_ENV"
+          echo "✅ Login with new password OK"
+
+      - name: Test change-password rejects too-short new password
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/api/auth/change-password \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"current_password":"newpass99","new_password":"short"}')
+          [ "$HTTP" = "422" ] \
+            && echo "✅ Short password → 422 OK" \
+            || (echo "❌ Expected 422, got $HTTP" && exit 1)
+
+      - name: Test logout revokes token
+        run: |
+          curl -sf -X POST http://localhost:8000/api/auth/logout \
+            -H "Authorization: Bearer $TOKEN" -o /dev/null
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost:8000/api/auth/me \
+            -H "Authorization: Bearer $TOKEN")
+          [ "$HTTP" = "401" ] \
+            && echo "✅ Token revoked after logout → 401 OK" \
+            || (echo "❌ Expected 401 after logout, got $HTTP" && exit 1)
+
       # ── Teardown ─────────────────────────────────────────────────────────────
       - name: Stop backend server
         if: always()

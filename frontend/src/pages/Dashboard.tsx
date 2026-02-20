@@ -3,6 +3,8 @@ import { Device, listDevices, logout } from "../api/client";
 import { DeviceList } from "../components/DeviceList";
 import { DeviceForm } from "../components/DeviceForm";
 import { Terminal } from "../components/Terminal";
+import { SessionBadge } from "../components/SessionBadge";
+import { ChangePasswordModal } from "../components/ChangePasswordModal";
 import { LogOut, Terminal as TerminalIcon } from "lucide-react";
 
 interface Props {
@@ -23,6 +25,7 @@ export function Dashboard({ onLogout }: Props) {
   const [activeTab, setActiveTab] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editDevice, setEditDevice] = useState<Device | undefined>();
+  const [showChangePw, setShowChangePw] = useState(false);
 
   const fetchDevices = async () => {
     setLoading(true);
@@ -100,9 +103,10 @@ export function Dashboard({ onLogout }: Props) {
 
         <button
           onClick={handleLogout}
-          className="icon-btn text-slate-400 hover:text-red-400"
+          className="icon-btn text-slate-400 hover:text-red-400 flex items-center gap-2"
           title="Sign out"
         >
+          <SessionBadge onClick={() => setShowChangePw(true)} />
           <LogOut size={16} />
         </button>
       </header>
@@ -157,6 +161,11 @@ export function Dashboard({ onLogout }: Props) {
           }}
           onCancel={() => setShowForm(false)}
         />
+      )}
+
+      {/* Change password modal */}
+      {showChangePw && (
+        <ChangePasswordModal onClose={() => setShowChangePw(false)} />
       )}
     </div>
   );

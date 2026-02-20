@@ -225,7 +225,7 @@ docker compose up -d
 | ✅ | **M2** | Device CRUD API + UI, SQLite persistence |
 | ✅ | **M3** | WebSocket SSH proxy (password auth), working terminal |
 | ✅ | **M4** | SSH key auth, credential encryption at rest |
-| ❌ | **M5** | Login / JWT auth, session expiry |
+| ✅ | **M5** | Login / JWT auth, session expiry |
 | ❌ | **M6** | Polish UI, error handling, reconnect logic, README |
 | ❌ | **M7** | Docker Compose single-command deploy, public release |
 
@@ -252,4 +252,3 @@ docker compose up -d
 - Aim for 100% test coverage on new features
 - Include tests for edge cases and error conditions
 - Run tests on every merge request
-
