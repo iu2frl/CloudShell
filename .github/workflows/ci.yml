@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: Python version
+        type: choice
+        options: ["3.12", "3.11", "3.13"]
+        default: "3.12"
+      node-version:
+        description: Node.js version
+        type: choice
+        options: ["20", "22"]
+        default: "20"
+
+jobs:
+  integration-tests:
+    name: Integration Tests
+    uses: ./.github/workflows/api-tests.yml
+    with:
+      python-version: ${{ inputs.python-version || '3.12' }}
+      node-version: ${{ inputs.node-version || '20' }}

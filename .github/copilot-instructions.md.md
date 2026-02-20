@@ -219,15 +219,15 @@ docker compose up -d
 
 ## 📋 Milestones
 
-| Milestone | Scope |
-|---|---|
-| **M1** | Project scaffold, Docker image, FastAPI hello-world, React + xterm.js boilerplate |
-| **M2** | Device CRUD API + UI, SQLite persistence |
-| **M3** | WebSocket SSH proxy (password auth), working terminal |
-| **M4** | SSH key auth, credential encryption at rest |
-| **M5** | Login / JWT auth, session expiry |
-| **M6** | Polish UI, error handling, reconnect logic, README |
-| **M7** | Docker Compose single-command deploy, public release |
+| Status | Milestone | Scope |
+|---|---|---|
+| ✅ | **M1** | Project scaffold, Docker image, FastAPI hello-world, React + xterm.js boilerplate |
+| ✅ | **M2** | Device CRUD API + UI, SQLite persistence |
+| ❌ | **M3** | WebSocket SSH proxy (password auth), working terminal |
+| ❌ | **M4** | SSH key auth, credential encryption at rest |
+| ❌ | **M5** | Login / JWT auth, session expiry |
+| ❌ | **M6** | Polish UI, error handling, reconnect logic, README |
+| ❌ | **M7** | Docker Compose single-command deploy, public release |
 
 ## Language specification
 

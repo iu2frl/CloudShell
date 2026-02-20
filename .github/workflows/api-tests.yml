@@ -1,0 +1,227 @@
+name: API Integration Tests (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Python version to use
+        type: string
+        default: "3.12"
+      node-version:
+        description: Node.js version to use
+        type: string
+        default: "20"
+
+jobs:
+  api-tests:
+    name: Backend CRUD smoke tests
+    runs-on: ubuntu-latest
+
+    env:
+      DATA_DIR: /tmp/cloudshell-test
+      SECRET_KEY: ci-test-secret
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: admin
+      TOKEN_TTL_HOURS: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Python setup ────────────────────────────────────────────────────────
+      - name: Set up Python ${{ inputs.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── Node setup (build frontend so FastAPI can serve static files) ───────
+      - name: Set up Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --silent
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+        env:
+          DOCKER_BUILD: "1"
+
+      # ── Start backend ────────────────────────────────────────────────────────
+      - name: Start backend server
+        run: |
+          python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+          echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for backend to be ready
+        run: |
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8000/api/health > /dev/null; then
+              echo "Backend is up after ${i}s"
+              break
+            fi
+            echo "Waiting... ($i)"
+            sleep 1
+          done
+          curl -sf http://localhost:8000/api/health
+
+      # ── Auth tests ───────────────────────────────────────────────────────────
+      - name: Test health endpoint
+        run: |
+          RESP=$(curl -sf http://localhost:8000/api/health)
+          echo "$RESP"
+          echo "$RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d['status'] == 'ok', f'Expected ok, got {d}'
+          print('✅ Health OK')
+          "
+
+      - name: Test login with valid credentials
+        run: |
+          TOKEN=$(curl -sf -X POST http://localhost:8000/api/auth/token \
+            -d "username=admin&password=admin" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            | python3 -c "import sys,json; t=json.load(sys.stdin); print(t['access_token'])")
+          echo "TOKEN=${TOKEN}" >> "$GITHUB_ENV"
+          echo "✅ Login OK (token length: ${#TOKEN})"
+
+      - name: Test login with wrong password returns 401
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/api/auth/token \
+            -d "username=admin&password=wrongpassword" \
+            -H "Content-Type: application/x-www-form-urlencoded")
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "401" ] && echo "✅ Reject wrong password OK" || (echo "❌ Expected 401, got $HTTP" && exit 1)
+
+      - name: Test unauthenticated request returns 401
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/devices/)
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "401" ] && echo "✅ Unauthenticated rejected OK" || (echo "❌ Expected 401, got $HTTP" && exit 1)
+
+      # ── Device CRUD tests ────────────────────────────────────────────────────
+      - name: Test list devices (empty)
+        run: |
+          RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/devices/)
+          echo "$RESP"
+          echo "$RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d == [], f'Expected empty list, got {d}'
+          print('✅ Empty device list OK')
+          "
+
+      - name: Test create device (password auth)
+        run: |
+          RESP=$(curl -sf -X POST http://localhost:8000/api/devices/ \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "Test Router",
+              "hostname": "192.168.1.1",
+              "port": 22,
+              "username": "admin",
+              "auth_type": "password",
+              "password": "secret123"
+            }')
+          echo "$RESP"
+          DEVICE_ID=$(echo "$RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d['name'] == 'Test Router'
+          assert d['hostname'] == '192.168.1.1'
+          assert d['port'] == 22
+          assert d['auth_type'] == 'password'
+          assert 'encrypted_password' not in d, 'password must not be exposed in response'
+          print(d['id'])
+          ")
+          echo "DEVICE_ID=${DEVICE_ID}" >> "$GITHUB_ENV"
+          echo "✅ Create device OK (id=$DEVICE_ID)"
+
+      - name: Test get device by id
+        run: |
+          RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/devices/$DEVICE_ID)
+          echo "$RESP"
+          echo "$RESP" | python3 -c "
+          import sys, json, os
+          d = json.load(sys.stdin)
+          assert str(d['id']) == os.environ['DEVICE_ID']
+          assert d['name'] == 'Test Router'
+          print('✅ Get device OK')
+          "
+
+      - name: Test list devices (one item)
+        run: |
+          RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/devices/)
+          echo "$RESP"
+          echo "$RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert len(d) == 1, f'Expected 1 device, got {len(d)}'
+          print('✅ List one device OK')
+          "
+
+      - name: Test update device
+        run: |
+          RESP=$(curl -sf -X PUT http://localhost:8000/api/devices/$DEVICE_ID \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name": "Test Router (updated)", "port": 2222}')
+          echo "$RESP"
+          echo "$RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d['name'] == 'Test Router (updated)', f'Name not updated: {d}'
+          assert d['port'] == 2222, f'Port not updated: {d}'
+          assert d['hostname'] == '192.168.1.1', 'Hostname should be unchanged'
+          assert d['updated_at'] != d['created_at'], 'updated_at should differ from created_at'
+          print('✅ Update device OK')
+          "
+
+      - name: Test delete device
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            -H "Authorization: Bearer $TOKEN" \
+            http://localhost:8000/api/devices/$DEVICE_ID)
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "204" ] && echo "✅ Delete device OK" || (echo "❌ Expected 204, got $HTTP" && exit 1)
+
+      - name: Test list devices (empty after delete)
+        run: |
+          RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/devices/)
+          echo "$RESP"
+          echo "$RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d == [], f'Expected empty list after delete, got {d}'
+          print('✅ Empty list after delete OK')
+          "
+
+      - name: Test get deleted device returns 404
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $TOKEN" \
+            http://localhost:8000/api/devices/$DEVICE_ID)
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "404" ] && echo "✅ 404 on deleted device OK" || (echo "❌ Expected 404, got $HTTP" && exit 1)
+
+      # ── Frontend build artefact ───────────────────────────────────────────────
+      - name: Test backend serves frontend bundle
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/)
+          [ "$HTTP" = "200" ] && echo "✅ Frontend served OK" || (echo "❌ Expected 200, got $HTTP" && exit 1)
+
+      # ── Teardown ─────────────────────────────────────────────────────────────
+      - name: Stop backend server
+        if: always()
+        run: kill "$BACKEND_PID" 2>/dev/null || true
