@@ -453,13 +453,7 @@ jobs:
 
       - name: Test refresh with already-revoked token returns 401
         run: |
-          # TOKEN was just replaced above; the old one is already revoked
-          # Attempt to refresh the old (revoked) token again
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST http://localhost:8000/api/auth/refresh \
-            -H "Authorization: Bearer $TOKEN")
-          # TOKEN here is the NEW token; get the old one via a second refresh to test
-          # Instead, log in fresh and immediately revoke via logout, then try refresh
+          # Log in fresh, immediately revoke via logout, then try to refresh — must get 401
           TEMP_TOKEN=$(curl -sf -X POST http://localhost:8000/api/auth/token \
             -d "username=admin&password=admin" \
             -H "Content-Type: application/x-www-form-urlencoded" \
@@ -468,12 +462,12 @@ jobs:
           curl -sf -X POST http://localhost:8000/api/auth/logout \
             -H "Authorization: Bearer $TEMP_TOKEN" -o /dev/null
           # Refresh should now return 401
-          HTTP2=$(curl -s -o /dev/null -w "%{http_code}" \
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
             -X POST http://localhost:8000/api/auth/refresh \
             -H "Authorization: Bearer $TEMP_TOKEN")
-          [ "$HTTP2" = "401" ] \
+          [ "$HTTP" = "401" ] \
             && echo "Refresh with revoked token -> 401 OK" \
-            || (echo "Expected 401 for revoked token refresh, got $HTTP2" && exit 1)
+            || (echo "Expected 401 for revoked token refresh, got $HTTP" && exit 1)
 
       - name: Test change-password rejects wrong current password
         run: |
