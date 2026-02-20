@@ -7,7 +7,6 @@
 [![Node 18+](https://img.shields.io/badge/node-18%2B-green.svg)](https://nodejs.org/)
 [![React 18](https://img.shields.io/badge/react-18-61DAFB.svg?logo=react&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
-[![CI](https://github.com/iu2frl/CloudShell/actions/workflows/api-tests.yml/badge.svg)](https://github.com/iu2frl/CloudShell/actions/workflows/api-tests.yml)
 
 I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free, open, and self-hosted.
 
@@ -29,6 +28,8 @@ I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not 
 
 ## Quick Start (Docker Compose)
 
+### Building locally
+
 ```bash
 git clone https://github.com/youruser/CloudShell
 cd CloudShell
@@ -41,6 +42,60 @@ Open **<http://localhost:8080>** and log in with your configured credentials.
 
 > [!IMPORTANT]
 > Put CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS. SSH credentials are encrypted at rest but the web traffic should be HTTPS.
+
+### Using prebuilt images
+
+```yaml
+services:
+
+  # ── Backend: FastAPI + AsyncSSH ─────────────────────────────────────────────
+  backend:
+    image: ghcr.io/iu2frl/cloudshell-backend:latest
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      - cloudshell_data:/data
+    environment:
+      SECRET_KEY: "changeme-generate-with-openssl-rand-hex-32"
+      ADMIN_USER: "admin"
+      ADMIN_PASSWORD: "changeme"
+      TOKEN_TTL_HOURS: "8"
+      # CORS_ORIGINS: "https://cloudshell.example.com"  # only needed when NOT behind Nginx
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks:
+      - internal
+
+  # ── Frontend: Nginx + React bundle + reverse proxy ──────────────────────────
+  frontend:
+    image: ghcr.io/iu2frl/cloudshell-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    networks:
+      - internal
+
+volumes:
+  cloudshell_data:
+
+networks:
+  internal:
+    driver: bridge
+```
 
 ## Configuration
 
@@ -93,7 +148,7 @@ Open **<http://localhost:5173>**
 cd frontend && npm run build   # output goes into the Nginx image via Dockerfile.frontend
 ```
 
-## Docker
+## Manual Docker setup
 
 ### Build both images
 
