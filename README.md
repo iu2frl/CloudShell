@@ -37,8 +37,6 @@ Terminal screen:
 - **Error boundary** — graceful recovery screen for unexpected frontend errors
 - **Docker Compose deploy** — single command to run in production
 
----
-
 ## Quick Start
 
 ### Using prebuilt images
@@ -111,8 +109,6 @@ Open **<http://localhost:8080>** and log in with your configured credentials.
 
 Prebuilt images are available on GHCR — see **[docs/configuration.md](docs/configuration.md)** for a ready-to-use `docker-compose.yml` snippet and all environment variable options.
 
----
-
 ## Documentation
 
 | Document | Description |
@@ -121,8 +117,6 @@ Prebuilt images are available on GHCR — see **[docs/configuration.md](docs/con
 | [docs/configuration.md](docs/configuration.md) | Environment variables, secret key generation, security notes |
 | [docs/development.md](docs/development.md) | Local dev setup, building, testing, Makefile reference |
 | [docs/architecture.md](docs/architecture.md) | System design, data flow, project structure |
-
----
 
 ## Vibecoded?
 
