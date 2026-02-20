@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import get_settings
 from backend.database import init_db
-from backend.routers import auth_router, devices_router, terminal_router
+from backend.routers import auth_router, devices_router, keys_router, terminal_router
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -41,6 +41,7 @@ app.add_middleware(
 # API routes
 app.include_router(auth_router, prefix="/api")
 app.include_router(devices_router, prefix="/api")
+app.include_router(keys_router, prefix="/api")
 app.include_router(terminal_router, prefix="/api")
 
 

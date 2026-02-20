@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Device, DeviceCreate, createDevice, updateDevice } from "../api/client";
-import { X } from "lucide-react";
+import { X, KeyRound, Copy, Check, Loader } from "lucide-react";
 
 interface Props {
   device?: Device;
@@ -30,8 +30,11 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
         }
       : { ...EMPTY }
   );
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+  const [saving, setSaving]         = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [publicKey, setPublicKey]   = useState<string | null>(null);
+  const [copied, setCopied]         = useState(false);
 
   const set = (key: keyof DeviceCreate, value: string | number) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -52,10 +55,37 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
     }
   };
 
+  const generateKeyPair = async () => {
+    setGenerating(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem("token") ?? "";
+      const res = await fetch("/api/keys/generate", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      set("private_key", data.private_key);
+      setPublicKey(data.public_key);
+    } catch (err) {
+      setError(`Key generation failed: ${err}`);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const copyPublicKey = () => {
+    if (!publicKey) return;
+    navigator.clipboard.writeText(publicKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-md shadow-2xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 flex-shrink-0">
           <h2 className="text-lg font-semibold text-white">
             {device ? "Edit Device" : "Add Device"}
           </h2>
@@ -64,7 +94,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
           </button>
         </div>
 
-        <form onSubmit={submit} className="px-6 py-5 space-y-4">
+        <form onSubmit={submit} className="px-6 py-5 space-y-4 overflow-y-auto">
           {error && (
             <div className="bg-red-900/40 border border-red-700 text-red-300 rounded-lg px-4 py-2 text-sm">
               {error}
@@ -73,6 +103,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
 
           <Field label="Name">
             <input
+              className="input"
               required
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
@@ -84,6 +115,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
             <div className="col-span-2">
               <Field label="Hostname / IP">
                 <input
+                  className="input"
                   required
                   value={form.hostname}
                   onChange={(e) => set("hostname", e.target.value)}
@@ -93,6 +125,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
             </div>
             <Field label="Port">
               <input
+                className="input"
                 required
                 type="number"
                 value={form.port}
@@ -103,6 +136,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
 
           <Field label="Username">
             <input
+              className="input"
               required
               value={form.username}
               onChange={(e) => set("username", e.target.value)}
@@ -112,8 +146,12 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
 
           <Field label="Auth Type">
             <select
+              className="input"
               value={form.auth_type}
-              onChange={(e) => set("auth_type", e.target.value)}
+              onChange={(e) => {
+                set("auth_type", e.target.value);
+                setPublicKey(null);
+              }}
             >
               <option value="password">Password</option>
               <option value="key">SSH Key</option>
@@ -123,6 +161,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
           {form.auth_type === "password" ? (
             <Field label="Password">
               <input
+                className="input"
                 type="password"
                 value={form.password ?? ""}
                 onChange={(e) => set("password", e.target.value)}
@@ -130,15 +169,52 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
               />
             </Field>
           ) : (
-            <Field label="Private Key (PEM)">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                  Private Key (PEM)
+                </label>
+                <button
+                  type="button"
+                  onClick={generateKeyPair}
+                  disabled={generating}
+                  className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+                >
+                  {generating
+                    ? <Loader size={12} className="animate-spin" />
+                    : <KeyRound size={12} />}
+                  {generating ? "Generating…" : "Generate key pair"}
+                </button>
+              </div>
               <textarea
                 rows={5}
                 value={form.private_key ?? ""}
                 onChange={(e) => set("private_key", e.target.value)}
                 placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                className="font-mono text-xs"
+                className="input font-mono text-xs resize-none w-full"
               />
-            </Field>
+
+              {publicKey && (
+                <div className="bg-green-900/20 border border-green-700/50 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-green-400">
+                      Public key — add to <code className="text-green-300">~/.ssh/authorized_keys</code>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyPublicKey}
+                      className="flex items-center gap-1 text-xs text-green-400 hover:text-green-300 transition-colors"
+                    >
+                      {copied ? <Check size={12} /> : <Copy size={12} />}
+                      {copied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="text-[10px] text-green-300 break-all whitespace-pre-wrap font-mono leading-relaxed">
+                    {publicKey}
+                  </pre>
+                </div>
+              )}
+            </div>
           )}
 
           <div className="flex justify-end gap-3 pt-2">
@@ -161,7 +237,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
         {label}
       </label>
-      <div className="[&>input]:input [&>select]:input [&>textarea]:input">{children}</div>
+      {children}
     </div>
   );
 }

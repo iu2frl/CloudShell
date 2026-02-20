@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.models.device import AuthType, Device
 from backend.routers.auth import get_current_user
-from backend.services.crypto import decrypt, encrypt
+from backend.services.crypto import (
+    delete_key_file,
+    encrypt,
+    save_encrypted_key,
+)
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -43,6 +47,7 @@ class DeviceOut(BaseModel):
     port: int
     username: str
     auth_type: AuthType
+    key_filename: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -51,15 +56,9 @@ class DeviceOut(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _save_key(device_id: int, pem: str, keys_dir: str) -> str:
-    import os
-    os.makedirs(keys_dir, exist_ok=True)
-    filename = f"device_{device_id}.pem"
-    path = os.path.join(keys_dir, filename)
-    with open(path, "w") as f:
-        f.write(pem)
-    os.chmod(path, 0o600)
-    return filename
+def _store_key(device_id: int, pem: str, keys_dir: str) -> str:
+    """Encrypt and save a PEM key; returns the stored filename."""
+    return save_encrypted_key(device_id, pem, keys_dir)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -99,7 +98,7 @@ async def create_device(
         # Save key after we have an id — flush first to get id
         db.add(device)
         await db.flush()
-        device.key_filename = _save_key(device.id, payload.private_key, settings.keys_dir)
+        device.key_filename = _store_key(device.id, payload.private_key, settings.keys_dir)
 
     db.add(device)
     await db.commit()
@@ -141,7 +140,7 @@ async def update_device(
     if payload.password is not None:
         device.encrypted_password = encrypt(payload.password)
     if payload.private_key is not None:
-        device.key_filename = _save_key(device.id, payload.private_key, settings.keys_dir)
+        device.key_filename = _store_key(device.id, payload.private_key, settings.keys_dir)
 
     device.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -155,8 +154,16 @@ async def delete_device(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
+    from backend.config import get_settings
+    settings = get_settings()
+
     device = await db.get(Device, device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+
+    # Remove encrypted key file from disk before deleting the DB record
+    if device.key_filename:
+        delete_key_file(device.key_filename, settings.keys_dir)
+
     await db.delete(device)
     await db.commit()

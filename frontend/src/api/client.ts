@@ -52,6 +52,7 @@ export interface Device {
   port: number;
   username: string;
   auth_type: "password" | "key";
+  key_filename?: string | null;
   created_at: string;
   updated_at: string;
 }

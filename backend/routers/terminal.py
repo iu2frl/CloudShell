@@ -1,4 +1,5 @@
 import logging
+import tempfile
 import os
 
 import asyncssh
@@ -9,7 +10,7 @@ from backend.config import get_settings
 from backend.database import get_db
 from backend.models.device import AuthType, Device
 from backend.routers.auth import get_current_user
-from backend.services.crypto import decrypt
+from backend.services.crypto import decrypt, load_decrypted_key
 from backend.services.ssh import _ws_error, close_session, create_session, stream_session
 
 log = logging.getLogger(__name__)
@@ -30,13 +31,24 @@ async def open_session(
 
     password = None
     key_path = None
+    _tmp_key_file = None  # track temp file for cleanup on error
 
     if device.auth_type == AuthType.password:
         if device.encrypted_password:
             password = decrypt(device.encrypted_password)
     else:
         if device.key_filename:
-            key_path = os.path.join(settings.keys_dir, device.key_filename)
+            # Decrypt the PEM and write to a secure temp file for asyncssh
+            pem = load_decrypted_key(device.key_filename, settings.keys_dir)
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".pem", delete=False, dir="/tmp"
+            )
+            tmp.write(pem)
+            tmp.flush()
+            tmp.close()
+            os.chmod(tmp.name, 0o600)
+            key_path = tmp.name
+            _tmp_key_file = tmp.name
 
     try:
         session_id = await create_session(
@@ -55,6 +67,13 @@ async def open_session(
         raise HTTPException(status_code=502, detail=f"Host key not verifiable: {exc}")
     except (OSError, asyncssh.Error) as exc:
         raise HTTPException(status_code=502, detail=f"SSH connection failed: {exc}")
+    finally:
+        # Always remove the temp key file — whether connect succeeded or failed
+        if _tmp_key_file:
+            try:
+                os.unlink(_tmp_key_file)
+            except OSError:
+                pass
 
     return {"session_id": session_id}
 

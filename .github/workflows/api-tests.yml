@@ -245,6 +245,74 @@ jobs:
           [ "$HTTP" = "502" ] && echo "✅ SSH connection refused → 502 OK" \
             || (echo "❌ Expected 502, got $HTTP" && exit 1)
 
+      # ── SSH key auth tests ───────────────────────────────────────────────────
+      - name: Test generate SSH key pair
+        run: |
+          KEYPAIR=$(curl -sf -X POST http://localhost:8000/api/keys/generate \
+            -H "Authorization: Bearer $TOKEN")
+          echo "$KEYPAIR" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d['private_key'].startswith('-----BEGIN OPENSSH PRIVATE KEY-----'), 'bad private_key'
+          assert d['public_key'].startswith('ssh-rsa '), 'bad public_key'
+          print('✅ Key pair generation OK')
+          "
+          echo "KEYPAIR_PRIV=$(echo $KEYPAIR | python3 -c "import sys,json; print(json.load(sys.stdin)['private_key'])" | base64 -w0)" >> "$GITHUB_ENV"
+
+      - name: Test create key-auth device
+        run: |
+          PRIV=$(echo "$KEYPAIR_PRIV" | base64 -d)
+          RESP=$(python3 - <<PYEOF
+          import urllib.request, json, os
+          token = os.environ["TOKEN"]
+          priv  = os.environ["KEYPAIR_PRIV"]
+          import base64
+          priv = base64.b64decode(priv).decode()
+          payload = json.dumps({
+              "name": "key-device", "hostname": "127.0.0.1", "port": 22,
+              "username": "ci", "auth_type": "key", "private_key": priv
+          }).encode()
+          req = urllib.request.Request(
+              "http://localhost:8000/api/devices/",
+              data=payload,
+              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+              method="POST"
+          )
+          resp = urllib.request.urlopen(req)
+          print(resp.read().decode())
+          PYEOF
+          )
+          echo "$RESP"
+          KEY_DEV_ID=$(echo "$RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d['auth_type'] == 'key', 'auth_type must be key'
+          assert d['key_filename'] is not None, 'key_filename must be set'
+          assert d['key_filename'].endswith('.enc'), 'key file must be .enc'
+          print(d['id'])
+          ")
+          KEY_FILENAME=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_filename'])")
+          echo "KEY_DEV_ID=${KEY_DEV_ID}" >> "$GITHUB_ENV"
+          echo "KEY_FILENAME=${KEY_FILENAME}" >> "$GITHUB_ENV"
+          echo "✅ Key-auth device created OK (id=$KEY_DEV_ID, file=$KEY_FILENAME)"
+
+      - name: Test encrypted key file exists, no plaintext .pem
+        run: |
+          [ -f "$DATA_DIR/keys/$KEY_FILENAME" ] \
+            && echo "✅ .enc key file exists OK" \
+            || (echo "❌ .enc file missing" && exit 1)
+          ls "$DATA_DIR/keys/"*.pem 2>/dev/null \
+            && (echo "❌ Plaintext .pem should not exist" && exit 1) \
+            || echo "✅ No plaintext .pem OK"
+
+      - name: Test delete key-auth device removes key file
+        run: |
+          curl -sf -X DELETE -H "Authorization: Bearer $TOKEN" \
+            "http://localhost:8000/api/devices/$KEY_DEV_ID"
+          [ ! -f "$DATA_DIR/keys/$KEY_FILENAME" ] \
+            && echo "✅ .enc key removed on device delete OK" \
+            || (echo "❌ .enc still present after delete" && exit 1)
+
       # ── Teardown ─────────────────────────────────────────────────────────────
       - name: Stop backend server
         if: always()
