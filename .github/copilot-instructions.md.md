@@ -232,6 +232,7 @@ docker compose up -d
 ## Language specification
 
 - Strict NO EMOJI policy
+- Test coverage for all new features and bug fixes
 
 ### Python
 
