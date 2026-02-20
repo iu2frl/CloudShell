@@ -221,6 +221,30 @@ jobs:
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/)
           [ "$HTTP" = "200" ] && echo "✅ Frontend served OK" || (echo "❌ Expected 200, got $HTTP" && exit 1)
 
+      # ── SSH error handling ────────────────────────────────────────────────────
+      - name: Test SSH to closed port returns 502
+        run: |
+          DEVICE=$(curl -sf -X POST http://localhost:8000/api/devices/ \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "Bad Port",
+              "hostname": "127.0.0.1",
+              "port": 19999,
+              "username": "user",
+              "auth_type": "password",
+              "password": "pass"
+            }')
+          SSH_DEV_ID=$(echo "$DEVICE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            "http://localhost:8000/api/terminal/session/${SSH_DEV_ID}")
+          echo "HTTP: $HTTP"
+          curl -sf -X DELETE -H "Authorization: Bearer $TOKEN" \
+            "http://localhost:8000/api/devices/${SSH_DEV_ID}" || true
+          [ "$HTTP" = "502" ] && echo "✅ SSH connection refused → 502 OK" \
+            || (echo "❌ Expected 502, got $HTTP" && exit 1)
+
       # ── Teardown ─────────────────────────────────────────────────────────────
       - name: Stop backend server
         if: always()
