@@ -16,13 +16,18 @@ interface TerminalProps {
 }
 
 export function Terminal({ device }: TerminalProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const xtermRef    = useRef<XTerm | null>(null);
-  const fitRef      = useRef<FitAddon | null>(null);
-  const wsRef       = useRef<WebSocket | null>(null);
-  const retriesRef  = useRef(0);
+  const containerRef   = useRef<HTMLDivElement>(null);
+  const xtermRef       = useRef<XTerm | null>(null);
+  const fitRef         = useRef<FitAddon | null>(null);
+  const wsRef          = useRef<WebSocket | null>(null);
+  const retriesRef     = useRef(0);
+  const connectingRef  = useRef(false);
+  const onDataDisposer = useRef<ReturnType<XTerm["onData"]> | null>(null);
   const [connState, setConnState] = useState<ConnState>("connecting");
   const toast = useToast();
+  // Stable ref so connect() doesn't need toast in its dep array (prevents reconnect loop)
+  const toastRef = useRef(toast);
+  useEffect(() => { toastRef.current = toast; });
 
   // ── Build the xterm instance once ──────────────────────────────────────────
   useEffect(() => {
@@ -71,13 +76,23 @@ export function Terminal({ device }: TerminalProps) {
     const fit  = fitRef.current;
     if (!term || !fit) return;
 
+    // Prevent concurrent connect() calls (e.g. from effect double-fire)
+    if (connectingRef.current) return;
+    connectingRef.current = true;
+
     if (retriesRef.current >= MAX_RETRIES) {
       term.writeln(`\r\n\x1b[31m[max retries (${MAX_RETRIES}) reached — click reconnect to try again]\x1b[0m`);
       setConnState("failed");
+      connectingRef.current = false;
       return;
     }
 
-    wsRef.current?.close();
+    // Close the previous socket first, then null the ref so its onclose
+    // handler cannot fire against the new connection we are about to create.
+    const prev = wsRef.current;
+    wsRef.current = null;
+    prev?.close();
+
     setConnState("connecting");
     term.writeln("\x1b[36mCloudShell\x1b[0m — connecting…");
 
@@ -94,7 +109,8 @@ export function Terminal({ device }: TerminalProps) {
       } else {
         setConnState("error");
       }
-      toast.error(`${device.name}: ${msg}`);
+      toastRef.current.error(`${device.name}: ${msg}`);
+      connectingRef.current = false;
       return;
     }
 
@@ -102,6 +118,7 @@ export function Terminal({ device }: TerminalProps) {
     const ws  = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
+    connectingRef.current = false;
 
     ws.onopen = () => {
       retriesRef.current = 0;
@@ -119,15 +136,23 @@ export function Terminal({ device }: TerminalProps) {
     };
 
     ws.onclose = (e) => {
+      // Ignore close events from a socket that has already been superseded
+      if (wsRef.current !== ws) return;
       const clean = e.wasClean && e.code === 1000;
       setConnState(clean ? "disconnected" : "error");
       term.writeln(`\r\n\x1b[33m[disconnected${clean ? "" : ` code=${e.code}`}]\x1b[0m`);
-      if (!clean) toast.info(`${device.name}: connection closed`);
+      if (!clean) toastRef.current.info(`${device.name}: connection closed`);
     };
 
-    ws.onerror = () => { setConnState("error"); };
+    ws.onerror = () => {
+      if (wsRef.current !== ws) return;
+      setConnState("error");
+    };
 
-    term.onData((data) => {
+    // Dispose any previous onData listener before registering a new one to
+    // prevent multiple handlers accumulating across reconnects.
+    onDataDisposer.current?.dispose();
+    onDataDisposer.current = term.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(new TextEncoder().encode(data));
       }
@@ -142,14 +167,16 @@ export function Terminal({ device }: TerminalProps) {
     });
     if (containerRef.current) ro.observe(containerRef.current);
     ws.addEventListener("close", () => ro.disconnect());
-  }, [device.id, device.name, toast]);
+  // toast intentionally excluded — accessed via toastRef to keep connect() stable
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device.id, device.name]);
 
   useEffect(() => { connect(); }, [connect]);
 
   // ── Copy session info ────────────────────────────────────────────────────────
   const copyInfo = () => {
     navigator.clipboard.writeText(`${device.username}@${device.hostname}:${device.port}`);
-    toast.info("Copied to clipboard");
+    toastRef.current.info("Copied to clipboard");
   };
 
   // ── Status badge ────────────────────────────────────────────────────────────
@@ -188,7 +215,7 @@ export function Terminal({ device }: TerminalProps) {
 
           {/* Reconnect */}
           <button
-            onClick={() => { retriesRef.current = 0; connect(); }}
+            onClick={() => { retriesRef.current = 0; connectingRef.current = false; connect(); }}
             title="Reconnect"
             className="icon-btn"
             disabled={connState === "connecting" || connState === "connected"}

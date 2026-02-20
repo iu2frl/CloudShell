@@ -73,7 +73,7 @@ export function Dashboard({ onLogout }: Props) {
         {/* Logo */}
         <div className="flex items-center gap-2 flex-shrink-0">
           <TerminalIcon size={18} className="text-blue-400" />
-          <span className="font-bold text-white text-sm tracking-tight hidden sm:block">CloudShell</span>
+          <span className="font-bold text-white text-sm tracking-tight hidden sm:block">CloudShell by IU2FRL</span>
         </div>
 
         {/* Tab strip */}

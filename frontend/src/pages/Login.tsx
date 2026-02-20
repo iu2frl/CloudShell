@@ -35,7 +35,7 @@ export function Login({ onLogin }: Props) {
             <Terminal size={28} className="text-white" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold text-white">CloudShell</h1>
+            <h1 className="text-2xl font-bold text-white">CloudShell by IU2FRL</h1>
             <p className="text-slate-400 text-sm mt-1">Self-hosted SSH gateway</p>
           </div>
         </div>
