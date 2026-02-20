@@ -36,6 +36,7 @@ Terminal screen:
 - [x] **Toast notifications**: non-blocking feedback for every action
 - [x] **Error boundary**: graceful recovery screen for unexpected frontend errors
 - [x] **Docker Compose deploy**: single command to run in production
+- [ ] **Responsive design**: optimized for mobile and tablet devices
 - [ ] **SFTP**: secure file transfer over SSH
 - [ ] **File manager**: browse and manage files on the remote server
 - [ ] **Multi-user support**: allow multiple users to access the same CloudShell instance
