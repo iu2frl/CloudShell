@@ -59,7 +59,7 @@ shell:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 test:
-	DATA_DIR=/tmp/cloudshell-test SECRET_KEY=ci-test-secret \
+	DATA_DIR=/tmp/cloudshell-test-$$(date +%s) SECRET_KEY=ci-test-secret \
 	  ADMIN_USER=admin ADMIN_PASSWORD=admin TOKEN_TTL_HOURS=1 \
 	  CORS_ORIGINS="*" \
 	  .venv/bin/python -m pytest tests/ -v

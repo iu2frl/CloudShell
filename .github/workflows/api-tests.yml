@@ -18,7 +18,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      DATA_DIR: /tmp/cloudshell-test
+      # Use a run-unique data dir so stale SQLite DBs from previous runs never interfere
+      DATA_DIR: /tmp/cloudshell-test-${{ github.run_id }}
       SECRET_KEY: ci-test-secret
       ADMIN_USER: admin
       ADMIN_PASSWORD: admin
@@ -545,3 +546,7 @@ jobs:
       - name: Stop backend server
         if: always()
         run: kill "$BACKEND_PID" 2>/dev/null || true
+
+      - name: Clean up data dir
+        if: always()
+        run: rm -rf "$DATA_DIR"
