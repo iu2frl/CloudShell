@@ -13,7 +13,7 @@ from backend.database import init_db
 from backend.routers import auth_router, devices_router, keys_router, terminal_router
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-VERSION = "0.1.0"
+VERSION = "1.0.0"
 
 log = logging.getLogger(__name__)
 _start_time = time.time()

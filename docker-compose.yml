@@ -6,11 +6,19 @@ services:
       - "8080:8000"
     volumes:
       - cloudshell_data:/data
+    env_file:
+      - .env
     environment:
       - SECRET_KEY=${SECRET_KEY:-changeme-set-in-dotenv}
       - ADMIN_USER=${ADMIN_USER:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme}
       - TOKEN_TTL_HOURS=${TOKEN_TTL_HOURS:-8}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
 volumes:
   cloudshell_data:

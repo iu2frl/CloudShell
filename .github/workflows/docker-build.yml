@@ -1,0 +1,53 @@
+name: Docker Build (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  docker-build:
+    name: Build Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: cloudshell:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test image starts and passes healthcheck
+        run: |
+          docker run -d --name cloudshell-ci \
+            -p 8000:8000 \
+            -e SECRET_KEY=ci-test-secret \
+            -e ADMIN_USER=admin \
+            -e ADMIN_PASSWORD=admin \
+            cloudshell:ci
+
+          echo "Waiting for container to be healthy..."
+          for i in $(seq 1 30); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' cloudshell-ci 2>/dev/null || echo "starting")
+            echo "  [$i] status=$STATUS"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Container is healthy"
+              break
+            fi
+            sleep 2
+          done
+
+          FINAL=$(docker inspect --format='{{.State.Health.Status}}' cloudshell-ci)
+          docker stop cloudshell-ci
+          docker rm cloudshell-ci
+
+          [ "$FINAL" = "healthy" ] \
+            && echo "Docker smoke test passed" \
+            || (echo "Container never became healthy (status=$FINAL)" && exit 1)

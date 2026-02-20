@@ -13,10 +13,20 @@ RUN DOCKER_BUILD=1 npm run build
 # ── Stage 2: Python backend ────────────────────────────────────────────────────
 FROM python:3.12-slim AS final
 
+LABEL org.opencontainers.image.title="CloudShell" \
+      org.opencontainers.image.description="Self-hosted web SSH gateway" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/youruser/CloudShell"
+
 # System deps for asyncssh / cryptography
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Run as non-root user
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --no-create-home appuser
 
 WORKDIR /app
 
@@ -28,13 +38,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 
 # Copy built frontend into the place FastAPI will serve it from
-# vite builds to frontend/dist inside the build stage
 COPY --from=frontend-build /app/frontend/dist ./backend/static/
-# Also handle if build output ended up in backend/static directly
-RUN true
 
-# Data directory (override with a volume)
-RUN mkdir -p /data/keys && chmod 700 /data/keys
+# Data directory — will be overridden by a volume in production
+RUN mkdir -p /data/keys && chmod 700 /data/keys && chown -R appuser:appgroup /data /app
+
+USER appuser
 
 ENV DATA_DIR=/data \
     SECRET_KEY=changeme \
@@ -43,5 +52,8 @@ ENV DATA_DIR=/data \
     TOKEN_TTL_HOURS=8
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -sf http://localhost:8000/api/health || exit 1
 
 CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

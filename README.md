@@ -122,6 +122,21 @@ docker compose down           # stop
 docker compose down -v        # stop + delete data volume
 ```
 
+### Makefile shortcuts
+
+A `Makefile` is included for common tasks:
+
+```bash
+make up       # build image + start stack (copies .env.example if no .env exists)
+make down     # stop the stack
+make logs     # tail container logs
+make restart  # restart the container
+make shell    # open a shell inside the running container
+make build    # build the Docker image only
+make dev      # start backend + frontend dev servers locally (no Docker)
+make test     # run backend integration tests locally
+```
+
 ---
 
 ## 🏗️ Architecture
@@ -220,7 +235,7 @@ CloudShell/
 | M4 | ✅ | SSH key auth, AES-256-GCM credential encryption |
 | M5 | ✅ | JWT auth, session expiry, token refresh, change-password |
 | M6 | ✅ | UI polish, toasts, error boundary, README |
-| M7 | ⬜ | Docker Compose single-command deploy, public release |
+| M7 | ✅ | Docker Compose single-command deploy, public release |
 
 ---
 

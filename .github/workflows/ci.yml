@@ -24,3 +24,7 @@ jobs:
     with:
       python-version: ${{ inputs.python-version || '3.12' }}
       node-version: ${{ inputs.node-version || '20' }}
+
+  docker-build:
+    name: Docker Build
+    uses: ./.github/workflows/docker-build.yml
