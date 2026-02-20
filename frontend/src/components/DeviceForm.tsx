@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Device, DeviceCreate, createDevice, updateDevice } from "../api/client";
-import { X, KeyRound, Copy, Check, Loader } from "lucide-react";
+import { X, KeyRound, Copy, Check, Loader, Upload } from "lucide-react";
 
 interface Props {
   device?: Device;
@@ -35,9 +35,20 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
   const [generating, setGenerating] = useState(false);
   const [publicKey, setPublicKey]   = useState<string | null>(null);
   const [copied, setCopied]         = useState(false);
+  const fileInputRef                = useRef<HTMLInputElement>(null);
 
   const set = (key: keyof DeviceCreate, value: string | number) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  const loadKeyFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => set("private_key", reader.result as string);
+    reader.readAsText(file);
+    // Reset so the same file can be re-selected if needed
+    e.target.value = "";
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -174,17 +185,35 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
                 <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
                   Private Key (PEM)
                 </label>
-                <button
-                  type="button"
-                  onClick={generateKeyPair}
-                  disabled={generating}
-                  className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
-                >
-                  {generating
-                    ? <Loader size={12} className="animate-spin" />
-                    : <KeyRound size={12} />}
-                  {generating ? "Generating…" : "Generate key pair"}
-                </button>
+                <div className="flex items-center gap-3">
+                  {/* Hidden file picker — triggered by the Upload button */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pem,.key,id_rsa,id_ed25519,id_ecdsa"
+                    className="hidden"
+                    onChange={loadKeyFile}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                  >
+                    <Upload size={12} />
+                    Load file
+                  </button>
+                  <button
+                    type="button"
+                    onClick={generateKeyPair}
+                    disabled={generating}
+                    className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+                  >
+                    {generating
+                      ? <Loader size={12} className="animate-spin" />
+                      : <KeyRound size={12} />}
+                    {generating ? "Generating…" : "Generate key pair"}
+                  </button>
+                </div>
               </div>
               <textarea
                 rows={5}
