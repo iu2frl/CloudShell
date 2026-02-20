@@ -8,6 +8,16 @@ __pycache__/
 # C extensions
 *.so
 
+### CloudShell specific ###
+.venv/
+.env
+backend/static/
+frontend/node_modules/
+frontend/dist/
+/data/
+*.db
+*.pem
+
 # Distribution / packaging
 .Python
 build/

@@ -1,0 +1,10 @@
+fastapi==0.129.0
+uvicorn[standard]==0.34.0
+asyncssh==2.22.0
+sqlalchemy==2.0.46
+aiosqlite==0.22.1
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.20
+cryptography==44.0.0
+pydantic-settings==2.9.1

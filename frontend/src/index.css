@@ -1,0 +1,48 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #0f1117;
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+@layer components {
+  .input {
+    @apply w-full bg-slate-800 border border-slate-600 text-slate-100 rounded-lg px-3 py-2 text-sm
+           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+           placeholder:text-slate-600 transition-colors;
+  }
+
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-medium
+           rounded-lg px-4 py-2 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply bg-transparent hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-medium
+           rounded-lg px-4 py-2 text-sm border border-slate-700 transition-colors;
+  }
+
+  .icon-btn {
+    @apply p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors;
+  }
+}
+
+/* xterm.js overrides */
+.xterm {
+  padding: 8px;
+  height: 100%;
+}
+
+.xterm-viewport {
+  overflow-y: auto !important;
+}

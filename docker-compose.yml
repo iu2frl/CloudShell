@@ -1,0 +1,16 @@
+services:
+  cloudshell:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8000"
+    volumes:
+      - cloudshell_data:/data
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-changeme-set-in-dotenv}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme}
+      - TOKEN_TTL_HOURS=${TOKEN_TTL_HOURS:-8}
+
+volumes:
+  cloudshell_data:
