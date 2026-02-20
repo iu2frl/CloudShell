@@ -10,7 +10,15 @@
 
 I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free, open, and self-hosted.
 
----
+## Screenshots
+
+Login screen:
+
+![Login Screen](./images/login.png)
+
+Terminal screen:
+
+![Terminal Screen](./images/main.png)
 
 ## Features
 
