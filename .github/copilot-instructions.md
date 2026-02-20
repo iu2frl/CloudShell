@@ -25,3 +25,11 @@
 - Aim for 100% test coverage on new features
 - Include tests for edge cases and error conditions
 - Run tests on every merge request
+
+## Security considerations
+
+- Always encrypt sensitive data like credentials and keys
+- Configure all apps to run on the least privileged user
+- Implement rate limiting and monitoring for all APIs
+- Isolate all functions and services to minimize the attack surface
+  - Ideally by having a microservices architecture with backend on a different container from the frontend
