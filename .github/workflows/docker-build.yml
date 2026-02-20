@@ -21,6 +21,7 @@ jobs:
           context: .
           file: Dockerfile.backend
           push: false
+          load: true
           tags: cloudshell-backend:ci
           cache-from: type=gha,scope=backend
           cache-to: type=gha,scope=backend,mode=max
@@ -31,22 +32,13 @@ jobs:
           context: .
           file: Dockerfile.frontend
           push: false
+          load: true
           tags: cloudshell-frontend:ci
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
 
-      - name: Smoke-test stack with Docker Compose
+      - name: Smoke-test stack
         run: |
-          # Override image names to use the ones we just built
-          docker compose \
-            -f docker-compose.yml \
-            --env-file /dev/null \
-            -p cloudshell-ci \
-            up -d \
-            --no-build \
-            2>&1 || true
-
-          # Start the stack using our CI images directly
           docker network create cloudshell-ci-internal 2>/dev/null || true
 
           docker run -d --name cs-backend-ci \
