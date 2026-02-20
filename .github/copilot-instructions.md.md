@@ -236,6 +236,9 @@ docker compose up -d
 
 ### Python
 
+- Always use venv for virtual environments
+  - Always activate the virtual environment before installing dependencies
+  - Use requirements.txt to manage dependencies
 - Use logging library with appropriate log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
   - Use lazy formatting for log messages (e.g. logging.debug("Message: %s", variable))
 - Follow PEP 8 style guide for Python code
