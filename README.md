@@ -19,6 +19,7 @@ I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not 
 - **Device manager** — add, edit, and delete SSH targets with name, host, port, and credentials
 - **Password & SSH key auth** — store passwords or PEM private keys, both encrypted at rest (AES-256-GCM)
 - **Built-in key generator** — generate RSA-4096 key pairs directly from the UI; copy the public key to paste into `authorized_keys`
+- **Key file upload** — load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
 - **JWT session auth** — login page, configurable session TTL, silent token refresh, and token revocation on logout
 - **Change password** — update the admin password at runtime without restarting
 - **Session expiry badge** — live countdown in the header turns yellow/red as the session approaches expiry
@@ -26,12 +27,14 @@ I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not 
 - **Error boundary** — graceful recovery screen for unexpected frontend errors
 - **Docker Compose deploy** — single command to run in production
 
+---
+
 ## Quick Start (Docker Compose)
 
 ### Building locally
 
 ```bash
-git clone https://github.com/youruser/CloudShell
+git clone https://github.com/iu2frl/CloudShell
 cd CloudShell
 cp .env.example .env
 # Edit .env — set a strong SECRET_KEY and ADMIN_PASSWORD
@@ -97,6 +100,8 @@ networks:
     driver: bridge
 ```
 
+---
+
 ## Configuration
 
 All configuration is via environment variables (or a `.env` file):
@@ -112,11 +117,86 @@ All configuration is via environment variables (or a `.env` file):
 
 ### Secret key generation
 
-To generate a secure secret key, run the following command:
-
 ```bash
 openssl rand -hex 32
 ```
+
+---
+
+## User Guide
+
+### Logging in
+
+Navigate to the CloudShell URL and log in with your `ADMIN_USER` / `ADMIN_PASSWORD` credentials. The session is valid for `TOKEN_TTL_HOURS` hours; the frontend silently refreshes the token 10 minutes before expiry. The remaining session time is shown in the top-left corner of the dashboard as **Session: Xh Ym**.
+
+### Managing devices
+
+Click **Add device** in the left sidebar to register a new SSH target. Each device requires:
+
+| Field | Description |
+| --- | --- |
+| Name | A friendly label shown in the sidebar and terminal tab |
+| Hostname / IP | The SSH server address |
+| Port | SSH port (default `22`) |
+| Username | The SSH user to log in as |
+| Auth type | `Password` or `SSH Key` |
+
+Devices can be edited or deleted at any time via the pencil / trash icons in the sidebar. Credentials are always encrypted at rest and never returned to the frontend after saving.
+
+### Password authentication
+
+Select **Password** as the auth type and enter the remote user's password. The password is encrypted with AES-256-GCM before being stored.
+
+### SSH key authentication
+
+Select **SSH Key** as the auth type. There are three ways to supply the private key:
+
+#### Option 1 — Paste an existing key
+
+Paste the contents of your existing private key (PEM format, e.g. `~/.ssh/id_rsa`) directly into the **Private Key** textarea.
+
+#### Option 2 — Load from a file
+
+Click **Load file** next to the textarea. A file picker opens — select any `.pem`, `.key`, `id_rsa`, `id_ed25519`, or `id_ecdsa` file from your local machine. The key content is read in the browser and placed into the textarea; nothing is sent to the server until you click **Save**.
+
+#### Option 3 — Generate a new key pair
+
+Click **Generate key pair**. The backend generates a fresh RSA-4096 key pair and:
+
+1. Populates the **Private Key** textarea automatically
+2. Displays the corresponding **Public Key** in a green box below, with a **Copy** button
+
+Copy the public key and add it to `~/.ssh/authorized_keys` on the remote server before saving:
+
+```bash
+echo "<paste public key here>" >> ~/.ssh/authorized_keys
+```
+
+Then click **Save**. From that point on, CloudShell authenticates to that device using the generated key.
+
+> [!NOTE]
+> The private key is encrypted with AES-256-GCM and stored as an `.enc` file under `DATA_DIR/keys/`. It is never stored in plaintext.
+
+### Opening a terminal
+
+Click any device name in the sidebar to open a terminal tab. Multiple tabs can be open simultaneously, each connected to a different device. The tab toolbar shows:
+
+- **Device name** and `user@host:port`
+- **Connection status badge** — Connecting / Connected / Disconnected / Error / Failed
+- **Copy** button — copies `user@host:port` to clipboard
+- **Reconnect** button — closes the current session and opens a fresh one
+
+Typing `exit` or closing the remote shell ends the session cleanly and the badge switches to **Disconnected**.
+
+### Changing the admin password
+
+Click the **Session** timer badge in the top-left corner to open the change-password dialog. The new password takes effect immediately; the current session remains valid.
+
+### Logging out
+
+Click the **Logout** button in the top-right corner. The current JWT is revoked server-side so it cannot be reused even if intercepted.
+
+---
 
 ## Development Setup
 
@@ -156,6 +236,8 @@ Open **<http://localhost:5173>**
 cd frontend && npm run build   # output goes into the Nginx image via Dockerfile.frontend
 ```
 
+---
+
 ## Manual Docker setup
 
 ### Build both images
@@ -178,8 +260,6 @@ docker compose down -v        # stop + delete data volume
 
 ### Makefile shortcuts
 
-A `Makefile` is included for common tasks:
-
 ```bash
 make build            # build both Docker images
 make build-backend    # build the backend image only
@@ -193,6 +273,8 @@ make shell            # open a shell inside the running backend container
 make dev              # start backend + frontend dev servers locally (no Docker)
 make test             # run backend integration tests locally
 ```
+
+---
 
 ## Architecture
 
@@ -229,6 +311,8 @@ Browser (xterm.js)
 - **Credentials** are encrypted with AES-256-GCM; the key is derived from `SECRET_KEY` via PBKDF2-HMAC-SHA256 (260 000 iterations)
 - **SSH private keys** are stored as encrypted `.enc` files under `DATA_DIR/keys/`, never in plaintext
 - **known_hosts** is persisted at `DATA_DIR/known_hosts` with accept-new policy
+
+---
 
 ## Project Structure
 
@@ -273,12 +357,13 @@ CloudShell/
 │
 ├── Dockerfile.backend        # FastAPI backend image
 ├── Dockerfile.frontend       # Node build → nginx:alpine image
-├── Dockerfile.monolith       # Legacy monolith build (not used in production)
 ├── docker-compose.yml
 ├── requirements.txt
 ├── .env.example
 └── SPECS.md
 ```
+
+---
 
 ## Security Notes
 
@@ -291,6 +376,8 @@ CloudShell/
 | Host key verification | `known_hosts` file persisted in `DATA_DIR`; accept-new policy |
 | Admin password | bcrypt-hashed in DB after first change; env-var fallback on first boot only |
 
+---
+
 ## Vibecoded?
 
 ✨ AF ✨
@@ -298,3 +385,5 @@ CloudShell/
 ## License
 
 GNU General Public License v3.0 — see [LICENSE](LICENSE) for the full text.
+
+
