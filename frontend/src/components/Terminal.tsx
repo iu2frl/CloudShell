@@ -125,7 +125,7 @@ export function Terminal({ device }: TerminalProps) {
       setConnState("connected");
       term.clear();
       const { rows, cols } = term;
-      ws.send(JSON.stringify({ type: "resize", cols, rows }));
+      ws.send(new TextEncoder().encode(JSON.stringify({ type: "resize", cols, rows })));
     };
 
     ws.onmessage = (e) => {
@@ -162,7 +162,7 @@ export function Terminal({ device }: TerminalProps) {
       try { fit.fit(); } catch { /* ignore */ }
       const { rows, cols } = term;
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        ws.send(new TextEncoder().encode(JSON.stringify({ type: "resize", cols, rows })));
       }
     });
     if (containerRef.current) ro.observe(containerRef.current);
