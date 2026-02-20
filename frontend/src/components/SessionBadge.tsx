@@ -49,8 +49,9 @@ export function SessionBadge({ onClick }: Props) {
     <button
       onClick={onClick}
       title="Session expiry — click to change password"
-      className={`text-[10px] font-mono border rounded px-2 py-0.5 transition-colors ${color} hover:bg-white/5`}
+      className={`flex items-center gap-1.5 text-[10px] font-mono border rounded px-2 py-0.5 transition-colors ${color} hover:bg-white/5`}
     >
+      <span className="text-slate-500 font-sans normal-case tracking-normal" style={{ fontSize: "10px" }}>Session timeout:</span>
       {formatRemaining(remaining)}
     </button>
   );
