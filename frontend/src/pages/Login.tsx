@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { login } from "../api/client";
 import { Terminal } from "lucide-react";
 
@@ -11,6 +11,14 @@ export function Login({ onLogin }: Props) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/health")
+      .then((r) => r.json())
+      .then((d) => setVersion(d.version ?? null))
+      .catch(() => { /* version stays null */ });
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,7 +93,7 @@ export function Login({ onLogin }: Props) {
         </div>
 
         <p className="text-center text-slate-600 text-xs mt-6">
-          CloudShell v0.1.0
+          CloudShell{version ? ` v${version}` : ""}
         </p>
       </div>
     </div>

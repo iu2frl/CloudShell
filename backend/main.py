@@ -11,7 +11,7 @@ from backend.config import get_settings
 from backend.database import init_db
 from backend.routers import auth_router, devices_router, keys_router, terminal_router
 
-VERSION = "1.0.0"
+VERSION = os.getenv("APP_VERSION", "dev")
 
 # Configure application logging
 logging.basicConfig(

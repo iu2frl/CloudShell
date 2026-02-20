@@ -1,8 +1,12 @@
 FROM python:3.12-slim
 
+# APP_VERSION is injected at build time (e.g. --build-arg APP_VERSION=v1.2.3).
+# Falls back to "dev" for local builds.
+ARG APP_VERSION=dev
+
 LABEL org.opencontainers.image.title="CloudShell Backend" \
       org.opencontainers.image.description="Self-hosted web SSH gateway — API server" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="GPL-3.0-only" \
       org.opencontainers.image.source="https://github.com/iu2frl/CloudShell"
 
 # System deps for asyncssh / cryptography
@@ -33,7 +37,8 @@ ENV DATA_DIR=/data \
     SECRET_KEY=changeme \
     ADMIN_USER=admin \
     ADMIN_PASSWORD=changeme \
-    TOKEN_TTL_HOURS=8
+    TOKEN_TTL_HOURS=8 \
+    APP_VERSION=${APP_VERSION}
 
 EXPOSE 8000
 

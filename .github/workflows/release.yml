@@ -52,6 +52,7 @@ jobs:
           file: Dockerfile.backend
           platforms: linux/amd64
           push: true
+          build-args: APP_VERSION=${{ github.ref_name }}
           outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true
           cache-from: type=gha,scope=backend-amd64
           cache-to: type=gha,scope=backend-amd64,mode=max
@@ -95,6 +96,7 @@ jobs:
           file: Dockerfile.backend
           platforms: linux/arm64
           push: true
+          build-args: APP_VERSION=${{ github.ref_name }}
           outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true
           cache-from: type=gha,scope=backend-arm64
           cache-to: type=gha,scope=backend-arm64,mode=max
