@@ -53,8 +53,6 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
-        env:
-          DOCKER_BUILD: "1"
 
       # ── Start backend ────────────────────────────────────────────────────────
       - name: Start backend server
