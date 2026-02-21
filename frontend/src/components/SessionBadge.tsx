@@ -76,31 +76,30 @@ export function SessionBadge() {
 
   return (
     <div className="relative">
-      {/* Trigger button */}
+      {/* Trigger button — clock icon only, no countdown text */}
       <button
         ref={buttonRef}
         onClick={() => setOpen((v) => !v)}
         title="Session info"
-        className={`flex items-center gap-1.5 text-[10px] font-mono border rounded px-2 py-0.5
+        className={`flex items-center justify-center border rounded p-1.5
                     bg-transparent transition-colors cursor-pointer ${colorClass}`}
       >
-        <Clock size={11} className="flex-shrink-0" />
-        <span className="hidden sm:inline text-slate-500 font-sans normal-case tracking-normal" style={{ fontSize: "10px" }}>
-          Session:
-        </span>
-        {formatRemaining(remaining)}
+        <Clock size={15} className="flex-shrink-0" />
       </button>
 
-      {/* Popover */}
+      {/* Popover — full-screen overlay, panel centered */}
       {open && (
         <div
-          ref={popoverRef}
-          className="absolute right-0 top-full mt-2 w-72 z-50
-                     bg-slate-800 border border-slate-600 rounded-xl shadow-2xl
-                     text-slate-300 text-xs leading-relaxed p-4"
-          role="dialog"
-          aria-label="Session information"
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
         >
+          <div
+            ref={popoverRef}
+            className="w-80 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl
+                       text-slate-300 text-xs leading-relaxed p-4"
+            role="dialog"
+            aria-label="Session information"
+          >
           {/* Header */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 font-semibold text-slate-100 text-sm">
@@ -141,6 +140,7 @@ export function SessionBadge() {
             If the token expires (e.g. the tab was closed for too long), you will be redirected to the login page
             and all active terminal sessions will be terminated.
           </p>
+          </div>
         </div>
       )}
     </div>

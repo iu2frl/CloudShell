@@ -2,13 +2,12 @@
  * Tests for components/SessionBadge.tsx
  *
  * Covers:
- * - renders a button with a clock icon
- * - displays the formatted countdown from the stored token
- * - shows "expired" when no token is stored
+ * - renders a button with a clock icon (no countdown text on the button)
  * - popover is hidden initially
  * - clicking the button opens the popover
  * - popover contains the expected explanation headings / key terms
- * - popover shows the expiry time when a valid token is present
+ * - popover shows the live countdown and expiry time when a valid token is present
+ * - shows "expired" inside the popover when no token is stored
  * - clicking the X button inside the popover closes it
  * - pressing Escape closes the popover
  * - clicking outside the popover closes it
@@ -65,27 +64,39 @@ afterEach(() => {
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 describe('SessionBadge — rendering', () => {
-  it('renders a button element', () => {
+  it('renders a button element with the clock icon trigger', () => {
     render(<SessionBadge />);
     expect(getTrigger()).toBeInTheDocument();
   });
 
-  it('shows "expired" when no token is stored', () => {
+  it('does NOT show any countdown text on the button itself', () => {
+    setToken(2 * 60 * 60 * 1000); // 2 h remaining
     render(<SessionBadge />);
-    expect(getTrigger()).toHaveTextContent('expired');
+    // Button should contain only the icon — no text content
+    expect(getTrigger().textContent?.trim()).toBe('');
   });
 
-  it('shows the formatted remaining time from the stored token', () => {
+  it('shows "expired" inside the popover when no token is stored', () => {
+    render(<SessionBadge />);
+    openPopover();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('expired');
+  });
+
+  it('shows the formatted remaining time inside the popover', () => {
     setToken(2 * 60 * 60 * 1000); // exactly 2 h from frozen now
     render(<SessionBadge />);
-    // At the frozen moment, 2h remain (displayed as "2h 0m")
-    expect(getTrigger()).toHaveTextContent('2h 0m');
+    openPopover();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('2h 0m');
   });
 
-  it('shows minutes and seconds when less than an hour remains', () => {
+  it('shows minutes and seconds inside the popover when less than an hour remains', () => {
     setToken(25 * 60 * 1000); // exactly 25 min from frozen now
     render(<SessionBadge />);
-    expect(getTrigger()).toHaveTextContent('25m 0s');
+    openPopover();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('25m 0s');
   });
 });
 
@@ -215,14 +226,15 @@ describe('SessionBadge — popover content', () => {
 // ── Live countdown update ─────────────────────────────────────────────────────
 
 describe('SessionBadge — live countdown', () => {
-  it('updates the displayed time as the clock advances', () => {
+  it('updates the displayed time inside the popover as the clock advances', () => {
     setToken(2 * 60 * 1000); // exactly 2 min from frozen now
     render(<SessionBadge />);
-    const btn = getTrigger();
-    expect(btn).toHaveTextContent('2m 0s');
+    openPopover();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('2m 0s');
 
     // Advance 61 s: 2m 0s → 59s (formatRemaining shows seconds only when m === 0)
     act(() => { vi.advanceTimersByTime(61_000); });
-    expect(btn).toHaveTextContent('59s');
+    expect(dialog).toHaveTextContent('59s');
   });
 });
