@@ -18,6 +18,12 @@ on:
         default: "20"
 
 jobs:
+  unit-tests:
+    name: Unit Tests
+    uses: ./.github/workflows/unit-tests.yml
+    with:
+      python-version: ${{ inputs.python-version || '3.12' }}
+
   integration-tests:
     name: Integration Tests
     uses: ./.github/workflows/api-tests.yml

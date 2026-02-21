@@ -1,0 +1,40 @@
+name: Unit Tests (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Python version to use
+        type: string
+        default: "3.12"
+
+jobs:
+  unit-tests:
+    name: Backend unit tests (pytest)
+    runs-on: ubuntu-latest
+
+    env:
+      DATA_DIR: /tmp/cloudshell-test-${{ github.run_id }}
+      SECRET_KEY: ci-test-secret
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: admin
+      TOKEN_TTL_HOURS: "1"
+      AUDIT_RETENTION_DAYS: "7"
+      CORS_ORIGINS: "*"
+      APP_VERSION: "ci"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ inputs.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pytest
+        run: python -m pytest tests/ -v --tb=short
