@@ -133,9 +133,11 @@ For more details on fhe security measures, configuration and recommended hardeni
 
 Pull requests are only accepted on the `dev` branch.
 
-## Vibecoded?
+## Vibecoding?
 
 ✨ AF ✨
+
+See [Vibecoding](./vibecoding/README.md) for more information. I would like for this project to be an inspiration for others looking to leverage AI in their development workflows.
 
 ## License
 
