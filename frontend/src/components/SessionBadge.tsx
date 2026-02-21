@@ -4,15 +4,9 @@
  * - Green:  > 30 min remaining
  * - Yellow: 10–30 min remaining
  * - Red:    < 10 min remaining (pulses)
- *
- * Clicking it opens the change-password modal.
  */
 import { useEffect, useState } from "react";
 import { getTokenExpiry } from "../api/client";
-
-interface Props {
-  onClick: () => void;
-}
 
 function formatRemaining(ms: number): string {
   if (ms <= 0) return "expired";
@@ -25,7 +19,7 @@ function formatRemaining(ms: number): string {
   return `${s}s`;
 }
 
-export function SessionBadge({ onClick }: Props) {
+export function SessionBadge() {
   const [remaining, setRemaining] = useState<number>(0);
 
   useEffect(() => {
@@ -46,13 +40,12 @@ export function SessionBadge({ onClick }: Props) {
       : "text-red-400 border-red-700/50 animate-pulse";
 
   return (
-    <button
-      onClick={onClick}
-      title="Session expiry — click to change password"
-      className={`flex items-center gap-1.5 text-[10px] font-mono border rounded px-2 py-0.5 transition-colors ${color} hover:bg-white/5`}
+    <div
+      title="Session time remaining"
+      className={`flex items-center gap-1.5 text-[10px] font-mono border rounded px-2 py-0.5 ${color}`}
     >
       <span className="text-slate-500 font-sans normal-case tracking-normal" style={{ fontSize: "10px" }}>Session timeout:</span>
       {formatRemaining(remaining)}
-    </button>
+    </div>
   );
 }
