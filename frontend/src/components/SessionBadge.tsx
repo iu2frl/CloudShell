@@ -44,7 +44,7 @@ export function SessionBadge() {
       title="Session time remaining"
       className={`flex items-center gap-1.5 text-[10px] font-mono border rounded px-2 py-0.5 ${color}`}
     >
-      <span className="text-slate-500 font-sans normal-case tracking-normal" style={{ fontSize: "10px" }}>Session timeout:</span>
+      <span className="text-slate-500 font-sans normal-case tracking-normal hidden sm:inline" style={{ fontSize: "10px" }}>Session timeout:</span>
       {formatRemaining(remaining)}
     </div>
   );
