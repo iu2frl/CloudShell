@@ -115,6 +115,15 @@ describe('GridCell — assigned state', () => {
     expect(onAssign).toHaveBeenCalledWith(0, null);
   });
 
+  it('pointerdown on the unassign button also focuses the cell (capture fires before bubble stopPropagation)', () => {
+    // The capture-phase listener on the wrapper fires before any child's
+    // bubble-phase stopPropagation can silence it — so clicking the unassign
+    // button correctly marks this cell as focused.
+    const { onFocus } = setup(1);
+    fireEvent.pointerDown(screen.getByTitle('Remove from this pane'));
+    expect(onFocus).toHaveBeenCalledWith(0);
+  });
+
   it('calls onContentRef with the mount-point div on mount', () => {
     // Content is no longer rendered by GridCell itself; it exposes an empty
     // mount-point div via onContentRef so the parent can DOM-move the live
@@ -126,11 +135,42 @@ describe('GridCell — assigned state', () => {
 });
 
 describe('GridCell — focus', () => {
-  it('calls onFocus when the cell is clicked', async () => {
+  it('calls onFocus on pointerdown on the cell wrapper', () => {
     const { onFocus } = setup(null);
-    // Click somewhere on the cell wrapper (not the button)
-    await userEvent.click(screen.getByText('Assign connection').closest('div.relative')!.parentElement!);
+    const cell = screen.getByText('Assign connection').closest('div.relative')!.parentElement!;
+    fireEvent.pointerDown(cell);
     expect(onFocus).toHaveBeenCalledWith(0);
+  });
+
+  it('calls onFocus when pointerdown is fired on a child that calls stopPropagation (xterm scenario)', () => {
+    // xterm.js registers its own pointerdown listener on the canvas and calls
+    // stopPropagation(), which would silence a bubble-phase onPointerDown on
+    // the cell wrapper.  The fix is a capture-phase listener on the wrapper,
+    // which fires BEFORE any child bubble handler can stop propagation.
+    const { onFocus, onContentRef } = setup(1);
+    // The content div is the mount-point that xterm would be placed inside
+    const contentDiv = onContentRef.mock.calls[0][0] as HTMLDivElement;
+
+    // Add a bubble-phase stopPropagation listener on the child, exactly as
+    // xterm does — this would break an onPointerDown on the parent wrapper
+    contentDiv.addEventListener('pointerdown', (e) => e.stopPropagation());
+    // Fire pointerdown on the child
+    fireEvent.pointerDown(contentDiv);
+
+    // Capture-phase listener on the wrapper MUST have fired despite stopPropagation
+    expect(onFocus).toHaveBeenCalledWith(0);
+  });
+
+  it('does not call onFocus when click fires without pointerdown (regression guard)', () => {
+    // Confirms that click alone no longer triggers focus — the old onClick
+    // handler was replaced with a capture-phase pointerdown listener
+    const { onFocus } = setup(null);
+    const cell = screen.getByText('Assign connection').closest('div.relative')!.parentElement!;
+    fireEvent.click(cell);
+    // click on the wrapper div itself (no onFocus there anymore) — but the
+    // "Assign connection" button's onClick calls stopPropagation, so reaching
+    // the wrapper means we clicked outside the button; onFocus should NOT fire
+    expect(onFocus).not.toHaveBeenCalled();
   });
 
   it('applies focused ring classes when isFocused is true', () => {

@@ -52,6 +52,7 @@ export function GridCell<TKey, TItem>({
 }: GridCellProps<TKey, TItem>) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
   // Notify parent whenever the content div mounts or unmounts
   useEffect(() => {
@@ -61,14 +62,26 @@ export function GridCell<TKey, TItem>({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index]);
 
+  // Use a capture-phase pointerdown listener so the focus update fires even
+  // when a child (e.g. xterm canvas) calls stopPropagation() on the event.
+  // React's synthetic onPointerDown runs in the bubble phase and would be
+  // silenced by xterm's own pointerdown handler.
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    const handler = () => onFocus(index);
+    el.addEventListener("pointerdown", handler, { capture: true });
+    return () => el.removeEventListener("pointerdown", handler, { capture: true });
+  // onFocus is stable (useCallback in Dashboard) and index never changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index]);
+
   const isAssigned = assignedKey !== null;
   const hasItems   = items.length > 0;
 
-  const handleFocus = () => onFocus(index);
-
   return (
     <div
-      onClick={handleFocus}
+      ref={wrapperRef}
       className={`relative flex flex-col overflow-hidden rounded-lg transition-shadow duration-150
         ${isFocused
           ? "ring-2 ring-blue-500/60 ring-offset-1 ring-offset-surface"
@@ -109,7 +122,6 @@ export function GridCell<TKey, TItem>({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleFocus();
                     setPickerOpen((v) => !v);
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed
