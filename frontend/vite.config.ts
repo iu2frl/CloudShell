@@ -34,5 +34,13 @@ export default defineConfig({
     // In Docker: output goes to dist/ which the Dockerfile copies to backend/static
     outDir: process.env.DOCKER_BUILD ? 'dist' : '../backend/static',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          xterm: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links'],
+          react: ['react', 'react-dom'],
+        },
+      },
+    },
   },
 })
