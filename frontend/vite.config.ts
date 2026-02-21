@@ -11,7 +11,13 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
-      include: ['src/components/splitview/**'],
+      include: [
+        'src/components/splitview/**',
+        'src/components/ErrorBoundary.tsx',
+        'src/components/Toast.tsx',
+        'src/components/DeviceList.tsx',
+        'src/api/client.ts',
+      ],
     },
   },
   server: {

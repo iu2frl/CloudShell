@@ -49,6 +49,8 @@ Audit screenshot:
 - **SFTP file manager**: browse, upload, download, rename, and delete files on any device directly from the browser
 - **Split view**: view multiple sessions side-by-side with configurable layouts (vertical, horizontal, 2x2, or any custom grid up to 4x4)
 
+Please note: all sessions are initiated on the server side and not the client.
+
 ## Quick Start
 
 ### Using prebuilt images
