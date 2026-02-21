@@ -147,15 +147,26 @@ export function Dashboard({ onLogout }: Props) {
   return (
     <div className="flex flex-col h-screen bg-surface overflow-hidden">
       {/* ── Top bar ────────────────────────────────────────────────────────── */}
-      <header className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-700 flex-shrink-0 gap-2">
-        {/* Logo */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+      {/*
+        Responsive layout (single DOM, CSS-only reflow):
+        - Mobile  : flex-wrap → two rows.
+            Row 1 (order-1 logo, order-2 actions) fills the first line.
+            Row 2 (order-3 tab strip) spans the full width on the next line.
+        - sm+     : flex-nowrap → single row: logo | tab strip | actions.
+      */}
+      <header className="flex flex-wrap sm:flex-nowrap items-center
+                         px-2 sm:px-4 py-1.5 gap-x-2 gap-y-1
+                         bg-slate-900 border-b border-slate-700 flex-shrink-0">
+
+        {/* Logo — row 1, left */}
+        <div className="flex items-center gap-2 flex-shrink-0 order-1">
           <TerminalIcon size={18} className="text-blue-400" />
           <span className="font-bold text-white text-sm tracking-tight hidden sm:block">CloudShell by IU2FRL</span>
         </div>
 
-        {/* Tab strip */}
-        <div className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0 scrollbar-none">
+        {/* Tab strip — row 2 on mobile (full width), inline on sm+ */}
+        <div className="flex items-center gap-1 overflow-x-auto min-w-0 scrollbar-none
+                        order-3 sm:order-2 w-full sm:w-auto sm:flex-1 py-0.5 sm:py-0">
           {tabs.map((tab) => (
             <div
               key={tab.key}
@@ -191,8 +202,8 @@ export function Dashboard({ onLogout }: Props) {
           ))}
         </div>
 
-        {/* Right: layout picker + session badge + audit log + change password + logout */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        {/* Right actions — row 1, right (ml-auto pushes it to the right edge) */}
+        <div className="flex items-center gap-2 flex-shrink-0 order-2 sm:order-3 ml-auto sm:ml-0">
           <div className="border-r border-slate-700 pr-2 mr-1">
             <LayoutPicker
               current={grid.layout}
