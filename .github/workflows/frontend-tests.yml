@@ -28,10 +28,6 @@ jobs:
         working-directory: frontend
         run: npm ci --silent
 
-      - name: Run Vitest
-        working-directory: frontend
-        run: npm test
-
       - name: Run Vitest with coverage
         working-directory: frontend
         run: npm run test:coverage

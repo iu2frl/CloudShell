@@ -16,7 +16,7 @@ help:
 	@echo "  make shell            Open a shell inside the running backend container"
 	@echo "  make smoke-test       Run the two-container Docker smoke test locally"
 	@echo ""
-	@echo "  make test             Run the full test suite (pytest + coverage)"
+	@echo "  make test             Run the full test suite (pytest + vitest + coverage)"
 	@echo "  make test-unit        Run tests without coverage reporting (fast)"
 	@echo "  make test-coverage    Run tests and open the HTML coverage report"
 	@echo "  make test-all         Run tests for Python 3.11, 3.12, and 3.13"
@@ -74,15 +74,17 @@ _TEST_ENV = DATA_DIR=/tmp/cloudshell-test-$$(date +%s) \
             AUDIT_RETENTION_DAYS=7 \
             CORS_ORIGINS="*"
 
-# Full suite: pytest + coverage (mirrors CI exactly)
+# Full suite: pytest + coverage + vitest (mirrors CI exactly)
 test:
 	mkdir -p reports
 	$(_TEST_ENV) .venv/bin/python -m pytest
+	cd frontend && npm test
 
 # Fast run: no coverage instrumentation, no XML reports
 test-unit:
 	$(_TEST_ENV) .venv/bin/python -m pytest \
 	  --no-cov --no-header -q
+	cd frontend && npm test
 
 # Full suite + open the HTML report in the default browser
 test-coverage:
