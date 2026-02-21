@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Device, listDevices, logout } from "../api/client";
 import { DeviceList } from "../components/DeviceList";
 import { DeviceForm } from "../components/DeviceForm";
@@ -35,6 +35,39 @@ export function Dashboard({ onLogout }: Props) {
   const toast = useToast();
 
   const grid = useGridLayout<number>({ rows: 1, cols: 1 });
+
+  // panel pool: tabKey → the always-mounted wrapper div in the hidden pool
+  const panelRefsMap = useRef<Map<number, HTMLDivElement>>(new Map());
+  // cell mount-points: cellIndex → the empty slot div inside each GridCell
+  const cellRefsMap  = useRef<Map<number, HTMLDivElement | null>>(new Map());
+  // ref to the hidden pool container so we can reparent panels back to it
+  const poolRef = useRef<HTMLDivElement>(null);
+  const [, forceRender] = useState(0);
+  const onContentRef = useCallback((cellIndex: number, el: HTMLDivElement | null) => {
+    cellRefsMap.current.set(cellIndex, el);
+    forceRender((n) => n + 1);
+  }, []);
+
+  // DOM-move effect: whenever assignments or cell refs change, physically move
+  // each panel div into its assigned cell's mount-point (or back to the hidden
+  // pool). No React reconciliation happens so no component re-mounts occur.
+  useEffect(() => {
+    const pool = poolRef.current;
+    // First, hide all panels and return any that are outside the pool
+    for (const [, panelEl] of panelRefsMap.current) {
+      panelEl.style.display = "none";
+      if (pool && panelEl.parentElement !== pool) pool.appendChild(panelEl);
+    }
+    // Then move each assigned panel into its cell mount-point and show it
+    for (const [cellIdx, key] of grid.assignments) {
+      if (key === null) continue;
+      const panelEl = panelRefsMap.current.get(key);
+      const cellEl  = cellRefsMap.current.get(cellIdx);
+      if (!panelEl || !cellEl) continue;
+      if (panelEl.parentElement !== cellEl) cellEl.appendChild(panelEl);
+      panelEl.style.display = "";
+    }
+  });
 
   const fetchDevices = async () => {
     setLoading(true);
@@ -197,31 +230,36 @@ export function Dashboard({ onLogout }: Props) {
         {/* ── Split-view main area ─────────────────────────────────────────── */}
         <main className="flex-1 overflow-hidden p-3 min-w-0">
           {/*
-            All Terminal / FileManager instances are rendered (hidden) so their
-            WebSocket connections stay alive even when not in the focused cell.
-            SplitView renders each cell; the children callback receives a tab
-            and renders the correct component.
+            All Terminal / FileManager instances live permanently in the hidden
+            pool — they are NEVER unmounted on tab switch. When a tab is assigned
+            to a grid cell, its pool div is physically moved (appendChild) into
+            the cell's mount-point div so WebSocket connections and xterm state
+            are fully preserved. When unassigned, the pool div returns to the
+            hidden pool (display:none). No React reconciliation happens during
+            the move, so no component re-mounts.
           */}
           <div className="h-full relative">
-            {/* Hidden panel pool — keeps all connections alive */}
-            <div className="absolute inset-0 pointer-events-none" aria-hidden>
-              {tabs.map((tab) => {
-                // Only render if this tab is NOT currently visible in any cell
-                // (if it IS visible, SplitView renders it directly)
-                const isInGrid = Array.from(grid.assignments.values()).includes(tab.key);
-                if (isInGrid) return null;
-                return (
-                  <div key={tab.key} style={{ display: "none" }}>
-                    {tab.device.connection_type === "sftp"
-                      ? <FileManager device={tab.device} />
-                      : <Terminal device={tab.device} />
-                    }
-                  </div>
-                );
-              })}
+            {/* Hidden panel pool — one entry per open tab, always mounted */}
+            <div ref={poolRef} className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden>
+              {tabs.map((tab) => (
+                <div
+                  key={tab.key}
+                  ref={(el) => {
+                    if (el) panelRefsMap.current.set(tab.key, el);
+                    else panelRefsMap.current.delete(tab.key);
+                  }}
+                  className="h-full w-full pointer-events-auto"
+                  style={{ display: "none" }}
+                >
+                  {tab.device.connection_type === "sftp"
+                    ? <FileManager device={tab.device} />
+                    : <Terminal device={tab.device} />
+                  }
+                </div>
+              ))}
             </div>
 
-            {/* Visible grid */}
+            {/* Visible grid — cells provide borders, focus rings and mount-points */}
             <SplitView<number, Tab>
               layout={grid.layout}
               assignments={grid.assignments}
@@ -241,6 +279,7 @@ export function Dashboard({ onLogout }: Props) {
                 const key = grid.assignments.get(cellIndex) ?? null;
                 if (key !== null) setActiveTab(key);
               }}
+              onContentRef={onContentRef}
               emptyState={
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3">
                   <TerminalIcon size={44} className="text-slate-700" />
@@ -249,13 +288,7 @@ export function Dashboard({ onLogout }: Props) {
                   </p>
                 </div>
               }
-            >
-              {(tab) =>
-                tab.device.connection_type === "sftp"
-                  ? <FileManager device={tab.device} />
-                  : <Terminal device={tab.device} />
-              }
-            </SplitView>
+            />
           </div>
         </main>
       </div>

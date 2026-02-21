@@ -9,10 +9,11 @@
  * - selecting an item from the dropdown calls onAssign with the correct key
  * - selecting an item closes the dropdown
  * - clicking the backdrop closes the dropdown without calling onAssign
- * - assigned cell renders children content instead of the picker
- * - assigned cell shows the unassign (X) button
+ * - assigned cell shows the unassign (X) button (content is DOM-moved externally)
+ * - assigned cell does NOT show the assign picker
  * - clicking the unassign button calls onAssign(index, null)
  * - clicking the cell calls onFocus with the cell index
+ * - onContentRef is called with the mount-point div on mount
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -27,8 +28,9 @@ const items: Item[] = [
 ];
 
 function setup(assignedKey: number | null = null, itemList = items) {
-  const onAssign = vi.fn();
-  const onFocus  = vi.fn();
+  const onAssign     = vi.fn();
+  const onFocus      = vi.fn();
+  const onContentRef = vi.fn();
   render(
     <GridCell<number, Item>
       index={0}
@@ -39,11 +41,10 @@ function setup(assignedKey: number | null = null, itemList = items) {
       getLabel={(item) => item.name}
       onAssign={onAssign}
       onFocus={onFocus}
-    >
-      {(item) => <div data-testid="content">{item.name}</div>}
-    </GridCell>,
+      onContentRef={onContentRef}
+    />,
   );
-  return { onAssign, onFocus };
+  return { onAssign, onFocus, onContentRef };
 }
 
 describe('GridCell — empty state', () => {
@@ -98,11 +99,6 @@ describe('GridCell — empty state', () => {
 });
 
 describe('GridCell — assigned state', () => {
-  it('renders the children content when a key is assigned', () => {
-    setup(1); // item with id=1 is "Server Alpha"
-    expect(screen.getByTestId('content')).toHaveTextContent('Server Alpha');
-  });
-
   it('does not show the Assign connection button when assigned', () => {
     setup(1);
     expect(screen.queryByText('Assign connection')).not.toBeInTheDocument();
@@ -118,6 +114,15 @@ describe('GridCell — assigned state', () => {
     await userEvent.click(screen.getByTitle('Remove from this pane'));
     expect(onAssign).toHaveBeenCalledWith(0, null);
   });
+
+  it('calls onContentRef with the mount-point div on mount', () => {
+    // Content is no longer rendered by GridCell itself; it exposes an empty
+    // mount-point div via onContentRef so the parent can DOM-move the live
+    // panel in without unmounting it.
+    const { onContentRef } = setup(1);
+    expect(onContentRef).toHaveBeenCalledTimes(1);
+    expect(onContentRef.mock.calls[0][0]).toBeInstanceOf(HTMLDivElement);
+  });
 });
 
 describe('GridCell — focus', () => {
@@ -129,8 +134,9 @@ describe('GridCell — focus', () => {
   });
 
   it('applies focused ring classes when isFocused is true', () => {
-    const onAssign = vi.fn();
-    const onFocus  = vi.fn();
+    const onAssign     = vi.fn();
+    const onFocus      = vi.fn();
+    const onContentRef = vi.fn();
     const { container } = render(
       <GridCell<number, Item>
         index={2}
@@ -141,9 +147,8 @@ describe('GridCell — focus', () => {
         getLabel={(item) => item.name}
         onAssign={onAssign}
         onFocus={onFocus}
-      >
-        {(item) => <span>{item.name}</span>}
-      </GridCell>,
+        onContentRef={onContentRef}
+      />,
     );
     const cell = container.firstChild as HTMLElement;
     expect(cell.className).toContain('ring-blue-500');
