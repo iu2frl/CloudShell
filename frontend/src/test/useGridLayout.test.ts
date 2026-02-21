@@ -7,6 +7,7 @@
  * - assignCell: places a key, evicts it from its old cell first
  * - assignCell with null clears the cell
  * - evictKey: removes a key from all cells
+ * - evictKeyWithFallback: removes a key and fills vacated cells from a fallback list
  * - autoPlace: fills the first empty cell; no-op if already placed; no-op if all full
  * - setFocusedCell: updates focused index
  */
@@ -148,6 +149,63 @@ describe('useGridLayout — evictKey', () => {
     act(() => result.current.assignCell(1, 6));
     act(() => result.current.evictKey(5));
     expect(result.current.assignments.get(1)).toBe(6);
+  });
+});
+
+describe('useGridLayout — evictKeyWithFallback', () => {
+  it('fills the vacated cell with the first available fallback key', () => {
+    // 1x1 grid, tab 1 is open. Close it while tab 2 is a fallback.
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+    act(() => result.current.autoPlace(1));
+    act(() => result.current.evictKeyWithFallback(1, [2, 3]));
+    expect(result.current.assignments.get(0)).toBe(2);
+  });
+
+  it('fills the vacated cell with fallback even when the closed tab was not the only one', () => {
+    // 1x1 grid: tabs 1, 2, 3 open; cell shows tab 3. Close tab 3 — cell should show tab 2.
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+    act(() => result.current.autoPlace(1));
+    act(() => result.current.autoPlace(2));
+    act(() => result.current.autoPlace(3)); // cell 0 = 3
+    act(() => result.current.evictKeyWithFallback(3, [1, 2]));
+    // First fallback not already visible
+    expect(result.current.assignments.get(0)).toBe(1);
+  });
+
+  it('skips fallback keys that are already visible in another cell', () => {
+    // 1x2 grid: cell 0 = tab 1, cell 1 = tab 2. Close tab 2.
+    // Fallbacks are [1, 3]; tab 1 is already in cell 0, so cell 1 should get tab 3.
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 2 }));
+    act(() => result.current.assignCell(0, 1));
+    act(() => result.current.assignCell(1, 2));
+    act(() => result.current.evictKeyWithFallback(2, [1, 3]));
+    expect(result.current.assignments.get(0)).toBe(1); // unchanged
+    expect(result.current.assignments.get(1)).toBe(3); // 1 skipped, 3 used
+  });
+
+  it('leaves the cell null when no fallback keys are available', () => {
+    // Close the only open tab — no fallbacks.
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+    act(() => result.current.autoPlace(1));
+    act(() => result.current.evictKeyWithFallback(1, []));
+    expect(result.current.assignments.get(0)).toBeNull();
+  });
+
+  it('is a no-op when the key is not in any cell', () => {
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+    act(() => result.current.autoPlace(1));
+    act(() => result.current.evictKeyWithFallback(99, [2]));
+    expect(result.current.assignments.get(0)).toBe(1); // untouched
+  });
+
+  it('does not affect other occupied cells', () => {
+    // 1x2 grid: close tab in cell 0, cell 1 must remain unchanged.
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 2 }));
+    act(() => result.current.assignCell(0, 1));
+    act(() => result.current.assignCell(1, 2));
+    act(() => result.current.evictKeyWithFallback(1, [3]));
+    expect(result.current.assignments.get(1)).toBe(2); // cell 1 untouched
+    expect(result.current.assignments.get(0)).toBe(3); // cell 0 got fallback
   });
 });
 

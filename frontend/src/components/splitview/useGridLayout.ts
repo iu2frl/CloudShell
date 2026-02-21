@@ -29,6 +29,12 @@ export interface UseGridLayoutReturn<TKey> {
   assignCell: (cellIndex: number, key: TKey | null) => void;
   /** Remove a key from every cell it currently occupies. */
   evictKey: (key: TKey) => void;
+  /**
+   * Remove `key` from every cell it occupies.  For each vacated cell, pick the
+   * first key from `fallbackKeys` that is not already visible in another cell
+   * and place it there — so cells never go empty while there are open tabs.
+   */
+  evictKeyWithFallback: (key: TKey, fallbackKeys: TKey[]) => void;
   /** Place a key into the first empty cell, or do nothing if all are filled. */
   autoPlace: (key: TKey) => void;
   /** Focused cell index (last cell the user interacted with). */
@@ -89,6 +95,25 @@ export function useGridLayout<TKey>(
     });
   }, []);
 
+  const evictKeyWithFallback = useCallback((key: TKey, fallbackKeys: TKey[]) => {
+    setAssignments((prev) => {
+      const next = new Map(prev);
+      // Collect the cells that were occupied by the evicted key
+      const vacated: number[] = [];
+      for (const [idx, v] of next) {
+        if (v === key) { next.set(idx, null); vacated.push(idx); }
+      }
+      if (vacated.length === 0) return prev;
+      // For each vacated cell, find the first fallback key not already visible
+      for (const cellIdx of vacated) {
+        const visible = new Set(next.values());
+        const replacement = fallbackKeys.find((k) => k !== key && !visible.has(k));
+        if (replacement !== undefined) next.set(cellIdx, replacement);
+      }
+      return next;
+    });
+  }, []);
+
   const autoPlace = useCallback((key: TKey) => {
     setAssignments((prev) => {
       // Already placed — no-op
@@ -116,6 +141,7 @@ export function useGridLayout<TKey>(
     setLayout,
     assignCell,
     evictKey,
+    evictKeyWithFallback,
     autoPlace,
     focusedCell,
     setFocusedCell,

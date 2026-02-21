@@ -113,7 +113,11 @@ export function Dashboard({ onLogout }: Props) {
   };
 
   const handleCloseTab = (key: number) => {
-    grid.evictKey(key);
+    // Evict the closed tab from all cells. Pass the remaining tab keys as
+    // fallbacks so any vacated cell is immediately filled with another open
+    // tab instead of showing the empty "Assign connection" picker.
+    const remaining = tabs.filter((t) => t.key !== key).map((t) => t.key);
+    grid.evictKeyWithFallback(key, remaining);
     setTabs((prev) => {
       const next = prev.filter((t) => t.key !== key);
       if (activeTab === key)
