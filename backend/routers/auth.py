@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +34,6 @@ from backend.services.audit import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 ALGORITHM = "HS256"
@@ -88,7 +87,7 @@ async def _verify_credentials(username: str, password: str, db: AsyncSession) ->
         return False
     db_hash = await _get_hashed_password(username, db)
     if db_hash:
-        return pwd_context.verify(password, db_hash)
+        return bcrypt.checkpw(password.encode(), db_hash.encode())
     # Fall back to plain env-var comparison on first boot (before any password change)
     return secrets.compare_digest(password, settings.admin_password)
 
@@ -284,7 +283,7 @@ async def change_password(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="New password must be at least 8 characters",
         )
-    new_hash = pwd_context.hash(body.new_password)
+    new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
     row = await db.get(AdminCredential, current_user)
     if row:
         row.hashed_password = new_hash

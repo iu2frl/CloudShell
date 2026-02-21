@@ -9,7 +9,7 @@ POST /api/audit/prune    Manually trigger retention pruning
 import logging
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,15 +26,14 @@ router = APIRouter(prefix="/audit", tags=["audit"])
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
 class AuditLogEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     timestamp: str  # ISO-8601 UTC
     username: str
     action: str
     source_ip: str | None
     detail: str | None
-
-    class Config:
-        from_attributes = True
 
 
 class AuditLogPage(BaseModel):
