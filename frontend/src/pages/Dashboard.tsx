@@ -27,6 +27,7 @@ export function Dashboard({ onLogout }: Props) {
   const [showForm, setShowForm]     = useState(false);
   const [editDevice, setEditDevice] = useState<Device | undefined>();
   const [showChangePw, setShowChangePw] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const toast = useToast();
 
   const fetchDevices = async () => {
@@ -120,6 +121,8 @@ export function Dashboard({ onLogout }: Props) {
           devices={devices}
           activeDeviceId={activeDevice?.id ?? null}
           loading={loading}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
           onConnect={handleConnect}
           onAdd={() => { setEditDevice(undefined); setShowForm(true); }}
           onEdit={(d) => { setEditDevice(d); setShowForm(true); }}
