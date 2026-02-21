@@ -1,0 +1,57 @@
+name: Frontend Tests (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version to use
+        type: string
+        default: "20"
+
+jobs:
+  frontend-tests:
+    name: Frontend unit tests (Vitest)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --silent
+
+      - name: Run Vitest
+        working-directory: frontend
+        run: npm test
+
+      - name: Run Vitest with coverage
+        working-directory: frontend
+        run: npm run test:coverage
+
+      - name: Write coverage summary to job summary
+        if: always()
+        working-directory: frontend
+        run: |
+          echo "## Frontend Test Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -d coverage ]; then
+            echo "Coverage report generated. See artifact for full HTML report." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No coverage data available." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-${{ github.run_id }}
+          path: frontend/coverage/
+          retention-days: 14
