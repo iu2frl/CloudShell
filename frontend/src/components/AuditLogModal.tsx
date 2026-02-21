@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import { X, ClipboardList, ChevronLeft, ChevronRight } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { X, ClipboardList, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { listAuditLogs, AuditLogEntry, AuditLogPage } from "../api/client";
 
 const PAGE_SIZE = 50;
+/** Poll for new entries every N seconds while the modal is open. */
+const POLL_INTERVAL_MS = 10_000;
 
 const ACTION_LABELS: Record<string, string> = {
   LOGIN: "Logged in",
@@ -38,22 +40,40 @@ export function AuditLogModal({ onClose }: Props) {
   const [data, setData]             = useState<AuditLogPage | null>(null);
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const pageRef = useRef(page);
+  pageRef.current = page;
 
-  const load = useCallback(async (p: number) => {
-    setLoading(true);
+  const load = useCallback(async (p: number, silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const result = await listAuditLogs(p, PAGE_SIZE);
       setData(result);
       setPage(p);
+      setLastRefresh(new Date());
     } catch (err) {
       setError(String(err));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
+  // Initial load
   useEffect(() => { load(1); }, [load]);
+
+  // Poll silently every POLL_INTERVAL_MS, staying on the current page
+  useEffect(() => {
+    const timer = setInterval(() => load(pageRef.current, true), POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  // Reload when the browser tab regains visibility (e.g. user switches back)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") load(pageRef.current, true); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [load]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
@@ -72,13 +92,28 @@ export function AuditLogModal({ onClose }: Props) {
               </span>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white transition-colors"
-            title="Close"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-3">
+            {lastRefresh && (
+              <span className="text-slate-500 text-xs hidden sm:block">
+                Updated {lastRefresh.toLocaleTimeString()}
+              </span>
+            )}
+            <button
+              onClick={() => load(page, false)}
+              disabled={loading}
+              className="text-slate-400 hover:text-blue-400 transition-colors disabled:opacity-40"
+              title="Refresh"
+            >
+              <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+            </button>
+            <button
+              onClick={onClose}
+              className="text-slate-400 hover:text-white transition-colors"
+              title="Close"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}

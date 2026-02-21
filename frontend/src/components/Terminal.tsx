@@ -173,6 +173,20 @@ export function Terminal({ device }: TerminalProps) {
 
   useEffect(() => { connect(); }, [connect]);
 
+  // ── Explicit cleanup on unmount (tab close) ──────────────────────────────────
+  // Without this, closing the tab only removes the DOM node; the WebSocket
+  // lingers in a half-open state and the server never receives a clean close
+  // frame, so SESSION_ENDED is not written until the connection times out.
+  useEffect(() => {
+    return () => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        wsRef.current = null;   // prevent onclose handler from firing
+        ws.close(1000, "tab closed");
+      }
+    };
+  }, []);
+
   // ── Copy session info ────────────────────────────────────────────────────────
   const copyInfo = () => {
     navigator.clipboard.writeText(`${device.username}@${device.hostname}:${device.port}`);

@@ -17,7 +17,7 @@ from backend.services.audit import (
     write_audit,
 )
 from backend.services.crypto import decrypt, load_decrypted_key
-from backend.services.ssh import _ws_error, close_session, create_session, stream_session
+from backend.services.ssh import _ws_error, close_session, create_session, get_session_meta, stream_session
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/terminal", tags=["terminal"])
@@ -57,6 +57,9 @@ async def open_session(
             key_path = tmp.name
             _tmp_key_file = tmp.name
 
+    client_ip = get_client_ip(request)
+    device_label = f"{device.name} ({device.hostname}:{device.port})"
+
     try:
         session_id = await create_session(
             hostname=device.hostname,
@@ -65,6 +68,9 @@ async def open_session(
             password=password,
             private_key_path=key_path,
             known_hosts="auto",
+            device_label=device_label,
+            cloudshell_user=current_user,
+            source_ip=client_ip,
         )
     except asyncssh.PermissionDenied:
         raise HTTPException(status_code=401, detail="SSH authentication failed")
@@ -82,11 +88,11 @@ async def open_session(
             except OSError:
                 pass
 
-    detail = f"Started session with {device.name} ({device.hostname}:{device.port})"
+    detail = f"Started session with {device_label}"
     await write_audit(
         db, current_user, ACTION_SESSION_STARTED,
         detail=detail,
-        source_ip=get_client_ip(request),
+        source_ip=client_ip,
     )
 
     return {"session_id": session_id}
@@ -131,13 +137,21 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
         log.error("Unexpected error in terminal WS %s: %s", session_id[:8], exc)
         await _ws_error(websocket, str(exc))
     finally:
+        # Read stored metadata BEFORE close_session removes the entry
+        device_label, audit_user, audit_ip = get_session_meta(session_id)
+        # Fall back to token-decoded username if metadata is missing
+        if not audit_user:
+            audit_user = username
+        if not audit_ip:
+            audit_ip = source_ip
         await close_session(session_id)
+        log.info("Logging SESSION_ENDED for user=%s session=%s", audit_user, session_id[:8])
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
             await write_audit(
                 db,
-                username,
+                audit_user,
                 ACTION_SESSION_ENDED,
-                detail=f"Ended session (session_id={session_id[:8]})",
-                source_ip=source_ip,
+                detail=f"Ended session with {device_label}" if device_label else f"Ended session (id={session_id[:8]})",
+                source_ip=audit_ip,
             )
