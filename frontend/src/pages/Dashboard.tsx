@@ -53,8 +53,16 @@ export function Dashboard({ onLogout }: Props) {
   // pool). No React reconciliation happens so no component re-mounts occur.
   useEffect(() => {
     const pool = poolRef.current;
-    // First, hide all panels and return any that are outside the pool
-    for (const [, panelEl] of panelRefsMap.current) {
+    // First, hide all panels and return any that are outside the pool.
+    // Guard with document.contains() — a panel whose tab was just closed may
+    // already be detached from the document; attempting appendChild on a
+    // detached node that React is mid-removing throws "removeChild" errors.
+    for (const [key, panelEl] of panelRefsMap.current) {
+      if (!document.contains(panelEl)) {
+        // Node was removed by React — drop the stale ref and skip
+        panelRefsMap.current.delete(key);
+        continue;
+      }
       panelEl.style.display = "none";
       if (pool && panelEl.parentElement !== pool) pool.appendChild(panelEl);
     }
@@ -64,6 +72,10 @@ export function Dashboard({ onLogout }: Props) {
       const panelEl = panelRefsMap.current.get(key);
       const cellEl  = cellRefsMap.current.get(cellIdx);
       if (!panelEl || !cellEl) continue;
+      if (!document.contains(panelEl)) {
+        panelRefsMap.current.delete(key);
+        continue;
+      }
       if (panelEl.parentElement !== cellEl) cellEl.appendChild(panelEl);
       panelEl.style.display = "";
     }
@@ -245,8 +257,22 @@ export function Dashboard({ onLogout }: Props) {
                 <div
                   key={tab.key}
                   ref={(el) => {
-                    if (el) panelRefsMap.current.set(tab.key, el);
-                    else panelRefsMap.current.delete(tab.key);
+                    if (el) {
+                      panelRefsMap.current.set(tab.key, el);
+                    } else {
+                      // React is about to remove this node from the DOM.
+                      // If our DOM-move effect moved it into a cell mount-point,
+                      // React still thinks it lives in the pool and will call
+                      // pool.removeChild(node) — which throws "not a child of
+                      // this node" if the node is elsewhere.  Move it back to
+                      // the pool first so React finds it where it expects it.
+                      const panelEl = panelRefsMap.current.get(tab.key);
+                      const pool    = poolRef.current;
+                      if (panelEl && pool && panelEl.parentElement !== pool) {
+                        pool.appendChild(panelEl);
+                      }
+                      panelRefsMap.current.delete(tab.key);
+                    }
                   }}
                   className="h-full w-full pointer-events-auto"
                   style={{ display: "none" }}
