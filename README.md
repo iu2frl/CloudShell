@@ -38,6 +38,7 @@ Terminal screen:
 - **Error boundary**: graceful recovery screen for unexpected frontend errors
 - **Docker Compose deploy**: single command to run in production
 - **Concurrent connections**: support multiple simultaneous SSH sessions
+- **SFTP file manager**: browse, upload, download, rename, and delete files on any device directly from the browser
 
 ## Quick Start
 
