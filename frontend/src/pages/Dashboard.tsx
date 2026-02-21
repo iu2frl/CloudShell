@@ -8,6 +8,7 @@ import { SessionBadge } from "../components/SessionBadge";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
 import { AuditLogModal } from "../components/AuditLogModal";
 import { useToast } from "../components/Toast";
+import { SplitView, LayoutPicker, useGridLayout } from "../components/splitview";
 import { ClipboardList, FolderOpen, KeyRound, LogOut, Terminal as TerminalIcon } from "lucide-react";
 
 interface Props {
@@ -33,6 +34,8 @@ export function Dashboard({ onLogout }: Props) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const toast = useToast();
 
+  const grid = useGridLayout<number>({ rows: 1, cols: 1 });
+
   const fetchDevices = async () => {
     setLoading(true);
     try {
@@ -48,13 +51,24 @@ export function Dashboard({ onLogout }: Props) {
 
   const handleConnect = (d: Device) => {
     const existing = tabs.find((t) => t.device.id === d.id);
-    if (existing) { setActiveTab(existing.key); return; }
+    if (existing) {
+      // If already in a cell just focus that cell; otherwise auto-place it
+      let found = false;
+      for (const [idx, key] of grid.assignments) {
+        if (key === existing.key) { grid.setFocusedCell(idx); found = true; break; }
+      }
+      if (!found) grid.autoPlace(existing.key);
+      setActiveTab(existing.key);
+      return;
+    }
     const tab: Tab = { device: d, key: ++tabCounter };
     setTabs((prev) => [...prev, tab]);
     setActiveTab(tab.key);
+    grid.autoPlace(tab.key);
   };
 
   const handleCloseTab = (key: number) => {
+    grid.evictKey(key);
     setTabs((prev) => {
       const next = prev.filter((t) => t.key !== key);
       if (activeTab === key)
@@ -69,6 +83,10 @@ export function Dashboard({ onLogout }: Props) {
   };
 
   const activeDevice = tabs.find((t) => t.key === activeTab)?.device ?? null;
+
+  // The device shown in the focused cell (used to highlight sidebar entry)
+  const focusedKey = grid.assignments.get(grid.focusedCell) ?? null;
+  const focusedDevice = tabs.find((t) => t.key === focusedKey)?.device ?? null;
 
   return (
     <div className="flex flex-col h-screen bg-surface overflow-hidden">
@@ -85,7 +103,13 @@ export function Dashboard({ onLogout }: Props) {
           {tabs.map((tab) => (
             <div
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => {
+                setActiveTab(tab.key);
+                // Highlight the cell that holds this tab, if any
+                for (const [idx, key] of grid.assignments) {
+                  if (key === tab.key) { grid.setFocusedCell(idx); break; }
+                }
+              }}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs cursor-pointer select-none
                           whitespace-nowrap transition-colors flex-shrink-0
                 ${activeTab === tab.key
@@ -109,8 +133,14 @@ export function Dashboard({ onLogout }: Props) {
           ))}
         </div>
 
-        {/* Right: session badge + audit log + change password + logout */}
+        {/* Right: layout picker + session badge + audit log + change password + logout */}
         <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="border-r border-slate-700 pr-2 mr-1">
+            <LayoutPicker
+              current={grid.layout}
+              onSelect={grid.setLayout}
+            />
+          </div>
           <SessionBadge />
           <button
             onClick={() => setShowAuditLog(true)}
@@ -140,7 +170,7 @@ export function Dashboard({ onLogout }: Props) {
       <div className="flex flex-1 overflow-hidden">
         <DeviceList
           devices={devices}
-          activeDeviceId={activeDevice?.id ?? null}
+          activeDeviceId={focusedDevice?.id ?? activeDevice?.id ?? null}
           loading={loading}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
@@ -149,8 +179,10 @@ export function Dashboard({ onLogout }: Props) {
           onEdit={(d) => { setEditDevice(d); setShowForm(true); }}
           onDelete={(id) => {
             setDevices((prev) => prev.filter((d) => d.id !== id));
-            // Close any open tab for this device
+            // Close any open tab for this device and evict it from all cells
             setTabs((prev) => {
+              const removed = prev.find((t) => t.device.id === id);
+              if (removed) grid.evictKey(removed.key);
               const next = prev.filter((t) => t.device.id !== id);
               if (!next.find((t) => t.key === activeTab))
                 setActiveTab(next.length > 0 ? next[next.length - 1].key : null);
@@ -160,30 +192,69 @@ export function Dashboard({ onLogout }: Props) {
           onRefresh={fetchDevices}
         />
 
-        {/* Terminal / file manager area */}
+        {/* ── Split-view main area ─────────────────────────────────────────── */}
         <main className="flex-1 overflow-hidden p-3 min-w-0">
-          {tabs.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center gap-3">
-              <TerminalIcon size={44} className="text-slate-700" />
-              <p className="text-slate-500 text-sm max-w-xs">
-                Connect to a device from the sidebar to open an SSH terminal.
-              </p>
+          {/*
+            All Terminal / FileManager instances are rendered (hidden) so their
+            WebSocket connections stay alive even when not in the focused cell.
+            SplitView renders each cell; the children callback receives a tab
+            and renders the correct component.
+          */}
+          <div className="h-full relative">
+            {/* Hidden panel pool — keeps all connections alive */}
+            <div className="absolute inset-0 pointer-events-none" aria-hidden>
+              {tabs.map((tab) => {
+                // Only render if this tab is NOT currently visible in any cell
+                // (if it IS visible, SplitView renders it directly)
+                const isInGrid = Array.from(grid.assignments.values()).includes(tab.key);
+                if (isInGrid) return null;
+                return (
+                  <div key={tab.key} style={{ display: "none" }}>
+                    {tab.device.connection_type === "sftp"
+                      ? <FileManager device={tab.device} />
+                      : <Terminal device={tab.device} />
+                    }
+                  </div>
+                );
+              })}
             </div>
-          ) : (
-            tabs.map((tab) => (
-              <div
-                key={tab.key}
-                className="h-full"
-                style={{ display: tab.key === activeTab ? "block" : "none" }}
-              >
-                {tab.device.connection_type === "sftp" ? (
-                  <FileManager device={tab.device} />
-                ) : (
-                  <Terminal device={tab.device} />
-                )}
-              </div>
-            ))
-          )}
+
+            {/* Visible grid */}
+            <SplitView<number, Tab>
+              layout={grid.layout}
+              assignments={grid.assignments}
+              items={tabs}
+              getKey={(tab) => tab.key}
+              getLabel={(tab) => tab.device.name}
+              focusedCell={grid.focusedCell}
+              onAssign={(cellIndex, key) => {
+                grid.assignCell(cellIndex, key);
+                if (key !== null) {
+                  setActiveTab(key);
+                  grid.setFocusedCell(cellIndex);
+                }
+              }}
+              onFocus={(cellIndex) => {
+                grid.setFocusedCell(cellIndex);
+                const key = grid.assignments.get(cellIndex) ?? null;
+                if (key !== null) setActiveTab(key);
+              }}
+              emptyState={
+                <div className="h-full flex flex-col items-center justify-center text-center gap-3">
+                  <TerminalIcon size={44} className="text-slate-700" />
+                  <p className="text-slate-500 text-sm max-w-xs">
+                    Connect to a device from the sidebar to open an SSH terminal.
+                  </p>
+                </div>
+              }
+            >
+              {(tab) =>
+                tab.device.connection_type === "sftp"
+                  ? <FileManager device={tab.device} />
+                  : <Terminal device={tab.device} />
+              }
+            </SplitView>
+          </div>
         </main>
       </div>
 

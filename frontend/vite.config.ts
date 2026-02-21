@@ -1,9 +1,25 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'lcov'],
+      include: [
+        'src/components/splitview/**',
+        'src/components/ErrorBoundary.tsx',
+        'src/components/Toast.tsx',
+        'src/components/DeviceList.tsx',
+        'src/api/client.ts',
+      ],
+    },
+  },
   server: {
     proxy: {
       '/api': {

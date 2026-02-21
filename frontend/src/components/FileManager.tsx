@@ -73,6 +73,12 @@ export function FileManager({ device }: FileManagerProps) {
   const fileInputRef                  = useRef<HTMLInputElement>(null);
   const sessionRef                    = useRef<string | null>(null);
   const toast                         = useToast();
+  // Stable ref so loadDir / action handlers don't need toast in their dep
+  // arrays — avoids the feedback loop where toast.error() recreates loadDir
+  // which re-triggers the [sessionId, loadDir] effect, which calls loadDir
+  // again, flooding the console with ERR_CONNECTION_REFUSED when offline.
+  const toastRef                      = useRef(toast);
+  useEffect(() => { toastRef.current = toast; });
 
   // ── Session lifecycle ────────────────────────────────────────────────────
 
@@ -112,12 +118,14 @@ export function FileManager({ device }: FileManagerProps) {
         setEntries(res.entries);
         setPath(res.path);
       } catch (err) {
-        toast.error(`Failed to list directory: ${err}`);
+        toastRef.current.error(`Failed to list directory: ${err}`);
       } finally {
         setLoadingDir(false);
       }
     },
-    [toast],
+    // toast intentionally excluded — accessed via toastRef to keep loadDir stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   );
 
   // Load root once session is open
@@ -142,7 +150,7 @@ export function FileManager({ device }: FileManagerProps) {
     try {
       await sftpDownload(sessionId, entry.path);
     } catch (err) {
-      toast.error(`Download failed: ${err}`);
+      toastRef.current.error(`Download failed: ${err}`);
     }
   };
 
@@ -157,9 +165,9 @@ export function FileManager({ device }: FileManagerProps) {
       setUploadPct(0);
       try {
         await sftpUpload(sessionId, path, file, setUploadPct);
-        toast.success(`Uploaded ${file.name}`);
+        toastRef.current.success(`Uploaded ${file.name}`);
       } catch (err) {
-        toast.error(`Upload failed: ${err}`);
+        toastRef.current.error(`Upload failed: ${err}`);
       } finally {
         setUploadPct(null);
       }
@@ -176,10 +184,10 @@ export function FileManager({ device }: FileManagerProps) {
     setModal(null);
     try {
       await sftpDelete(sessionId, entry.path, entry.is_dir);
-      toast.success(`Deleted ${entry.name}`);
+      toastRef.current.success(`Deleted ${entry.name}`);
       await loadDir(path);
     } catch (err) {
-      toast.error(`Delete failed: ${err}`);
+      toastRef.current.error(`Delete failed: ${err}`);
     }
   };
 
@@ -198,11 +206,11 @@ export function FileManager({ device }: FileManagerProps) {
     const newPath = dir + renameValue.trim();
     try {
       await sftpRename(sessionId, modal.entry.path, newPath);
-      toast.success("Renamed successfully");
+      toastRef.current.success("Renamed successfully");
       setModal(null);
       await loadDir(path);
     } catch (err) {
-      toast.error(`Rename failed: ${err}`);
+      toastRef.current.error(`Rename failed: ${err}`);
     }
   };
 
@@ -221,11 +229,11 @@ export function FileManager({ device }: FileManagerProps) {
     const newPath = dir + mkdirValue.trim();
     try {
       await sftpMkdir(sessionId, newPath);
-      toast.success(`Created folder ${mkdirValue}`);
+      toastRef.current.success(`Created folder ${mkdirValue}`);
       setModal(null);
       await loadDir(path);
     } catch (err) {
-      toast.error(`Create folder failed: ${err}`);
+      toastRef.current.error(`Create folder failed: ${err}`);
     }
   };
 

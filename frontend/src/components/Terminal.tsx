@@ -146,6 +146,7 @@ export function Terminal({ device }: TerminalProps) {
 
     ws.onerror = () => {
       if (wsRef.current !== ws) return;
+      ro.disconnect();
       setConnState("error");
     };
 
@@ -158,12 +159,18 @@ export function Terminal({ device }: TerminalProps) {
       }
     });
 
+    // Guard: only resize/send while the socket is still open to prevent the
+    // ResizeObserver from spinning in a tight loop after the backend drops.
+    // The observer is also disconnected on both close and error events.
+    let resizing = false;
     const ro = new ResizeObserver(() => {
+      if (ws.readyState !== WebSocket.OPEN) { ro.disconnect(); return; }
+      if (resizing) return;
+      resizing = true;
       try { fit.fit(); } catch { /* ignore */ }
+      resizing = false;
       const { rows, cols } = term;
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(new TextEncoder().encode(JSON.stringify({ type: "resize", cols, rows })));
-      }
+      ws.send(new TextEncoder().encode(JSON.stringify({ type: "resize", cols, rows })));
     });
     if (containerRef.current) ro.observe(containerRef.current);
     ws.addEventListener("close", () => ro.disconnect());
