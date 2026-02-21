@@ -32,6 +32,7 @@ Terminal screen:
 - **Key file upload**: load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
 - **JWT session auth**: login page, configurable session TTL, silent token refresh, and token revocation on logout
 - **Change password**: update the admin password at runtime without restarting
+- **Audit log**: tamper-evident activity log (login, logout, SSH session start/stop, password changes) with configurable retention policy and a dedicated viewer in the UI
 - **Session expiry badge**: live countdown in the header turns yellow/red as the session approaches expiry
 - **Toast notifications**: non-blocking feedback for every action
 - **Error boundary**: graceful recovery screen for unexpected frontend errors
