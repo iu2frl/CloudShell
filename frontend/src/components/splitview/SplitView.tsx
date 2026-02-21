@@ -2,22 +2,26 @@
  * SplitView — assembles GridCells into a CSS grid.
  *
  * Fully generic: knows nothing about SSH, terminals, or devices.
- * Pass any items, a key extractor, a label and a render function.
+ *
+ * Content panels are NOT rendered inside the cells. Instead each cell exposes
+ * an empty mount-point div via onContentRef so the parent can portal live
+ * panels into them without ever unmounting the panel components.
  *
  * Props
  * ──────
- *  layout       Current GridLayout (rows x cols)
- *  assignments  CellAssignmentMap<TKey> from useGridLayout
- *  items        All available items (e.g. open tabs)
- *  getKey       (item) => TKey
- *  getLabel     (item) => string
- *  focusedCell  Index of the focused cell
- *  onAssign     (cellIndex, key | null) => void
- *  onFocus      (cellIndex) => void
- *  children     (item) => ReactNode — the actual panel content
- *  emptyState   ReactNode shown when items array is empty and layout is 1x1
+ *  layout         Current GridLayout (rows x cols)
+ *  assignments    CellAssignmentMap<TKey> from useGridLayout
+ *  items          All available items (e.g. open tabs)
+ *  getKey         (item) => TKey
+ *  getLabel       (item) => string
+ *  focusedCell    Index of the focused cell
+ *  onAssign       (cellIndex, key | null) => void
+ *  onFocus        (cellIndex) => void
+ *  onContentRef   (cellIndex, el | null) => void — stable callback
+ *  emptyState     ReactNode shown when items array is empty and layout is 1x1
  */
 
+import { useCallback, useRef } from "react";
 import { CellAssignmentMap, GridLayout } from "./GridLayoutTypes";
 import { GridCell } from "./GridCell";
 
@@ -30,7 +34,7 @@ interface SplitViewProps<TKey, TItem> {
   focusedCell: number;
   onAssign: (cellIndex: number, key: TKey | null) => void;
   onFocus: (cellIndex: number) => void;
-  children: (item: TItem) => React.ReactNode;
+  onContentRef: (cellIndex: number, el: HTMLDivElement | null) => void;
   emptyState?: React.ReactNode;
 }
 
@@ -43,12 +47,22 @@ export function SplitView<TKey, TItem>({
   focusedCell,
   onAssign,
   onFocus,
-  children,
+  onContentRef,
   emptyState,
 }: SplitViewProps<TKey, TItem>) {
   const { rows, cols } = layout;
   const totalCells = rows * cols;
   const isSingleEmpty = totalCells === 1 && items.length === 0;
+
+  // Stable per-cell callbacks so GridCell effects don't re-fire needlessly
+  const stableRefCbs = useRef<Map<number, (el: HTMLDivElement | null) => void>>(new Map());
+  const getRefCb = useCallback((i: number) => {
+    if (!stableRefCbs.current.has(i)) {
+      stableRefCbs.current.set(i, (el) => onContentRef(i, el));
+    }
+    return stableRefCbs.current.get(i)!;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onContentRef]);
 
   if (isSingleEmpty && emptyState) {
     return <div className="h-full">{emptyState}</div>;
@@ -75,9 +89,8 @@ export function SplitView<TKey, TItem>({
           getLabel={getLabel}
           onAssign={onAssign}
           onFocus={onFocus}
-        >
-          {children}
-        </GridCell>
+          onContentRef={getRefCb(i)}
+        />
       ))}
     </div>
   );

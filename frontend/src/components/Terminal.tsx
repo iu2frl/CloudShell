@@ -146,7 +146,6 @@ export function Terminal({ device }: TerminalProps) {
 
     ws.onerror = () => {
       if (wsRef.current !== ws) return;
-      ro.disconnect();
       setConnState("error");
     };
 
@@ -158,27 +157,65 @@ export function Terminal({ device }: TerminalProps) {
         ws.send(new TextEncoder().encode(data));
       }
     });
-
-    // Guard: only resize/send while the socket is still open to prevent the
-    // ResizeObserver from spinning in a tight loop after the backend drops.
-    // The observer is also disconnected on both close and error events.
-    let resizing = false;
-    const ro = new ResizeObserver(() => {
-      if (ws.readyState !== WebSocket.OPEN) { ro.disconnect(); return; }
-      if (resizing) return;
-      resizing = true;
-      try { fit.fit(); } catch { /* ignore */ }
-      resizing = false;
-      const { rows, cols } = term;
-      ws.send(new TextEncoder().encode(JSON.stringify({ type: "resize", cols, rows })));
-    });
-    if (containerRef.current) ro.observe(containerRef.current);
-    ws.addEventListener("close", () => ro.disconnect());
   // toast intentionally excluded — accessed via toastRef to keep connect() stable
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device.id, device.name]);
 
   useEffect(() => { connect(); }, [connect]);
+
+  // ── Persistent ResizeObserver — handles all size-change scenarios ───────────
+  // Kept separate from connect() so it survives reconnects and fires even
+  // when the panel is shown for the first time after being hidden in the pool.
+  //
+  // The Dashboard DOM-move effect dispatches "terminal-fit" on the panel wrapper
+  // after appending it into a cell.  We schedule the actual fit inside a
+  // requestAnimationFrame so the browser has completed layout before we measure,
+  // which covers both the display:none→visible transition and split-view
+  // dimension changes.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let rafId = 0;
+    const doFit = () => {
+      try {
+        fitRef.current?.fit();
+      } catch { /* ignore if xterm not yet attached */ }
+      // If connected, also sync the new size to the server
+      const ws   = wsRef.current;
+      const term = xtermRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN && term) {
+        const { rows, cols } = term;
+        ws.send(new TextEncoder().encode(JSON.stringify({ type: "resize", cols, rows })));
+      }
+    };
+
+    // ResizeObserver: fires on every genuine size change (window resize,
+    // split-view column drag, panel re-show after tab switch, …)
+    let resizing = false;
+    const ro = new ResizeObserver(() => {
+      if (resizing) return;
+      resizing = true;
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => { doFit(); resizing = false; });
+    });
+    ro.observe(container);
+
+    // "terminal-fit" event: fired by the DOM-move effect right after it moves
+    // the panel from display:none into a live cell mount-point.  We also wrap
+    // it in rAF so the new cell dimensions have been resolved by the browser.
+    const onFitEvent = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(doFit);
+    };
+    container.addEventListener("terminal-fit", onFitEvent);
+
+    return () => {
+      ro.disconnect();
+      container.removeEventListener("terminal-fit", onFitEvent);
+      cancelAnimationFrame(rafId);
+    };
+  }, []);
 
   // ── Explicit cleanup on unmount (tab close) ──────────────────────────────────
   // Without this, closing the tab only removes the DOM node; the WebSocket
