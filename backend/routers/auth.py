@@ -281,7 +281,7 @@ async def change_password(
         )
     if len(body.new_password) < 8:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="New password must be at least 8 characters",
         )
     new_hash = pwd_context.hash(body.new_password)

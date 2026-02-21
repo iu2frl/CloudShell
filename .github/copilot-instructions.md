@@ -27,6 +27,7 @@
 - Include tests for edge cases and error conditions
 - Run tests on every merge request
 - When performing tests on the dev machine, prefer writing them as scripts and running them from the command line instead of plain text inline commands
+- Every feature should have dedicated tests in the tests folder of the project
 
 ## Security considerations
 
