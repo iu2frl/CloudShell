@@ -32,11 +32,12 @@ jobs:
 
       - name: Inject Google Search Console verification tag
         # Only runs when the secret is set; silently skips otherwise.
-        if: ${{ secrets.GOOGLE_SITE_VERIFICATION != '' }}
         env:
           GSC_TAG: ${{ secrets.GOOGLE_SITE_VERIFICATION }}
         run: |
-          sed -i "s|<!-- GOOGLE_SITE_VERIFICATION_PLACEHOLDER -->|${GSC_TAG}|g" website/index.html
+          if [ -n "${GSC_TAG}" ]; then
+            sed -i "s|<!-- GOOGLE_SITE_VERIFICATION_PLACEHOLDER -->|${GSC_TAG}|g" website/index.html
+          fi
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
