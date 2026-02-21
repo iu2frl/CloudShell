@@ -10,6 +10,7 @@
  * - closing a tab whose panel is live in a cell does NOT throw "removeChild"
  * - stale (detached) panel refs are cleaned up from panelRefsMap silently
  * - panels for remaining tabs keep working after a sibling tab is closed
+ * - "terminal-fit" custom event is dispatched every time a panel is shown
  */
 
 import { describe, it, expect } from 'vitest';
@@ -47,6 +48,8 @@ function runDomMoveEffect(
     }
     if (panelEl.parentElement !== cellEl) cellEl.appendChild(panelEl);
     panelEl.style.display = '';
+    // Mirrors Dashboard: notify the terminal inside to re-fit after show
+    panelEl.dispatchEvent(new CustomEvent('terminal-fit', { bubbles: true }));
   }
 }
 
@@ -281,5 +284,99 @@ describe('DOM-move effect — last tab close regression', () => {
     expect(() => pool.removeChild(panel3)).not.toThrow();
 
     expect(panelRefs.size).toBe(0);
+  });
+});
+
+describe('DOM-move effect — terminal-fit dispatch', () => {
+  it('dispatches "terminal-fit" on the panel when it is moved into a cell', () => {
+    const pool  = makePool();
+    const cell  = makeCell();
+    const panel = makePanel(pool);
+
+    let fitCount = 0;
+    panel.addEventListener('terminal-fit', () => { fitCount++; });
+
+    const panelRefs: PanelRefsMap = new Map([[1, panel]]);
+    const cellRefs                = new Map([[0, cell]]);
+
+    runDomMoveEffect(panelRefs, cellRefs, new Map([[0, 1]]), pool);
+
+    expect(fitCount).toBe(1);
+  });
+
+  it('dispatches "terminal-fit" on every subsequent show (tab switch back)', () => {
+    // When the user switches away and back, the panel goes pool → cell → pool
+    // → cell.  Each time it becomes visible it must get a fit event.
+    const pool  = makePool();
+    const cell  = makeCell();
+    const panel = makePanel(pool);
+
+    let fitCount = 0;
+    panel.addEventListener('terminal-fit', () => { fitCount++; });
+
+    const panelRefs: PanelRefsMap = new Map([[1, panel]]);
+    const cellRefs                = new Map([[0, cell]]);
+
+    // First show
+    runDomMoveEffect(panelRefs, cellRefs, new Map([[0, 1]]), pool);
+    expect(fitCount).toBe(1);
+
+    // Hide (switch away)
+    runDomMoveEffect(panelRefs, cellRefs, new Map([[0, null]]), pool);
+    expect(fitCount).toBe(1); // no extra event while hidden
+
+    // Second show (switch back)
+    runDomMoveEffect(panelRefs, cellRefs, new Map([[0, 1]]), pool);
+    expect(fitCount).toBe(2);
+  });
+
+  it('does NOT dispatch "terminal-fit" for panels that remain hidden', () => {
+    // In a 1x1 grid with two tabs, only the assigned tab should get the event.
+    const pool   = makePool();
+    const cell   = makeCell();
+    const panel1 = makePanel(pool);
+    const panel2 = makePanel(pool);
+
+    let fit1 = 0;
+    let fit2 = 0;
+    panel1.addEventListener('terminal-fit', () => { fit1++; });
+    panel2.addEventListener('terminal-fit', () => { fit2++; });
+
+    const panelRefs: PanelRefsMap = new Map([[1, panel1], [2, panel2]]);
+    const cellRefs                = new Map([[0, cell]]);
+
+    // Only tab 1 assigned
+    runDomMoveEffect(panelRefs, cellRefs, new Map([[0, 1]]), pool);
+
+    expect(fit1).toBe(1); // assigned tab got the event
+    expect(fit2).toBe(0); // hidden tab did not
+  });
+
+  it('dispatches "terminal-fit" when switching from one tab to another in single-tile mode', () => {
+    // The half-terminal regression: opening a second connection in 1x1 mode
+    // caused the terminal to stay sized at the pool dimensions (zero / wrong).
+    // After the fix, the newly-shown terminal must always receive a fit event.
+    const pool   = makePool();
+    const cell   = makeCell();
+    const panel1 = makePanel(pool);
+    const panel2 = makePanel(pool);
+
+    let fit1 = 0;
+    let fit2 = 0;
+    panel1.addEventListener('terminal-fit', () => { fit1++; });
+    panel2.addEventListener('terminal-fit', () => { fit2++; });
+
+    const panelRefs: PanelRefsMap = new Map([[1, panel1], [2, panel2]]);
+    const cellRefs                = new Map([[0, cell]]);
+
+    // Tab 1 opens first
+    runDomMoveEffect(panelRefs, cellRefs, new Map([[0, 1]]), pool);
+    expect(fit1).toBe(1);
+    expect(fit2).toBe(0);
+
+    // Tab 2 replaces tab 1 in the single cell (autoPlace eviction)
+    runDomMoveEffect(panelRefs, cellRefs, new Map([[0, 2]]), pool);
+    expect(fit1).toBe(1); // tab 1 now hidden — no new event
+    expect(fit2).toBe(1); // tab 2 just became visible — must get the event
   });
 });
