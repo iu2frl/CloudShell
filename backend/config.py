@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     admin_user: str = os.getenv("ADMIN_USER", "admin")
     admin_password: str = os.getenv("ADMIN_PASSWORD", "changeme")
     token_ttl_hours: int = int(os.getenv("TOKEN_TTL_HOURS", "8"))
+    audit_retention_days: int = int(os.getenv("AUDIT_RETENTION_DAYS", "7"))
     data_dir: str = os.getenv("DATA_DIR", "/data")
     db_path: str = ""
     keys_dir: str = ""

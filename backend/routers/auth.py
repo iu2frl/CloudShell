@@ -18,12 +18,18 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.database import get_db
 from backend.models.auth import AdminCredential, RevokedToken
+from backend.services.audit import (
+    ACTION_LOGIN,
+    ACTION_LOGOUT,
+    ACTION_PASSWORD_CHANGED,
+    write_audit,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -182,6 +188,7 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     encoded, expire, _ = _make_token(form_data.username)
+    await write_audit(db, form_data.username, ACTION_LOGIN, "User logged in")
     return Token(access_token=encoded, token_type="bearer", expires_at=expire)
 
 
@@ -237,6 +244,9 @@ async def logout(
         db.add(RevokedToken(jti=jti, expires_at=exp_dt))
         await db.commit()
 
+    username: str = payload.get("sub", "unknown")
+    await write_audit(db, username, ACTION_LOGOUT, "User logged out")
+
 
 @router.get("/me", response_model=MeOut)
 async def me(
@@ -270,3 +280,4 @@ async def change_password(
     else:
         db.add(AdminCredential(username=current_user, hashed_password=new_hash))
     await db.commit()
+    await write_audit(db, current_user, ACTION_PASSWORD_CHANGED, "User changed password")

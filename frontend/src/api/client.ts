@@ -169,3 +169,23 @@ export function terminalWsUrl(sessionId: string): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${window.location.host}/api/terminal/ws/${sessionId}?token=${token}`;
 }
+
+// ── Audit ─────────────────────────────────────────────────────────────────────
+
+export interface AuditLogEntry {
+  id: number;
+  timestamp: string;
+  username: string;
+  action: string;
+  detail: string | null;
+}
+
+export interface AuditLogPage {
+  total: number;
+  page: number;
+  page_size: number;
+  entries: AuditLogEntry[];
+}
+
+export const listAuditLogs = (page = 1, pageSize = 50): Promise<AuditLogPage> =>
+  request(`/audit/logs?page=${page}&page_size=${pageSize}`);

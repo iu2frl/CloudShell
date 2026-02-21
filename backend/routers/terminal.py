@@ -10,6 +10,11 @@ from backend.config import get_settings
 from backend.database import get_db
 from backend.models.device import AuthType, Device
 from backend.routers.auth import get_current_user
+from backend.services.audit import (
+    ACTION_SESSION_ENDED,
+    ACTION_SESSION_STARTED,
+    write_audit,
+)
 from backend.services.crypto import decrypt, load_decrypted_key
 from backend.services.ssh import _ws_error, close_session, create_session, stream_session
 
@@ -21,7 +26,7 @@ router = APIRouter(prefix="/terminal", tags=["terminal"])
 async def open_session(
     device_id: int,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: str = Depends(get_current_user),
 ):
     """Create an SSH session and return a session_id for WebSocket use."""
     settings = get_settings()
@@ -75,6 +80,9 @@ async def open_session(
             except OSError:
                 pass
 
+    detail = f"Started session with {device.name} ({device.hostname}:{device.port})"
+    await write_audit(db, current_user, ACTION_SESSION_STARTED, detail)
+
     return {"session_id": session_id}
 
 
@@ -87,9 +95,12 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
     if not token:
         await websocket.close(code=4001)
         return
+
+    username = "unknown"
     try:
         settings = get_settings()
-        jose_jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        payload = jose_jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        username = payload.get("sub", "unknown")
     except JWTError:
         await websocket.close(code=4001)
         return
@@ -104,3 +115,11 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
         await _ws_error(websocket, str(exc))
     finally:
         await close_session(session_id)
+        from backend.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            await write_audit(
+                db,
+                username,
+                ACTION_SESSION_ENDED,
+                f"Ended session (session_id={session_id[:8]})",
+            )
