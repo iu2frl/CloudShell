@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import get_settings
 from backend.database import init_db
-from backend.routers import auth_router, devices_router, keys_router, terminal_router
+from backend.routers import audit_router, auth_router, devices_router, keys_router, terminal_router
 
 VERSION = os.getenv("APP_VERSION", "dev")
 
@@ -37,6 +37,11 @@ async def lifespan(app: FastAPI):
     os.makedirs(settings.data_dir, exist_ok=True)
     os.makedirs(settings.keys_dir, exist_ok=True)
     await init_db()
+    # Prune stale audit entries on startup
+    from backend.database import AsyncSessionLocal
+    from backend.services.audit import prune_old_entries
+    async with AsyncSessionLocal() as db:
+        await prune_old_entries(db, settings.audit_retention_days)
     log.info("CloudShell %s started (data_dir=%s)", VERSION, settings.data_dir)
     yield
     # Shutdown
@@ -72,6 +77,7 @@ async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
 
 # ── API routes ────────────────────────────────────────────────────────────────
 
+app.include_router(audit_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(devices_router, prefix="/api")
 app.include_router(keys_router, prefix="/api")

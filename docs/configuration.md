@@ -8,6 +8,7 @@ All configuration is via environment variables (or a `.env` file):
 | `ADMIN_USER` | `admin` | Login username |
 | `ADMIN_PASSWORD` | `changeme` | Initial login password. After first login you can change it via the UI. |
 | `TOKEN_TTL_HOURS` | `8` | JWT lifetime in hours. The frontend silently refreshes 10 minutes before expiry. |
+| `AUDIT_RETENTION_DAYS` | `7` | Number of days to retain audit log entries. Entries older than this are pruned automatically on startup. |
 | `DATA_DIR` | `/data` | Directory where the SQLite database, SSH key files, and known_hosts are stored. Mount this as a Docker volume. |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated list of allowed CORS origins. Leave unset when running behind Nginx (same-origin). Set to your frontend URL (e.g. `https://cloudshell.example.com`) when running the backend standalone. |
 

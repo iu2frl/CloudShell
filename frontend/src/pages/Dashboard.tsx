@@ -5,8 +5,9 @@ import { DeviceForm } from "../components/DeviceForm";
 import { Terminal } from "../components/Terminal";
 import { SessionBadge } from "../components/SessionBadge";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
+import { AuditLogModal } from "../components/AuditLogModal";
 import { useToast } from "../components/Toast";
-import { KeyRound, LogOut, Terminal as TerminalIcon } from "lucide-react";
+import { ClipboardList, KeyRound, LogOut, Terminal as TerminalIcon } from "lucide-react";
 
 interface Props {
   onLogout: () => void;
@@ -27,6 +28,7 @@ export function Dashboard({ onLogout }: Props) {
   const [showForm, setShowForm]     = useState(false);
   const [editDevice, setEditDevice] = useState<Device | undefined>();
   const [showChangePw, setShowChangePw] = useState(false);
+  const [showAuditLog, setShowAuditLog] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const toast = useToast();
 
@@ -102,9 +104,16 @@ export function Dashboard({ onLogout }: Props) {
           ))}
         </div>
 
-        {/* Right: session badge + change password + logout */}
+        {/* Right: session badge + audit log + change password + logout */}
         <div className="flex items-center gap-2 flex-shrink-0">
           <SessionBadge />
+          <button
+            onClick={() => setShowAuditLog(true)}
+            className="icon-btn text-slate-400 hover:text-blue-400"
+            title="Audit log"
+          >
+            <ClipboardList size={16} />
+          </button>
           <button
             onClick={() => setShowChangePw(true)}
             className="icon-btn text-slate-400 hover:text-blue-400"
@@ -189,6 +198,11 @@ export function Dashboard({ onLogout }: Props) {
       {/* Change password modal */}
       {showChangePw && (
         <ChangePasswordModal onClose={() => setShowChangePw(false)} />
+      )}
+
+      {/* Audit log modal */}
+      {showAuditLog && (
+        <AuditLogModal onClose={() => setShowAuditLog(false)} />
       )}
     </div>
   );

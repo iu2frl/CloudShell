@@ -12,8 +12,8 @@ class Base(DeclarativeBase):
 
 # Import all models here so SQLAlchemy knows about them before create_all()
 def _import_models():
-    from backend.models import device, auth  # noqa: F401
-    _ = device, auth
+    from backend.models import device, auth, audit  # noqa: F401
+    _ = device, auth, audit
 
 
 def get_engine():

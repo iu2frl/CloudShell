@@ -13,17 +13,24 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.database import get_db
 from backend.models.auth import AdminCredential, RevokedToken
+from backend.services.audit import (
+    ACTION_LOGIN,
+    ACTION_LOGOUT,
+    ACTION_PASSWORD_CHANGED,
+    get_client_ip,
+    write_audit,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -172,6 +179,7 @@ async def _get_payload(
 
 @router.post("/token", response_model=Token)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
@@ -182,6 +190,11 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     encoded, expire, _ = _make_token(form_data.username)
+    await write_audit(
+        db, form_data.username, ACTION_LOGIN,
+        detail="User logged in",
+        source_ip=get_client_ip(request),
+    )
     return Token(access_token=encoded, token_type="bearer", expires_at=expire)
 
 
@@ -211,6 +224,7 @@ async def refresh(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ):
@@ -237,6 +251,13 @@ async def logout(
         db.add(RevokedToken(jti=jti, expires_at=exp_dt))
         await db.commit()
 
+    username: str = payload.get("sub", "unknown")
+    await write_audit(
+        db, username, ACTION_LOGOUT,
+        detail="User logged out",
+        source_ip=get_client_ip(request),
+    )
+
 
 @router.get("/me", response_model=MeOut)
 async def me(
@@ -248,6 +269,7 @@ async def me(
 
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(
+    request: Request,
     body: ChangePasswordIn,
     current_user: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -270,3 +292,8 @@ async def change_password(
     else:
         db.add(AdminCredential(username=current_user, hashed_password=new_hash))
     await db.commit()
+    await write_audit(
+        db, current_user, ACTION_PASSWORD_CHANGED,
+        detail="User changed password",
+        source_ip=get_client_ip(request),
+    )
