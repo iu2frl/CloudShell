@@ -128,6 +128,10 @@ For more details on fhe security measures, configuration and recommended hardeni
 | [docs/development.md](docs/development.md) | Local dev setup, building, testing, Makefile reference |
 | [docs/architecture.md](docs/architecture.md) | System design, data flow, project structure |
 
+## Contributing
+
+Pull requests are only accepted on the `dev` branch.
+
 ## Vibecoded?
 
 ✨ AF ✨
