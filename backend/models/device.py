@@ -1,17 +1,28 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Integer, String, DateTime, Enum as SAEnum
+from sqlalchemy import Integer, String, DateTime, Enum as SAEnum, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
 
 
 class AuthType(str, enum.Enum):
+    """Authentication type for SSH connections."""
+
     password = "password"
     key = "key"
 
 
+class ConnectionType(str, enum.Enum):
+    """Connection type: interactive SSH terminal or SFTP file manager."""
+
+    ssh = "ssh"
+    sftp = "sftp"
+
+
 class Device(Base):
+    """Represents a managed SSH/SFTP device."""
+
     __tablename__ = "devices"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -20,6 +31,12 @@ class Device(Base):
     port: Mapped[int] = mapped_column(Integer, default=22)
     username: Mapped[str] = mapped_column(String(128), nullable=False)
     auth_type: Mapped[AuthType] = mapped_column(SAEnum(AuthType), nullable=False)
+    connection_type: Mapped[ConnectionType] = mapped_column(
+        SAEnum(ConnectionType),
+        nullable=False,
+        default=ConnectionType.ssh,
+        server_default=text("'ssh'"),  # backfills existing rows on ALTER TABLE
+    )
     # AES-256-GCM encrypted, base64-encoded
     encrypted_password: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # filename inside keys_dir

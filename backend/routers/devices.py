@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models.device import AuthType, Device
+from backend.models.device import AuthType, ConnectionType, Device
 from backend.routers.auth import get_current_user
 from backend.services.crypto import (
     delete_key_file,
@@ -26,6 +26,7 @@ class DeviceCreate(BaseModel):
     port: int = 22
     username: str
     auth_type: AuthType
+    connection_type: ConnectionType = ConnectionType.ssh
     password: Optional[str] = None
     private_key: Optional[str] = None  # PEM string
 
@@ -36,6 +37,7 @@ class DeviceUpdate(BaseModel):
     port: Optional[int] = None
     username: Optional[str] = None
     auth_type: Optional[AuthType] = None
+    connection_type: Optional[ConnectionType] = None
     password: Optional[str] = None
     private_key: Optional[str] = None
 
@@ -47,6 +49,7 @@ class DeviceOut(BaseModel):
     port: int
     username: str
     auth_type: AuthType
+    connection_type: ConnectionType
     key_filename: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -87,6 +90,7 @@ async def create_device(
         port=payload.port,
         username=payload.username,
         auth_type=payload.auth_type,
+        connection_type=payload.connection_type,
     )
     if payload.auth_type == AuthType.password:
         if not payload.password:
@@ -132,7 +136,7 @@ async def update_device(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
-    for field in ("name", "hostname", "port", "username", "auth_type"):
+    for field in ("name", "hostname", "port", "username", "auth_type", "connection_type"):
         val = getattr(payload, field)
         if val is not None:
             setattr(device, field, val)

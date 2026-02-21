@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Device, deleteDevice } from "../api/client";
-import { Monitor, Trash2, PencilLine, Plus, RefreshCw, KeyRound, Lock, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { Monitor, Trash2, PencilLine, Plus, RefreshCw, KeyRound, Lock, ChevronsLeft, ChevronsRight, FolderOpen } from "lucide-react";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -85,7 +85,10 @@ export function DeviceList({
                     : "text-slate-400 hover:bg-slate-800 hover:text-white"
                   }`}
               >
-                <Monitor size={14} />
+                {d.connection_type === "sftp"
+                  ? <FolderOpen size={14} />
+                  : <Monitor size={14} />
+                }
               </button>
             ))}
           </div>
@@ -163,6 +166,11 @@ export function DeviceList({
                           ? <KeyRound size={10} className="text-slate-500 flex-shrink-0" aria-label="SSH key" />
                           : <Lock     size={10} className="text-slate-600 flex-shrink-0" aria-label="Password" />
                         }
+                        {d.connection_type === "sftp" && (
+                          <span className="text-[9px] bg-purple-900/60 text-purple-300 border border-purple-700/50 rounded px-1 leading-4 flex-shrink-0">
+                            SFTP
+                          </span>
+                        )}
                       </div>
                       <p className="text-[11px] text-slate-500 truncate">
                         {d.username}@{d.hostname}:{d.port}
