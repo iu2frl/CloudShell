@@ -4,7 +4,9 @@ If you are curious on how I did this project, and which prompts were used, this 
 
 ## Model info
 
-The project was almost 100% developed using GitHub Copilot, mostly by iterating on prompts and refining the output. I used Claude Sonnet 4.6 most of the time for generating and refining prompts.
+The project was almost 100% developed using GitHub Copilot, mostly by iterating on prompts and refining the output. I used Claude Sonnet 4.6 most of the time for generating and refining prompts. I also used it to generate some of the documentation, but I made sure to review and edit everything it produced to ensure accuracy and clarity.
+
+The project up to version 0.5 took me about 30% of the GitHub Copilot PRO subscription.
 
 ## Full code iterations
 
