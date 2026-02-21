@@ -177,6 +177,7 @@ export interface AuditLogEntry {
   timestamp: string;
   username: string;
   action: string;
+  source_ip: string | null;
   detail: string | null;
 }
 

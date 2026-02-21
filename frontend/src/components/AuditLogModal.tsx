@@ -108,6 +108,7 @@ export function AuditLogModal({ onClose }: Props) {
                   <th className="text-left px-4 py-2 font-medium whitespace-nowrap">Timestamp (UTC)</th>
                   <th className="text-left px-4 py-2 font-medium">User</th>
                   <th className="text-left px-4 py-2 font-medium">Action</th>
+                  <th className="text-left px-4 py-2 font-medium">Source IP</th>
                   <th className="text-left px-4 py-2 font-medium">Detail</th>
                 </tr>
               </thead>
@@ -125,6 +126,9 @@ export function AuditLogModal({ onClose }: Props) {
                     </td>
                     <td className={`px-4 py-2 font-medium whitespace-nowrap ${ACTION_COLORS[entry.action] ?? "text-slate-300"}`}>
                       {ACTION_LABELS[entry.action] ?? entry.action}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-slate-400 whitespace-nowrap">
+                      {entry.source_ip ?? "—"}
                     </td>
                     <td className="px-4 py-2 text-slate-400">
                       {entry.detail ?? "—"}

@@ -3,7 +3,7 @@ import tempfile
 import os
 
 import asyncssh
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
@@ -13,6 +13,7 @@ from backend.routers.auth import get_current_user
 from backend.services.audit import (
     ACTION_SESSION_ENDED,
     ACTION_SESSION_STARTED,
+    get_client_ip,
     write_audit,
 )
 from backend.services.crypto import decrypt, load_decrypted_key
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/terminal", tags=["terminal"])
 @router.post("/session/{device_id}")
 async def open_session(
     device_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: str = Depends(get_current_user),
 ):
@@ -81,7 +83,11 @@ async def open_session(
                 pass
 
     detail = f"Started session with {device.name} ({device.hostname}:{device.port})"
-    await write_audit(db, current_user, ACTION_SESSION_STARTED, detail)
+    await write_audit(
+        db, current_user, ACTION_SESSION_STARTED,
+        detail=detail,
+        source_ip=get_client_ip(request),
+    )
 
     return {"session_id": session_id}
 
@@ -97,10 +103,21 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
         return
 
     username = "unknown"
+    source_ip: str | None = None
     try:
         settings = get_settings()
         payload = jose_jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         username = payload.get("sub", "unknown")
+        # Extract client IP from the WebSocket upgrade request
+        xff = websocket.headers.get("x-forwarded-for")
+        if xff:
+            source_ip = xff.split(",")[0].strip()[:45]
+        else:
+            xri = websocket.headers.get("x-real-ip")
+            if xri:
+                source_ip = xri.strip()[:45]
+            elif websocket.client:
+                source_ip = websocket.client.host[:45]
     except JWTError:
         await websocket.close(code=4001)
         return
@@ -121,5 +138,6 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
                 db,
                 username,
                 ACTION_SESSION_ENDED,
-                f"Ended session (session_id={session_id[:8]})",
+                detail=f"Ended session (session_id={session_id[:8]})",
+                source_ip=source_ip,
             )

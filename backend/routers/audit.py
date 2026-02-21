@@ -30,6 +30,7 @@ class AuditLogEntry(BaseModel):
     timestamp: str  # ISO-8601 UTC
     username: str
     action: str
+    source_ip: str | None
     detail: str | None
 
     class Config:
@@ -78,6 +79,7 @@ async def list_audit_logs(
             timestamp=row.timestamp.isoformat(),
             username=row.username,
             action=row.action,
+            source_ip=row.source_ip,
             detail=row.detail,
         )
         for row in rows
