@@ -5,9 +5,21 @@ on:
     branches:
       - main
       - dev
+    paths-ignore:
+      - "docs/**"
+      - "website/**"
+      - "images/**"
+      - "vibecoding/**"
+      - "**.md"
   pull_request:
     branches:
       - "**"
+    paths-ignore:
+      - "docs/**"
+      - "website/**"
+      - "images/**"
+      - "vibecoding/**"
+      - "**.md"
   workflow_dispatch:
     inputs:
       python-version:
