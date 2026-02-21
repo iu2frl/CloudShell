@@ -46,9 +46,8 @@ async def test_verify_credentials_wrong_env_password(db_session):
 
 async def test_verify_credentials_uses_db_hash(db_session):
     """Once a hashed password is stored in the DB it is used for verification."""
-    from passlib.context import CryptContext
-    ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    hashed = ctx.hash("dbpassword")
+    import bcrypt
+    hashed = bcrypt.hashpw(b"dbpassword", bcrypt.gensalt()).decode()
     db_session.add(AdminCredential(username="admin", hashed_password=hashed))
     await db_session.commit()
 
@@ -217,13 +216,12 @@ async def test_logout_twice_does_not_duplicate_revoked_token(client, db_session)
 
 async def test_change_password_updates_existing_db_row(client, db_session):
     """When an AdminCredential row already exists it must be updated in-place."""
-    from passlib.context import CryptContext
-    ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    import bcrypt
 
     # Pre-populate an AdminCredential row with the current password
     db_session.add(AdminCredential(
         username="admin",
-        hashed_password=ctx.hash("admin"),
+        hashed_password=bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode(),
     ))
     await db_session.commit()
 
@@ -251,7 +249,7 @@ async def test_change_password_updates_existing_db_row(client, db_session):
     assert len(rows) == 1
 
     # New hash must verify the new password
-    assert ctx.verify("UpdatedPass1!", rows[0].hashed_password)
+    assert bcrypt.checkpw(b"UpdatedPass1!", rows[0].hashed_password.encode())
 
 
 async def test_change_password_creates_new_db_row(client, db_session):

@@ -18,9 +18,17 @@ I really liked the idea behind some existing tools like [ShellNGN](https://shell
 
 ## Screenshots
 
-Terminal screen:
+SSH connection screenshot:
 
-![Terminal Screen](./images/main.png)
+![SSH Connection Screenshot](./images/main.png)
+
+SFTP connection screenshot:
+
+![SFTP Connection Screenshot](./images/sftp.png)
+
+Audit screenshot:
+
+![Audit Screenshot](./images/audit.png)
 
 ## Features
 
