@@ -1,0 +1,59 @@
+name: Deploy marketing website to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# Allow only one concurrent deployment; cancel any in-progress run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Copy screenshots into website
+        run: cp -r images/ website/images/
+
+      - name: Inject Google Search Console verification tag
+        # Only runs when the secret is set; silently skips otherwise.
+        if: ${{ secrets.GOOGLE_SITE_VERIFICATION != '' }}
+        env:
+          GSC_TAG: ${{ secrets.GOOGLE_SITE_VERIFICATION }}
+        run: |
+          sed -i "s|<!-- GOOGLE_SITE_VERIFICATION_PLACEHOLDER -->|${GSC_TAG}|g" website/index.html
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
