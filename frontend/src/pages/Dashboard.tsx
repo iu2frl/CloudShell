@@ -6,7 +6,7 @@ import { Terminal } from "../components/Terminal";
 import { SessionBadge } from "../components/SessionBadge";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
 import { useToast } from "../components/Toast";
-import { LogOut, Terminal as TerminalIcon } from "lucide-react";
+import { KeyRound, LogOut, Terminal as TerminalIcon } from "lucide-react";
 
 interface Props {
   onLogout: () => void;
@@ -101,9 +101,16 @@ export function Dashboard({ onLogout }: Props) {
           ))}
         </div>
 
-        {/* Right: session badge + logout */}
+        {/* Right: session badge + change password + logout */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          <SessionBadge onClick={() => setShowChangePw(true)} />
+          <SessionBadge />
+          <button
+            onClick={() => setShowChangePw(true)}
+            className="icon-btn text-slate-400 hover:text-blue-400"
+            title="Change password"
+          >
+            <KeyRound size={16} />
+          </button>
           <button
             onClick={handleLogout}
             className="icon-btn text-slate-400 hover:text-red-400"
