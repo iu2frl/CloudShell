@@ -9,6 +9,7 @@
  * - applies the correct CSS grid-template-rows and grid-template-columns
  * - each cell receives the correct assignedKey from the assignments map
  * - calls onAssign and onFocus (delegated to GridCell — integration check)
+ * - calls onContentRef for each cell so the parent can DOM-move live panels
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -33,8 +34,9 @@ function setup({
   itemList = items,
   focusedCell = 0,
 } = {}) {
-  const onAssign = vi.fn();
-  const onFocus  = vi.fn();
+  const onAssign     = vi.fn();
+  const onFocus      = vi.fn();
+  const onContentRef = vi.fn();
   const { container } = render(
     <SplitView<number, Item>
       layout={layout}
@@ -45,12 +47,11 @@ function setup({
       focusedCell={focusedCell}
       onAssign={onAssign}
       onFocus={onFocus}
+      onContentRef={onContentRef}
       emptyState={<div data-testid="empty-state">No connections</div>}
-    >
-      {(item) => <div data-testid={`panel-${item.id}`}>{item.label}</div>}
-    </SplitView>,
+    />,
   );
-  return { container, onAssign, onFocus };
+  return { container, onAssign, onFocus, onContentRef };
 }
 
 describe('SplitView — empty state', () => {
@@ -121,15 +122,33 @@ describe('SplitView — grid layout', () => {
     const grid = container.querySelector('[style]') as HTMLElement;
     expect(grid.style.gridTemplateRows).toBe('repeat(3, minmax(0, 1fr))');
   });
+
+  it('calls onContentRef once per cell so the parent can DOM-move panels', () => {
+    // Content is no longer rendered inside cells — each cell exposes an empty
+    // mount-point div via onContentRef.  The parent is responsible for moving
+    // the live panel node into that div (avoiding React unmount/remount).
+    const { onContentRef } = setup({
+      layout: { rows: 1, cols: 2 },
+      assignments: makeAssignments([[0, null],[1, null]]),
+    });
+    // Filter to only the mount calls (non-null el) — the cleanup call passes null.
+    // Signature: onContentRef(cellIndex: number, el: HTMLDivElement | null)
+    const mountCalls = onContentRef.mock.calls.filter(([, el]) => el !== null);
+    expect(mountCalls).toHaveLength(2);
+    for (const [, el] of mountCalls) {
+      expect(el).toBeInstanceOf(HTMLDivElement);
+    }
+  });
 });
 
 describe('SplitView — assigned cells', () => {
-  it('renders content for an assigned cell', () => {
+  it('does not show the Assign picker for an assigned cell', () => {
     setup({
       layout: { rows: 1, cols: 2 },
       assignments: makeAssignments([[0, 1],[1, null]]),
     });
-    expect(screen.getByTestId('panel-1')).toBeInTheDocument();
+    // Only cell 1 (unassigned) should show the picker; cell 0 should not
+    expect(screen.getAllByText('Assign connection')).toHaveLength(1);
   });
 
   it('renders the Assign picker for an empty cell alongside an assigned cell', () => {

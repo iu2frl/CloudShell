@@ -9,10 +9,11 @@
  * - selecting an item from the dropdown calls onAssign with the correct key
  * - selecting an item closes the dropdown
  * - clicking the backdrop closes the dropdown without calling onAssign
- * - assigned cell renders children content instead of the picker
- * - assigned cell shows the unassign (X) button
+ * - assigned cell shows the unassign (X) button (content is DOM-moved externally)
+ * - assigned cell does NOT show the assign picker
  * - clicking the unassign button calls onAssign(index, null)
  * - clicking the cell calls onFocus with the cell index
+ * - onContentRef is called with the mount-point div on mount
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -27,8 +28,9 @@ const items: Item[] = [
 ];
 
 function setup(assignedKey: number | null = null, itemList = items) {
-  const onAssign = vi.fn();
-  const onFocus  = vi.fn();
+  const onAssign     = vi.fn();
+  const onFocus      = vi.fn();
+  const onContentRef = vi.fn();
   render(
     <GridCell<number, Item>
       index={0}
@@ -39,11 +41,10 @@ function setup(assignedKey: number | null = null, itemList = items) {
       getLabel={(item) => item.name}
       onAssign={onAssign}
       onFocus={onFocus}
-    >
-      {(item) => <div data-testid="content">{item.name}</div>}
-    </GridCell>,
+      onContentRef={onContentRef}
+    />,
   );
-  return { onAssign, onFocus };
+  return { onAssign, onFocus, onContentRef };
 }
 
 describe('GridCell — empty state', () => {
@@ -98,11 +99,6 @@ describe('GridCell — empty state', () => {
 });
 
 describe('GridCell — assigned state', () => {
-  it('renders the children content when a key is assigned', () => {
-    setup(1); // item with id=1 is "Server Alpha"
-    expect(screen.getByTestId('content')).toHaveTextContent('Server Alpha');
-  });
-
   it('does not show the Assign connection button when assigned', () => {
     setup(1);
     expect(screen.queryByText('Assign connection')).not.toBeInTheDocument();
@@ -118,19 +114,69 @@ describe('GridCell — assigned state', () => {
     await userEvent.click(screen.getByTitle('Remove from this pane'));
     expect(onAssign).toHaveBeenCalledWith(0, null);
   });
-});
 
-describe('GridCell — focus', () => {
-  it('calls onFocus when the cell is clicked', async () => {
-    const { onFocus } = setup(null);
-    // Click somewhere on the cell wrapper (not the button)
-    await userEvent.click(screen.getByText('Assign connection').closest('div.relative')!.parentElement!);
+  it('pointerdown on the unassign button also focuses the cell (capture fires before bubble stopPropagation)', () => {
+    // The capture-phase listener on the wrapper fires before any child's
+    // bubble-phase stopPropagation can silence it — so clicking the unassign
+    // button correctly marks this cell as focused.
+    const { onFocus } = setup(1);
+    fireEvent.pointerDown(screen.getByTitle('Remove from this pane'));
     expect(onFocus).toHaveBeenCalledWith(0);
   });
 
+  it('calls onContentRef with the mount-point div on mount', () => {
+    // Content is no longer rendered by GridCell itself; it exposes an empty
+    // mount-point div via onContentRef so the parent can DOM-move the live
+    // panel in without unmounting it.
+    const { onContentRef } = setup(1);
+    expect(onContentRef).toHaveBeenCalledTimes(1);
+    expect(onContentRef.mock.calls[0][0]).toBeInstanceOf(HTMLDivElement);
+  });
+});
+
+describe('GridCell — focus', () => {
+  it('calls onFocus on pointerdown on the cell wrapper', () => {
+    const { onFocus } = setup(null);
+    const cell = screen.getByText('Assign connection').closest('div.relative')!.parentElement!;
+    fireEvent.pointerDown(cell);
+    expect(onFocus).toHaveBeenCalledWith(0);
+  });
+
+  it('calls onFocus when pointerdown is fired on a child that calls stopPropagation (xterm scenario)', () => {
+    // xterm.js registers its own pointerdown listener on the canvas and calls
+    // stopPropagation(), which would silence a bubble-phase onPointerDown on
+    // the cell wrapper.  The fix is a capture-phase listener on the wrapper,
+    // which fires BEFORE any child bubble handler can stop propagation.
+    const { onFocus, onContentRef } = setup(1);
+    // The content div is the mount-point that xterm would be placed inside
+    const contentDiv = onContentRef.mock.calls[0][0] as HTMLDivElement;
+
+    // Add a bubble-phase stopPropagation listener on the child, exactly as
+    // xterm does — this would break an onPointerDown on the parent wrapper
+    contentDiv.addEventListener('pointerdown', (e) => e.stopPropagation());
+    // Fire pointerdown on the child
+    fireEvent.pointerDown(contentDiv);
+
+    // Capture-phase listener on the wrapper MUST have fired despite stopPropagation
+    expect(onFocus).toHaveBeenCalledWith(0);
+  });
+
+  it('does not call onFocus when click fires without pointerdown (regression guard)', () => {
+    // Confirms that click alone no longer triggers focus — the old onClick
+    // handler was replaced with a capture-phase pointerdown listener
+    const { onFocus } = setup(null);
+    const cell = screen.getByText('Assign connection').closest('div.relative')!.parentElement!;
+    fireEvent.click(cell);
+    // click on the wrapper div itself (no onFocus there anymore) — but the
+    // "Assign connection" button's onClick calls stopPropagation, so reaching
+    // the wrapper means we clicked outside the button; onFocus should NOT fire
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+
   it('applies focused ring classes when isFocused is true', () => {
-    const onAssign = vi.fn();
-    const onFocus  = vi.fn();
+    const onAssign     = vi.fn();
+    const onFocus      = vi.fn();
+    const onContentRef = vi.fn();
     const { container } = render(
       <GridCell<number, Item>
         index={2}
@@ -141,9 +187,8 @@ describe('GridCell — focus', () => {
         getLabel={(item) => item.name}
         onAssign={onAssign}
         onFocus={onFocus}
-      >
-        {(item) => <span>{item.name}</span>}
-      </GridCell>,
+        onContentRef={onContentRef}
+      />,
     );
     const cell = container.firstChild as HTMLElement;
     expect(cell.className).toContain('ring-blue-500');
