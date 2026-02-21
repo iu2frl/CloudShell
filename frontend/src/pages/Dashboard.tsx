@@ -3,11 +3,12 @@ import { Device, listDevices, logout } from "../api/client";
 import { DeviceList } from "../components/DeviceList";
 import { DeviceForm } from "../components/DeviceForm";
 import { Terminal } from "../components/Terminal";
+import { FileManager } from "../components/FileManager";
 import { SessionBadge } from "../components/SessionBadge";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
 import { AuditLogModal } from "../components/AuditLogModal";
 import { useToast } from "../components/Toast";
-import { ClipboardList, KeyRound, LogOut, Terminal as TerminalIcon } from "lucide-react";
+import { ClipboardList, FolderOpen, KeyRound, LogOut, Terminal as TerminalIcon } from "lucide-react";
 
 interface Props {
   onLogout: () => void;
@@ -92,13 +93,17 @@ export function Dashboard({ onLogout }: Props) {
                   : "text-slate-400 hover:bg-slate-800 border border-transparent"
                 }`}
             >
+              {tab.device.connection_type === "sftp"
+                ? <FolderOpen size={11} className="flex-shrink-0" />
+                : <TerminalIcon size={11} className="flex-shrink-0" />
+              }
               <span className="max-w-[120px] truncate">{tab.device.name}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.key); }}
                 className="text-slate-500 hover:text-slate-200 leading-none ml-0.5"
                 title="Close tab"
               >
-                ×
+                x
               </button>
             </div>
           ))}
@@ -155,7 +160,7 @@ export function Dashboard({ onLogout }: Props) {
           onRefresh={fetchDevices}
         />
 
-        {/* Terminal area */}
+        {/* Terminal / file manager area */}
         <main className="flex-1 overflow-hidden p-3 min-w-0">
           {tabs.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center gap-3">
@@ -171,7 +176,11 @@ export function Dashboard({ onLogout }: Props) {
                 className="h-full"
                 style={{ display: tab.key === activeTab ? "block" : "none" }}
               >
-                <Terminal device={tab.device} />
+                {tab.device.connection_type === "sftp" ? (
+                  <FileManager device={tab.device} />
+                ) : (
+                  <Terminal device={tab.device} />
+                )}
               </div>
             ))
           )}

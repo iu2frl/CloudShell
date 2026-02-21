@@ -122,6 +122,8 @@ export async function changePassword(
 
 // ── Devices ───────────────────────────────────────────────────────────────────
 
+export type ConnectionType = "ssh" | "sftp";
+
 export interface Device {
   id: number;
   name: string;
@@ -129,6 +131,7 @@ export interface Device {
   port: number;
   username: string;
   auth_type: "password" | "key";
+  connection_type: ConnectionType;
   key_filename?: string | null;
   created_at: string;
   updated_at: string;
@@ -140,6 +143,7 @@ export interface DeviceCreate {
   port: number;
   username: string;
   auth_type: "password" | "key";
+  connection_type: ConnectionType;
   password?: string;
   private_key?: string;
 }
@@ -190,3 +194,129 @@ export interface AuditLogPage {
 
 export const listAuditLogs = (page = 1, pageSize = 50): Promise<AuditLogPage> =>
   request(`/audit/logs?page=${page}&page_size=${pageSize}`);
+
+// ── SFTP ──────────────────────────────────────────────────────────────────────
+
+export interface SftpEntry {
+  name: string;
+  path: string;
+  size: number;
+  is_dir: boolean;
+  permissions: string | null;
+  modified: number;
+}
+
+export interface SftpListResponse {
+  path: string;
+  entries: SftpEntry[];
+}
+
+export async function openSftpSession(deviceId: number): Promise<string> {
+  const data = await request<{ session_id: string }>(`/sftp/session/${deviceId}`, {
+    method: "POST",
+  });
+  return data.session_id;
+}
+
+export async function closeSftpSession(sessionId: string): Promise<void> {
+  await request<void>(`/sftp/session/${sessionId}`, { method: "DELETE" });
+}
+
+export async function sftpList(sessionId: string, path: string): Promise<SftpListResponse> {
+  const encoded = encodeURIComponent(path);
+  return request<SftpListResponse>(`/sftp/${sessionId}/list?path=${encoded}`);
+}
+
+export async function sftpDownload(sessionId: string, path: string): Promise<void> {
+  const token = localStorage.getItem("token") ?? "";
+  const encoded = encodeURIComponent(path);
+  const res = await fetch(`${BASE}/sftp/${sessionId}/download?path=${encoded}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Download failed");
+  }
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : path.split("/").pop() ?? "download";
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export async function sftpUpload(
+  sessionId: string,
+  remotePath: string,
+  file: File,
+  onProgress?: (pct: number) => void,
+): Promise<void> {
+  const token = localStorage.getItem("token") ?? "";
+  const encoded = encodeURIComponent(remotePath);
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}/sftp/${sessionId}/upload?path=${encoded}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText);
+          reject(new Error(err.detail ?? "Upload failed"));
+        } catch {
+          reject(new Error("Upload failed"));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+
+    const form = new FormData();
+    form.append("file", file);
+    xhr.send(form);
+  });
+}
+
+export async function sftpDelete(
+  sessionId: string,
+  path: string,
+  isDir: boolean,
+): Promise<void> {
+  await request<void>(`/sftp/${sessionId}/delete`, {
+    method: "POST",
+    body: JSON.stringify({ path, is_dir: isDir }),
+  });
+}
+
+export async function sftpRename(
+  sessionId: string,
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  await request<void>(`/sftp/${sessionId}/rename`, {
+    method: "POST",
+    body: JSON.stringify({ old_path: oldPath, new_path: newPath }),
+  });
+}
+
+export async function sftpMkdir(sessionId: string, path: string): Promise<void> {
+  await request<void>(`/sftp/${sessionId}/mkdir`, {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}

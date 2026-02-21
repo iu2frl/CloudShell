@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import get_settings
 from backend.database import init_db
-from backend.routers import audit_router, auth_router, devices_router, keys_router, terminal_router
+from backend.routers import audit_router, auth_router, devices_router, keys_router, sftp_router, terminal_router
 
 VERSION = os.getenv("APP_VERSION", "dev")
 
@@ -81,6 +81,7 @@ app.include_router(audit_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(devices_router, prefix="/api")
 app.include_router(keys_router, prefix="/api")
+app.include_router(sftp_router, prefix="/api")
 app.include_router(terminal_router, prefix="/api")
 
 

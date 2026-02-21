@@ -14,6 +14,7 @@ const EMPTY: DeviceCreate = {
   port: 22,
   username: "",
   auth_type: "password",
+  connection_type: "ssh",
   password: "",
   private_key: "",
 };
@@ -27,6 +28,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
           port: device.port,
           username: device.username,
           auth_type: device.auth_type,
+          connection_type: device.connection_type,
         }
       : { ...EMPTY }
   );
@@ -153,6 +155,17 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
               onChange={(e) => set("username", e.target.value)}
               placeholder="root"
             />
+          </Field>
+
+          <Field label="Connection Type">
+            <select
+              className="input"
+              value={form.connection_type}
+              onChange={(e) => set("connection_type", e.target.value)}
+            >
+              <option value="ssh">SSH Terminal</option>
+              <option value="sftp">File Manager (SFTP)</option>
+            </select>
           </Field>
 
           <Field label="Auth Type">
