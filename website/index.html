@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CloudShell - Self-Hosted Web SSH Gateway</title>
+  <meta name="description" content="CloudShell is a free, open-source, self-hosted web SSH gateway. Open SSH sessions right in your browser with no client software required." />
+  <meta name="keywords" content="SSH, web SSH, self-hosted, open source, terminal, browser SSH, Docker" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="CloudShell - Self-Hosted Web SSH Gateway" />
+  <meta property="og:description" content="Free, open-source web SSH gateway you can deploy with a single Docker Compose command." />
+  <meta property="og:image" content="images/main.png" />
+  <meta property="og:type" content="website" />
+
+  <!-- Google Search Console verification tag (injected at build time) -->
+  <!-- GOOGLE_SITE_VERIFICATION_PLACEHOLDER -->
+
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Navigation ─────────────────────────────────────────────────────── -->
+  <header class="nav-bar">
+    <div class="container nav-inner">
+      <a href="#" class="nav-logo">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <path d="M8 21h8M12 17v4"/>
+          <polyline points="6 8 10 12 6 16"/>
+          <line x1="13" y1="16" x2="17" y2="16"/>
+        </svg>
+        CloudShell
+      </a>
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#features">Features</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#quickstart">Quick Start</a>
+        <a href="#security">Security</a>
+        <a href="https://github.com/iu2frl/CloudShell" target="_blank" rel="noopener" class="btn btn-outline">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ── Hero ──────────────────────────────────────────────────────────── -->
+    <section class="hero" aria-labelledby="hero-heading">
+      <div class="container hero-inner">
+        <div class="hero-badge">Free &amp; Open Source</div>
+        <h1 id="hero-heading">SSH in your browser.<br>No client required.</h1>
+        <p class="hero-sub">
+          CloudShell is a self-hosted, Docker-deployable web SSH gateway.
+          Manage multiple SSH connections to any device right from your browser tab,
+          with encryption at rest, audit logging, and an SFTP file manager included.
+        </p>
+        <div class="hero-actions">
+          <a href="#quickstart" class="btn btn-primary">Get Started</a>
+          <a href="https://github.com/iu2frl/CloudShell" target="_blank" rel="noopener" class="btn btn-ghost">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+        <div class="hero-meta">
+          <span class="badge">GPLv3</span>
+          <span class="badge">Python 3.12</span>
+          <span class="badge">React 18</span>
+          <span class="badge">Docker</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Screenshots ────────────────────────────────────────────────────── -->
+    <section class="section screenshots-section" id="screenshots" aria-labelledby="screenshots-heading">
+      <div class="container">
+        <h2 id="screenshots-heading" class="section-title">See it in action</h2>
+        <p class="section-sub">A clean, familiar terminal experience right in your browser tab.</p>
+
+        <div class="screenshots-grid">
+          <figure class="screenshot-card">
+            <img src="images/main.png" alt="CloudShell terminal dashboard showing an active SSH session with multi-tab navigation" loading="lazy" />
+            <figcaption>Multi-tab SSH dashboard with device sidebar and live terminal</figcaption>
+          </figure>
+          <figure class="screenshot-card">
+            <img src="images/login.png" alt="CloudShell login page" loading="lazy" />
+            <figcaption>JWT-secured login page with configurable session lifetime</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Features ──────────────────────────────────────────────────────── -->
+    <section class="section features-section" id="features" aria-labelledby="features-heading">
+      <div class="container">
+        <h2 id="features-heading" class="section-title">Everything you need</h2>
+        <p class="section-sub">A free, self-hosted alternative to paid web SSH gateways — no subscriptions, no limits.</p>
+
+        <div class="features-grid">
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="6 8 10 12 6 16"/><line x1="13" y1="16" x2="17" y2="16"/></svg>
+            </div>
+            <h3>Full xterm.js Terminal</h3>
+            <p>ANSI/VT100 support, copy &amp; paste, and proper SIGWINCH resize propagation — just like a native client.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+            </div>
+            <h3>Multi-Tab Sessions</h3>
+            <p>Open multiple concurrent SSH connections to different devices simultaneously, each in its own browser tab.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+            </div>
+            <h3>Device Manager</h3>
+            <p>Add, edit, and delete SSH targets with name, host, port, and credentials — all stored encrypted at rest.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <h3>AES-256-GCM Encryption</h3>
+            <p>Passwords and SSH private keys are encrypted at rest with AES-256-GCM, key derived via PBKDF2 (260k iterations).</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7h3a5 5 0 0 1 5 5 5 5 0 0 1-5 5h-3m-6 0H6a5 5 0 0 1-5-5 5 5 0 0 1 5-5h3"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            </div>
+            <h3>SSH Key Auth &amp; Generator</h3>
+            <p>Paste an existing key, load from a file, or generate a fresh RSA-4096 key pair directly from the UI.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <h3>JWT Session Auth</h3>
+            <p>Configurable session TTL with silent token refresh 10 minutes before expiry. Token revocation on logout.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            </div>
+            <h3>Audit Log</h3>
+            <p>Tamper-evident activity log covering logins, logouts, SSH session events, and password changes, with configurable retention.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            </div>
+            <h3>SFTP File Manager</h3>
+            <p>Browse, upload, download, rename, and delete files on any connected device directly from the browser.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2H3v16h5v4l4-4h5l4-4V2zM11 11V7M16 11V7"/></svg>
+            </div>
+            <h3>Toast Notifications</h3>
+            <p>Non-blocking feedback for every action, plus a graceful error boundary for unexpected frontend errors.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+            </div>
+            <h3>Session Expiry Badge</h3>
+            <p>A live countdown in the header turns yellow then red as the session approaches its expiry time.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2" ry="2"/><path d="M16 12H8M12 8v8"/></svg>
+            </div>
+            <h3>Single-Command Deploy</h3>
+            <p>One <code>docker compose up -d</code> is all it takes to run in production with the prebuilt images from GHCR.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            </div>
+            <h3>Change Password at Runtime</h3>
+            <p>Update the admin password from the UI without restarting the backend — the change takes effect immediately.</p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Quick Start ────────────────────────────────────────────────────── -->
+    <section class="section quickstart-section" id="quickstart" aria-labelledby="quickstart-heading">
+      <div class="container">
+        <h2 id="quickstart-heading" class="section-title">Up and running in minutes</h2>
+        <p class="section-sub">No complicated setup. Just Docker Compose and a single environment file.</p>
+
+        <div class="steps">
+
+          <div class="step">
+            <div class="step-number" aria-hidden="true">1</div>
+            <div class="step-body">
+              <h3>Create your compose file</h3>
+              <p>Save the following as <code>docker-compose.yml</code>:</p>
+              <pre><code>services:
+
+  backend:
+    image: ghcr.io/iu2frl/cloudshell-backend:latest
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      - cloudshell_data:/data
+    environment:
+      SECRET_KEY: "changeme-asap"   # openssl rand -hex 32
+      ADMIN_USER: "admin"
+      ADMIN_PASSWORD: "changeme"
+      TOKEN_TTL_HOURS: "8"
+    networks:
+      - internal
+
+  frontend:
+    image: ghcr.io/iu2frl/cloudshell-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - internal
+
+volumes:
+  cloudshell_data:
+
+networks:
+  internal:
+    driver: bridge</code></pre>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-number" aria-hidden="true">2</div>
+            <div class="step-body">
+              <h3>Generate a strong secret key</h3>
+              <pre><code>openssl rand -hex 32</code></pre>
+              <p>Replace <code>changeme-asap</code> and <code>changeme</code> with strong values before starting.</p>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-number" aria-hidden="true">3</div>
+            <div class="step-body">
+              <h3>Launch</h3>
+              <pre><code>docker compose up -d</code></pre>
+              <p>Open <strong>http://localhost:8080</strong> and log in. That is it.</p>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="quickstart-alt">
+          <p>Prefer to build from source?</p>
+          <pre><code>git clone https://github.com/iu2frl/CloudShell
+cd CloudShell
+cp .env.example .env   # edit .env first
+docker compose up -d</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Security ──────────────────────────────────────────────────────── -->
+    <section class="section security-section" id="security" aria-labelledby="security-heading">
+      <div class="container">
+        <h2 id="security-heading" class="section-title">Built with security in mind</h2>
+        <p class="section-sub">Defense-in-depth from storage to network.</p>
+
+        <div class="security-table-wrapper">
+          <table class="security-table">
+            <thead>
+              <tr>
+                <th>Concern</th>
+                <th>Mitigation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Stored passwords</td>
+                <td>AES-256-GCM, key derived from <code>SECRET_KEY</code> via PBKDF2 (260k iterations)</td>
+              </tr>
+              <tr>
+                <td>SSH private keys</td>
+                <td>Encrypted <code>.enc</code> files, <code>chmod 600</code>, never stored in plaintext</td>
+              </tr>
+              <tr>
+                <td>Web session</td>
+                <td>Short-lived JWT (HS256), revocation via DB deny-list, silent refresh</td>
+              </tr>
+              <tr>
+                <td>WebSocket token</td>
+                <td>Passed as query param on WS upgrade — use HTTPS/WSS in production</td>
+              </tr>
+              <tr>
+                <td>Host key verification</td>
+                <td><code>known_hosts</code> persisted in <code>DATA_DIR</code>; accept-new policy</td>
+              </tr>
+              <tr>
+                <td>Admin password</td>
+                <td>bcrypt-hashed in DB after first change; env-var fallback on first boot only</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="security-notice">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <p>It is recommended to run CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS and keep it accessible only within a trusted network.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── CTA ───────────────────────────────────────────────────────────── -->
+    <section class="section cta-section" aria-labelledby="cta-heading">
+      <div class="container cta-inner">
+        <h2 id="cta-heading">Ready to ditch the paid SSH gateways?</h2>
+        <p>CloudShell is free, open source, and yours to self-host. No subscriptions, no telemetry, no limits.</p>
+        <div class="hero-actions">
+          <a href="#quickstart" class="btn btn-primary">Deploy now</a>
+          <a href="https://github.com/iu2frl/CloudShell" target="_blank" rel="noopener" class="btn btn-ghost">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+            Star on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────── -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <p>CloudShell is released under the <a href="https://github.com/iu2frl/CloudShell/blob/main/LICENSE" target="_blank" rel="noopener">GNU GPL v3</a> license.</p>
+      <nav aria-label="Footer navigation">
+        <a href="https://github.com/iu2frl/CloudShell" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/iu2frl/CloudShell/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/iu2frl/CloudShell/blob/main/docs/user-guide.md" target="_blank" rel="noopener">Docs</a>
+      </nav>
+    </div>
+  </footer>
+
+</body>
+</html>
