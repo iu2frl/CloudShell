@@ -76,8 +76,15 @@ export function Dashboard({ onLogout }: Props) {
         panelRefsMap.current.delete(key);
         continue;
       }
-      if (panelEl.parentElement !== cellEl) cellEl.appendChild(panelEl);
+      const moved = panelEl.parentElement !== cellEl;
+      if (moved) cellEl.appendChild(panelEl);
       panelEl.style.display = "";
+      // Notify the Terminal inside that it should re-fit now that the panel
+      // is visible.  The Terminal listener wraps the actual fit call in a
+      // requestAnimationFrame so the browser resolves the new cell dimensions
+      // before xterm measures them.  We dispatch on every show (not just moves)
+      // to also cover display:none → visible transitions after tab switches.
+      panelEl.dispatchEvent(new CustomEvent("terminal-fit", { bubbles: true }));
     }
   });
 
