@@ -103,10 +103,10 @@ describe('SessionBadge — rendering', () => {
 // ── Colour coding ─────────────────────────────────────────────────────────────
 
 describe('SessionBadge — colour classes', () => {
-  it('applies green colour when > 30 min remain', () => {
+  it('applies the default slate colour when > 30 min remain (no urgency)', () => {
     setToken(60 * 60 * 1000); // 1 h
     render(<SessionBadge />);
-    expect(getTrigger().className).toContain('text-green-400');
+    expect(getTrigger().className).toContain('text-slate-400');
   });
 
   it('applies yellow colour when between 10 and 30 min remain', () => {
@@ -115,12 +115,11 @@ describe('SessionBadge — colour classes', () => {
     expect(getTrigger().className).toContain('text-yellow-400');
   });
 
-  it('applies red colour and animate-pulse when < 10 min remain', () => {
+  it('applies red colour when < 10 min remain', () => {
     setToken(5 * 60 * 1000); // 5 min
     render(<SessionBadge />);
     const btn = getTrigger();
     expect(btn.className).toContain('text-red-400');
-    expect(btn.className).toContain('animate-pulse');
   });
 });
 

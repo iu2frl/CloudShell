@@ -64,7 +64,7 @@ export function SessionBadge() {
 
   const colorClass =
     remaining > 30 * 60 * 1000
-      ? "text-green-400 border-green-700/50 hover:border-green-500/70"
+      ? "text-slate-400"
       : remaining > 10 * 60 * 1000
       ? "text-yellow-400 border-yellow-700/50 hover:border-yellow-500/70"
       : "text-red-400 border-red-700/50 hover:border-red-500/70 animate-pulse";
@@ -76,13 +76,12 @@ export function SessionBadge() {
 
   return (
     <div className="relative">
-      {/* Trigger button — clock icon only, no countdown text */}
+      {/* Trigger button — clock icon only, styled like other topbar icon buttons */}
       <button
         ref={buttonRef}
         onClick={() => setOpen((v) => !v)}
         title="Session info"
-        className={`flex items-center justify-center border rounded p-1.5
-                    bg-transparent transition-colors cursor-pointer ${colorClass}`}
+        className={`icon-btn ${colorClass.split(" ")[0]}`}
       >
         <Clock size={15} className="flex-shrink-0" />
       </button>
