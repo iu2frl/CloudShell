@@ -104,9 +104,11 @@ export function useGridLayout<TKey>(
         }
       }
       // All cells full — place in focused cell (evicting the current occupant)
-      return prev;
+      const next = new Map(prev);
+      next.set(focusedCell, key);
+      return next;
     });
-  }, []);
+  }, [focusedCell]);
 
   return {
     layout,

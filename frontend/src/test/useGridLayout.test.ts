@@ -174,12 +174,90 @@ describe('useGridLayout — autoPlace', () => {
     expect(result.current.assignments.get(1)).toBeNull();
   });
 
-  it('does not overflow into a non-existent cell when all are full', () => {
+  it('replaces the focused cell when all cells are full (single-tile regression)', () => {
+    // Bug: in 1x1 mode autoPlace was a no-op when the only cell was occupied,
+    // meaning a second connection was never shown on screen.
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+    act(() => result.current.autoPlace(1)); // first connection fills the only cell
+    act(() => result.current.autoPlace(2)); // second connection must take over cell 0
+    expect(result.current.assignments.get(0)).toBe(2);
+    expect(result.current.assignments.size).toBe(1);
+  });
+
+  it('replaces the focused cell (not cell 0) when all cells are full', () => {
+    // In a 1x2 layout where both cells are occupied, a new key placed via
+    // autoPlace should land in focusedCell, not always in cell 0.
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 2 }));
+    act(() => result.current.assignCell(0, 10));
+    act(() => result.current.assignCell(1, 20));
+    act(() => result.current.setFocusedCell(1)); // user is looking at cell 1
+    act(() => result.current.autoPlace(30));      // all full — should evict cell 1
+    expect(result.current.assignments.get(1)).toBe(30);
+    expect(result.current.assignments.get(0)).toBe(10); // cell 0 untouched
+  });
+
+  it('does not mutate the assignments map size when all cells are full', () => {
     const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
     act(() => result.current.autoPlace(1));
-    act(() => result.current.autoPlace(2)); // all full, should not throw or corrupt
+    act(() => result.current.autoPlace(2));
+    // Still exactly 1 cell in a 1x1 grid
+    expect(result.current.assignments.size).toBe(1);
+  });
+});
+
+// ── Regression tests for tab-navigation bug ──────────────────────────────────
+//
+// Scenario: single-tile mode (1x1 layout).
+//   1. User opens device A  → autoPlace fills cell 0 with key 1.
+//   2. User opens device B  → autoPlace must replace cell 0 with key 2
+//      (previously it was a no-op so key 2 was never shown).
+//   3. User clicks the tab for key 1 → if key 1 is not in any cell, autoPlace
+//      must bring it back (previously the tab click was a no-op for orphaned tabs).
+
+describe('useGridLayout — single-tile tab navigation regression', () => {
+  it('second autoPlace replaces the first connection in 1x1 mode', () => {
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+
+    act(() => result.current.autoPlace(1)); // connect device A
+    expect(result.current.assignments.get(0)).toBe(1);
+
+    act(() => result.current.autoPlace(2)); // connect device B while A is open
+    // Device B must now be visible in the only cell
+    expect(result.current.assignments.get(0)).toBe(2);
+  });
+
+  it('switching back to an orphaned tab via autoPlace restores it to the cell', () => {
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+
+    act(() => result.current.autoPlace(1)); // open device A → cell 0 = 1
+    act(() => result.current.autoPlace(2)); // open device B → cell 0 = 2 (key 1 orphaned)
+
+    // Simulate clicking tab for key 1: it is no longer in any cell, so the
+    // tab-click handler calls autoPlace(1) to bring it back.
+    act(() => result.current.autoPlace(1));
+    expect(result.current.assignments.get(0)).toBe(1);
+  });
+
+  it('autoPlace is a no-op for a key that is already the current cell occupant', () => {
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+
+    act(() => result.current.autoPlace(1));
+    act(() => result.current.autoPlace(1)); // calling again for the same key
     expect(result.current.assignments.get(0)).toBe(1);
     expect(result.current.assignments.size).toBe(1);
+  });
+
+  it('three successive connections in 1x1 mode each become the visible terminal', () => {
+    const { result } = renderHook(() => useGridLayout<number>({ rows: 1, cols: 1 }));
+
+    act(() => result.current.autoPlace(1));
+    expect(result.current.assignments.get(0)).toBe(1);
+
+    act(() => result.current.autoPlace(2));
+    expect(result.current.assignments.get(0)).toBe(2);
+
+    act(() => result.current.autoPlace(3));
+    expect(result.current.assignments.get(0)).toBe(3);
   });
 });
 

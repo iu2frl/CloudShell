@@ -105,10 +105,12 @@ export function Dashboard({ onLogout }: Props) {
               key={tab.key}
               onClick={() => {
                 setActiveTab(tab.key);
-                // Highlight the cell that holds this tab, if any
+                // Highlight the cell that holds this tab; if not in any cell, auto-place it
+                let found = false;
                 for (const [idx, key] of grid.assignments) {
-                  if (key === tab.key) { grid.setFocusedCell(idx); break; }
+                  if (key === tab.key) { grid.setFocusedCell(idx); found = true; break; }
                 }
+                if (!found) grid.autoPlace(tab.key);
               }}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs cursor-pointer select-none
                           whitespace-nowrap transition-colors flex-shrink-0
