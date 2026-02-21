@@ -18,15 +18,11 @@ I really liked the idea behind some existing tools like [ShellNGN](https://shell
 
 ## Screenshots
 
-SSH connection screenshot:
+Supports both SSH and SFTP connections with (optional) split view:
 
 ![SSH Connection Screenshot](./images/main.png)
 
-SFTP connection screenshot:
-
-![SFTP Connection Screenshot](./images/sftp.png)
-
-Audit screenshot:
+Supports connections audit:
 
 ![Audit Screenshot](./images/audit.png)
 
