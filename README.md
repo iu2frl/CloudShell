@@ -24,25 +24,19 @@ Terminal screen:
 
 ## Features
 
-- [x] **Web terminal**: full xterm.js terminal emulator with ANSI/VT100 support, copy/paste, and proper resize (SIGWINCH propagation)
-- [x] **Multi-tab sessions**: open multiple SSH connections to different devices simultaneously
-- [x] **Device manager**: add, edit, and delete SSH targets with name, host, port, and credentials
-- [x] **Password & SSH key auth**: store passwords or PEM private keys, both encrypted at rest (AES-256-GCM)
-- [x] **Built-in key generator**: generate RSA-4096 key pairs directly from the UI; copy the public key to paste into `authorized_keys`
-- [x] **Key file upload**: load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
-- [x] **JWT session auth**: login page, configurable session TTL, silent token refresh, and token revocation on logout
-- [x] **Change password**: update the admin password at runtime without restarting
-- [x] **Session expiry badge**: live countdown in the header turns yellow/red as the session approaches expiry
-- [x] **Toast notifications**: non-blocking feedback for every action
-- [x] **Error boundary**: graceful recovery screen for unexpected frontend errors
-- [x] **Docker Compose deploy**: single command to run in production
-- [x] **Concurrent connections**: support multiple simultaneous SSH sessions
-- [ ] **Responsive design**: optimized for mobile and tablet devices
-- [ ] **SFTP**: secure file transfer over SSH
-- [ ] **File manager**: browse and manage files on the remote server
-- [ ] **Multi-user support**: allow multiple users to access the same CloudShell instance
-- [ ] **Audit logging**: track user actions and changes for compliance and troubleshooting
-- [ ] **VNC**: access remote desktops over VNC
+- **Web terminal**: full xterm.js terminal emulator with ANSI/VT100 support, copy/paste, and proper resize (SIGWINCH propagation)
+- **Multi-tab sessions**: open multiple SSH connections to different devices simultaneously
+- **Device manager**: add, edit, and delete SSH targets with name, host, port, and credentials
+- **Password & SSH key auth**: store passwords or PEM private keys, both encrypted at rest (AES-256-GCM)
+- **Built-in key generator**: generate RSA-4096 key pairs directly from the UI; copy the public key to paste into `authorized_keys`
+- **Key file upload**: load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
+- **JWT session auth**: login page, configurable session TTL, silent token refresh, and token revocation on logout
+- **Change password**: update the admin password at runtime without restarting
+- **Session expiry badge**: live countdown in the header turns yellow/red as the session approaches expiry
+- **Toast notifications**: non-blocking feedback for every action
+- **Error boundary**: graceful recovery screen for unexpected frontend errors
+- **Docker Compose deploy**: single command to run in production
+- **Concurrent connections**: support multiple simultaneous SSH sessions
 
 ## Quick Start
 
@@ -122,32 +116,7 @@ Open **<http://localhost:8080>** and log in with your configured credentials.
 > - Regularly rotate secrets and review access logs.
 > - It is advised to put CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS. SSH credentials are encrypted on disk but web traffic should be HTTPS.
 
-CloudShell is designed with defense-in-depth for the sensitive data it handles:
-
-- **Secrets at rest**: Device passwords and uploaded SSH private keys are encrypted
-  using AES-256-GCM. The encryption key is derived from the `SECRET_KEY`
-  environment variable via PBKDF2 with 260 000 iterations. Encrypted files live in
-  `DATA_DIR` (a Docker volume by default) and are never stored in plaintext.
-
-- **JWT sessions**: Tokens are signed with HS256 using `SECRET_KEY` and carry a
-  `jti` (unique ID) that is recorded in a revocation table when the user logs out
-  or refreshes. On each server start a fresh `boot_id` is generated and embedded
-  in every token; if the process restarts, all prior tokens are rejected
-  immediately, forcing a new login.
-
-- **Token handling**: The JWT is stored in browser `localStorage` and appended to
-  the terminal WebSocket URL as a query parameter. In production always run
-  behind HTTPS/WSS so the token is protected in transit.
-
-- **Admin credentials**: The admin password is bcrypt‑hashed in the database after
-  first change. Until then the value from `ADMIN_PASSWORD` is compared directly
-  (use a strong initial password and change it on first login).
-
-- **Configuration**: `SECRET_KEY` should be a random 32‑byte hex string
-  (`openssl rand -hex 32`). Treat it like a master key; if it is leaked all
-  encrypted data and sessions can be compromised.
-
-For more details on configuration and recommended hardening, see
+For more details on fhe security measures, configuration and recommended hardening, see
 [docs/configuration.md](docs/configuration.md).
 
 ## Documentation
