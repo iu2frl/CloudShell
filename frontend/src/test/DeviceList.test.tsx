@@ -16,6 +16,8 @@
  * - collapsed mode: renders device icon buttons instead of full rows
  * - shows SFTP badge for sftp connection type
  * - shows SSH key icon for key auth type
+ * - device name does not have truncate class at rest (no hover)
+ * - action buttons container is absolutely positioned (does not consume layout space at rest)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -185,5 +187,21 @@ describe('DeviceList — collapsed mode', () => {
   it('renders the collapse button in expanded mode', () => {
     setup({ collapsed: false });
     expect(screen.getByTitle('Collapse sidebar')).toBeInTheDocument();
+  });
+});
+
+describe('DeviceList — device name truncation and action button layout', () => {
+  it('device name element does not have the truncate class at rest', () => {
+    setup();
+    const nameEl = screen.getByText('My Server');
+    // classList.contains checks for the exact token 'truncate', not the substring 'group-hover:truncate'
+    expect(nameEl.classList.contains('truncate')).toBe(false);
+  });
+
+  it('action buttons container is absolutely positioned so it does not consume layout space at rest', () => {
+    setup();
+    const editBtn = screen.getByLabelText('Edit');
+    const container = editBtn.parentElement!;
+    expect(container.className).toContain('absolute');
   });
 });

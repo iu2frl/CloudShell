@@ -159,7 +159,7 @@ export function DeviceList({
                     {/* Info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <p className={`text-sm font-medium truncate ${
+                        <p className={`text-sm font-medium group-hover:truncate ${
                           isActive ? "text-white" : "text-slate-200"
                         }`}>{d.name}</p>
                         {d.auth_type === "key"
@@ -177,9 +177,9 @@ export function DeviceList({
                       </p>
                     </div>
 
-                    {/* Action icons */}
+                    {/* Action icons — absolutely positioned so they don't reserve space when hidden */}
                     {!isDeleting && (
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 rounded pl-1">
                         <button
                           onClick={(e) => { e.stopPropagation(); onEdit(d); }}
                           className="icon-btn"
