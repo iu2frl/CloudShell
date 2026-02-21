@@ -36,5 +36,32 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Run pytest
-        run: python -m pytest tests/ -v --tb=short
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run pytest with coverage
+        run: python -m pytest
+
+      - name: Publish test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-results-py${{ inputs.python-version }}
+          path: reports/junit.xml
+          retention-days: 30
+
+      - name: Publish coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-py${{ inputs.python-version }}
+          path: reports/
+          retention-days: 30
+
+      - name: Test summary
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: reports/junit.xml
+          check_name: "Unit Test Results (Python ${{ inputs.python-version }})"
+          comment_mode: off
