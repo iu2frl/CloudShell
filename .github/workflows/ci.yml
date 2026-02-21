@@ -38,6 +38,12 @@ jobs:
     with:
       python-version: ${{ inputs.python-version || '3.12' }}
 
+  frontend-tests:
+    name: Frontend Tests
+    uses: ./.github/workflows/frontend-tests.yml
+    with:
+      node-version: ${{ inputs.node-version || '20' }}
+
   integration-tests:
     name: Integration Tests
     uses: ./.github/workflows/api-tests.yml
