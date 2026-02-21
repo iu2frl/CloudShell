@@ -3,10 +3,12 @@ import { Device, listDevices, logout } from "../api/client";
 import { DeviceList } from "../components/DeviceList";
 import { DeviceForm } from "../components/DeviceForm";
 import { Terminal } from "../components/Terminal";
+import { FileManager } from "../components/FileManager";
 import { SessionBadge } from "../components/SessionBadge";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
+import { AuditLogModal } from "../components/AuditLogModal";
 import { useToast } from "../components/Toast";
-import { KeyRound, LogOut, Terminal as TerminalIcon } from "lucide-react";
+import { ClipboardList, FolderOpen, KeyRound, LogOut, Terminal as TerminalIcon } from "lucide-react";
 
 interface Props {
   onLogout: () => void;
@@ -27,6 +29,8 @@ export function Dashboard({ onLogout }: Props) {
   const [showForm, setShowForm]     = useState(false);
   const [editDevice, setEditDevice] = useState<Device | undefined>();
   const [showChangePw, setShowChangePw] = useState(false);
+  const [showAuditLog, setShowAuditLog] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const toast = useToast();
 
   const fetchDevices = async () => {
@@ -89,21 +93,32 @@ export function Dashboard({ onLogout }: Props) {
                   : "text-slate-400 hover:bg-slate-800 border border-transparent"
                 }`}
             >
+              {tab.device.connection_type === "sftp"
+                ? <FolderOpen size={11} className="flex-shrink-0" />
+                : <TerminalIcon size={11} className="flex-shrink-0" />
+              }
               <span className="max-w-[120px] truncate">{tab.device.name}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.key); }}
                 className="text-slate-500 hover:text-slate-200 leading-none ml-0.5"
                 title="Close tab"
               >
-                ×
+                x
               </button>
             </div>
           ))}
         </div>
 
-        {/* Right: session badge + change password + logout */}
+        {/* Right: session badge + audit log + change password + logout */}
         <div className="flex items-center gap-2 flex-shrink-0">
           <SessionBadge />
+          <button
+            onClick={() => setShowAuditLog(true)}
+            className="icon-btn text-slate-400 hover:text-blue-400"
+            title="Audit log"
+          >
+            <ClipboardList size={16} />
+          </button>
           <button
             onClick={() => setShowChangePw(true)}
             className="icon-btn text-slate-400 hover:text-blue-400"
@@ -127,6 +142,8 @@ export function Dashboard({ onLogout }: Props) {
           devices={devices}
           activeDeviceId={activeDevice?.id ?? null}
           loading={loading}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
           onConnect={handleConnect}
           onAdd={() => { setEditDevice(undefined); setShowForm(true); }}
           onEdit={(d) => { setEditDevice(d); setShowForm(true); }}
@@ -143,7 +160,7 @@ export function Dashboard({ onLogout }: Props) {
           onRefresh={fetchDevices}
         />
 
-        {/* Terminal area */}
+        {/* Terminal / file manager area */}
         <main className="flex-1 overflow-hidden p-3 min-w-0">
           {tabs.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center gap-3">
@@ -159,7 +176,11 @@ export function Dashboard({ onLogout }: Props) {
                 className="h-full"
                 style={{ display: tab.key === activeTab ? "block" : "none" }}
               >
-                <Terminal device={tab.device} />
+                {tab.device.connection_type === "sftp" ? (
+                  <FileManager device={tab.device} />
+                ) : (
+                  <Terminal device={tab.device} />
+                )}
               </div>
             ))
           )}
@@ -186,6 +207,11 @@ export function Dashboard({ onLogout }: Props) {
       {/* Change password modal */}
       {showChangePw && (
         <ChangePasswordModal onClose={() => setShowChangePw(false)} />
+      )}
+
+      {/* Audit log modal */}
+      {showAuditLog && (
+        <AuditLogModal onClose={() => setShowAuditLog(false)} />
       )}
     </div>
   );

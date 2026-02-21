@@ -27,6 +27,7 @@
 - Include tests for edge cases and error conditions
 - Run tests on every merge request
 - When performing tests on the dev machine, prefer writing them as scripts and running them from the command line instead of plain text inline commands
+- Every feature should have dedicated tests in the tests folder of the project
 
 ## Security considerations
 
@@ -35,3 +36,9 @@
 - Implement rate limiting and monitoring for all APIs
 - Isolate all functions and services to minimize the attack surface
   - Ideally by having a microservices architecture with backend on a different container from the frontend
+
+## Backward compatibility
+
+- Ensure that any changes to the API are backward compatible
+- Deprecate old endpoints and provide clear migration paths for users
+- Provide an upgrade path from old database schemas to new ones
