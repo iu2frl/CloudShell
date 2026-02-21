@@ -37,6 +37,35 @@ body {
   }
 }
 
+/* Custom scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #1e293b;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #1e293b;
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #334155;
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #475569;
+}
+
+*::-webkit-scrollbar-corner {
+  background: #1e293b;
+}
+
 /* xterm.js overrides */
 .xterm {
   padding: 8px;
