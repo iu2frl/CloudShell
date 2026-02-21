@@ -8,6 +8,7 @@ All configuration is via environment variables (or a `.env` file):
 | `ADMIN_USER` | `admin` | Login username |
 | `ADMIN_PASSWORD` | `changeme` | Initial login password. After first login you can change it via the UI. |
 | `TOKEN_TTL_HOURS` | `8` | JWT lifetime in hours. The frontend silently refreshes 10 minutes before expiry. |
+| `AUDIT_RETENTION_DAYS` | `7` | Number of days to retain audit log entries. Entries older than this are pruned automatically on startup. |
 | `DATA_DIR` | `/data` | Directory where the SQLite database, SSH key files, and known_hosts are stored. Mount this as a Docker volume. |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated list of allowed CORS origins. Leave unset when running behind Nginx (same-origin). Set to your frontend URL (e.g. `https://cloudshell.example.com`) when running the backend standalone. |
 
@@ -18,6 +19,33 @@ openssl rand -hex 32
 ```
 
 ## Security notes
+
+CloudShell is designed with defense-in-depth for the sensitive data it handles:
+
+- **Secrets at rest**: Device passwords and uploaded SSH private keys are encrypted
+  using AES-256-GCM. The encryption key is derived from the `SECRET_KEY`
+  environment variable via PBKDF2 with 260 000 iterations. Encrypted files live in
+  `DATA_DIR` (a Docker volume by default) and are never stored in plaintext.
+
+- **JWT sessions**: Tokens are signed with HS256 using `SECRET_KEY` and carry a
+  `jti` (unique ID) that is recorded in a revocation table when the user logs out
+  or refreshes. On each server start a fresh `boot_id` is generated and embedded
+  in every token; if the process restarts, all prior tokens are rejected
+  immediately, forcing a new login.
+
+- **Token handling**: The JWT is stored in browser `localStorage` and appended to
+  the terminal WebSocket URL as a query parameter. In production always run
+  behind HTTPS/WSS so the token is protected in transit.
+
+- **Admin credentials**: The admin password is bcrypt‑hashed in the database after
+  first change. Until then the value from `ADMIN_PASSWORD` is compared directly
+  (use a strong initial password and change it on first login).
+
+- **Configuration**: `SECRET_KEY` should be a random 32‑byte hex string
+  (`openssl rand -hex 32`). Treat it like a master key; if it is leaked all
+  encrypted data and sessions can be compromised.
+  
+### Summary
 
 | Concern | Mitigation |
 | --- | --- |

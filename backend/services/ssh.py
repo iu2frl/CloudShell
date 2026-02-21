@@ -32,6 +32,10 @@ log = logging.getLogger(__name__)
 class _Session:
     conn: asyncssh.SSHClientConnection
     process: asyncssh.SSHClientProcess | None = field(default=None)
+    # Metadata stored at session-open time for use in audit log on disconnect
+    device_label: str = ""   # e.g. "MyServer (192.168.1.1:22)"
+    cloudshell_user: str = ""  # CloudShell login username
+    source_ip: str | None = None  # originating client IP
 
 
 _sessions: dict[str, _Session] = {}
@@ -107,6 +111,9 @@ async def create_session(
     password: str | None = None,
     private_key_path: str | None = None,
     known_hosts: str | None = "auto",
+    device_label: str = "",
+    cloudshell_user: str = "",
+    source_ip: str | None = None,
 ) -> str:
     """
     Open an SSH connection and return a session_id.
@@ -114,6 +121,9 @@ async def create_session(
     known_hosts="auto"  → accept-new policy backed by /data/known_hosts
     known_hosts=None    → disable host-key checking entirely (dev only)
     known_hosts=<path>  → strict checking against that file
+
+    device_label, cloudshell_user, and source_ip are stored in the session
+    for use in the audit log when the session is eventually closed.
     """
     session_id = str(uuid.uuid4())
 
@@ -144,7 +154,12 @@ async def create_session(
     # Let connection errors propagate — the caller (router) will catch them
     # and send a proper error frame to the WebSocket client.
     conn = await asyncssh.connect(**connect_kwargs)
-    _sessions[session_id] = _Session(conn=conn)
+    _sessions[session_id] = _Session(
+        conn=conn,
+        device_label=device_label,
+        cloudshell_user=cloudshell_user,
+        source_ip=source_ip,
+    )
     log.info("SSH session %s opened → %s@%s:%s", session_id[:8], username, hostname, port)
     return session_id
 
@@ -259,6 +274,18 @@ async def close_session(session_id: str) -> None:
         except Exception:  # noqa: BLE001
             pass
         log.info("SSH session %s closed", session_id[:8])
+
+
+def get_session_meta(session_id: str) -> tuple[str, str, str | None]:
+    """Return (device_label, cloudshell_user, source_ip) for a session.
+
+    Falls back to empty strings / None if the session is no longer in the store
+    (e.g. already closed before this is called).
+    """
+    entry = _sessions.get(session_id)
+    if entry:
+        return entry.device_label, entry.cloudshell_user, entry.source_ip
+    return "", "", None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

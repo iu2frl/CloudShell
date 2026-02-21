@@ -1,6 +1,6 @@
 # CloudShell
 
-> A self-hosted, Docker-deployable web SSH gateway — open your SSH sessions right in the browser, no client software required.
+> A self-hosted, Docker-deployable web SSH gateway: open your SSH sessions right in the browser, no client software required.
 
 [![License: GPL v3](https://img.shields.io/badge/license-GPL--v3-blue.svg)](https://github.com/iu2frl/CloudShell/blob/main/LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-yellow.svg)](https://www.python.org/)
@@ -8,26 +8,36 @@
 [![React 18](https://img.shields.io/badge/react-18-61DAFB.svg?logo=react&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-I really liked the idea behind [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free, open, and self-hosted.
+## Motivation
 
----
+I really liked the idea behind some existing tools like [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free and open.
+
+- Is it better than ShellNGN? Hell no!
+- Does it work? Yes!
+- Is it free? Absolutely!
+
+## Screenshots
+
+Terminal screen:
+
+![Terminal Screen](./images/main.png)
 
 ## Features
 
-- **Web terminal** — full xterm.js terminal emulator with ANSI/VT100 support, copy/paste, and proper resize (SIGWINCH propagation)
-- **Multi-tab sessions** — open multiple SSH connections to different devices simultaneously
-- **Device manager** — add, edit, and delete SSH targets with name, host, port, and credentials
-- **Password & SSH key auth** — store passwords or PEM private keys, both encrypted at rest (AES-256-GCM)
-- **Built-in key generator** — generate RSA-4096 key pairs directly from the UI; copy the public key to paste into `authorized_keys`
-- **Key file upload** — load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
-- **JWT session auth** — login page, configurable session TTL, silent token refresh, and token revocation on logout
-- **Change password** — update the admin password at runtime without restarting
-- **Session expiry badge** — live countdown in the header turns yellow/red as the session approaches expiry
-- **Toast notifications** — non-blocking feedback for every action
-- **Error boundary** — graceful recovery screen for unexpected frontend errors
-- **Docker Compose deploy** — single command to run in production
-
----
+- **Web terminal**: full xterm.js terminal emulator with ANSI/VT100 support, copy/paste, and proper resize (SIGWINCH propagation)
+- **Multi-tab sessions**: open multiple SSH connections to different devices simultaneously
+- **Device manager**: add, edit, and delete SSH targets with name, host, port, and credentials
+- **Password & SSH key auth**: store passwords or PEM private keys, both encrypted at rest (AES-256-GCM)
+- **Built-in key generator**: generate RSA-4096 key pairs directly from the UI; copy the public key to paste into `authorized_keys`
+- **Key file upload**: load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
+- **JWT session auth**: login page, configurable session TTL, silent token refresh, and token revocation on logout
+- **Change password**: update the admin password at runtime without restarting
+- **Audit log**: tamper-evident activity log (login, logout, SSH session start/stop, password changes) with configurable retention policy and a dedicated viewer in the UI
+- **Session expiry badge**: live countdown in the header turns yellow/red as the session approaches expiry
+- **Toast notifications**: non-blocking feedback for every action
+- **Error boundary**: graceful recovery screen for unexpected frontend errors
+- **Docker Compose deploy**: single command to run in production
+- **Concurrent connections**: support multiple simultaneous SSH sessions
 
 ## Quick Start
 
@@ -90,18 +100,25 @@ networks:
 git clone https://github.com/iu2frl/CloudShell
 cd CloudShell
 cp .env.example .env
-# Edit .env — set a strong SECRET_KEY and ADMIN_PASSWORD
+# Edit .env - set a strong SECRET_KEY and ADMIN_PASSWORD
 docker compose up -d
 ```
 
 Open **<http://localhost:8080>** and log in with your configured credentials.
 
+## Security
+
 > [!IMPORTANT]
-> Put CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS. SSH credentials are encrypted at rest but web traffic should be HTTPS.
+> **I discourage publishing CloudShell publicly, make it accessible only within a secure network.**
+>
+> Even if strong authentication is used, always assume that the environment may be compromised.
+>
+> - Protect the application protecting it with a firewall and any other security measures.
+> - Regularly rotate secrets and review access logs.
+> - It is advised to put CloudShell behind a reverse proxy (Nginx, Caddy, Traefik) with TLS. SSH credentials are encrypted on disk but web traffic should be HTTPS.
 
-Prebuilt images are available on GHCR — see **[docs/configuration.md](docs/configuration.md)** for a ready-to-use `docker-compose.yml` snippet and all environment variable options.
-
----
+For more details on fhe security measures, configuration and recommended hardening, see
+[docs/configuration.md](docs/configuration.md).
 
 ## Documentation
 
@@ -112,7 +129,9 @@ Prebuilt images are available on GHCR — see **[docs/configuration.md](docs/con
 | [docs/development.md](docs/development.md) | Local dev setup, building, testing, Makefile reference |
 | [docs/architecture.md](docs/architecture.md) | System design, data flow, project structure |
 
----
+## Contributing
+
+Pull requests are only accepted on the `dev` branch.
 
 ## Vibecoded?
 
@@ -120,4 +139,4 @@ Prebuilt images are available on GHCR — see **[docs/configuration.md](docs/con
 
 ## License
 
-GNU General Public License v3.0 — see [LICENSE](LICENSE) for the full text.
+GNU General Public License v3.0 - see [LICENSE](LICENSE) for the full text.

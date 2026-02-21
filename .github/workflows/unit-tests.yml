@@ -1,0 +1,103 @@
+name: Unit Tests (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Python version to use
+        type: string
+        default: "3.12"
+
+jobs:
+  unit-tests:
+    name: Backend unit tests (pytest)
+    runs-on: ubuntu-latest
+
+    env:
+      DATA_DIR: /tmp/cloudshell-test-${{ github.run_id }}
+      SECRET_KEY: ci-test-secret
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: admin
+      TOKEN_TTL_HOURS: "1"
+      AUDIT_RETENTION_DAYS: "7"
+      CORS_ORIGINS: "*"
+      APP_VERSION: "ci"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ inputs.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run pytest with coverage
+        run: python -m pytest
+
+      - name: Write coverage summary to job summary
+        if: always()
+        run: |
+          echo "## Test Coverage Report" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python -m coverage report --rcfile=pytest.ini 2>/dev/null \
+            || python -m coverage report 2>/dev/null \
+            || echo "Coverage data not available" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+        env:
+          COVERAGE_FILE: .coverage
+
+      - name: Add coverage to job summary (xml fallback)
+        if: always()
+        run: |
+          if [ -f reports/coverage.xml ]; then
+            python3 - <<'EOF'
+          import xml.etree.ElementTree as ET, os
+
+          tree = ET.parse("reports/coverage.xml")
+          root = tree.getroot()
+          line_rate = float(root.attrib.get("line-rate", 0)) * 100
+          branch_rate = float(root.attrib.get("branch-rate", 0)) * 100
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          with open(summary, "a") as f:
+              f.write("\n")
+              f.write(f"| Metric | Value |\n")
+              f.write(f"|--------|-------|\n")
+              f.write(f"| Line coverage   | {line_rate:.1f}% |\n")
+              f.write(f"| Branch coverage | {branch_rate:.1f}% |\n")
+          EOF
+          fi
+
+      - name: Publish JUnit test results artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-results-py${{ inputs.python-version }}
+          path: reports/junit.xml
+          retention-days: 30
+
+      - name: Publish coverage report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-py${{ inputs.python-version }}
+          path: reports/
+          retention-days: 30
+
+      - name: Publish test results check
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: reports/junit.xml
+          check_name: "Unit Test Results (Python ${{ inputs.python-version }})"
+          comment_mode: always
+          report_individual_runs: true
