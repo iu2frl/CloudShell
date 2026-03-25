@@ -8,16 +8,12 @@ Covers uncovered lines in backend/routers/terminal.py:
 - WebSocket /api/terminal/ws/{session_id}: valid token + SESSION_ENDED audit written
 - WebSocket /api/terminal/ws/{session_id}: unexpected exception triggers _ws_error
 """
-import json
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncssh
-import pytest
-from sqlalchemy import select
-
-from backend.models.audit import AuditLog
-from backend.services.audit import ACTION_SESSION_ENDED, ACTION_SESSION_STARTED
+from jose import jwt as jose_jwt
 from backend.services.crypto import generate_key_pair
 
 
@@ -95,17 +91,10 @@ async def test_ws_valid_token_accepted_and_stream_called(auth_client):
     With a valid JWT and a mocked stream_session the WS must be accepted and
     stream_session must be invoked.
     """
-    from backend.config import get_settings
-    from backend.routers.auth import ALGORITHM
-    from jose import jwt as jose_jwt
-
-    settings = get_settings()
     raw_token = auth_client.headers["Authorization"].split(" ")[1]
     fake_session_id = str(uuid.uuid4())
 
     # We call the handler directly to avoid ASGI client lifecycle issues
-    import asyncio
-    from unittest.mock import MagicMock, AsyncMock, patch
     from fastapi import WebSocket
     from backend.routers.terminal import terminal_ws
 
@@ -122,13 +111,14 @@ async def test_ws_valid_token_accepted_and_stream_called(auth_client):
 
     with (
         patch("backend.routers.terminal.stream_session", new=mock_stream),
+        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=False)),
         patch(
             "backend.routers.terminal.get_session_meta",
             return_value=("MyBox", "admin", "127.0.0.1"),
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -165,13 +155,14 @@ async def test_ws_stream_exception_sends_error_frame(auth_client):
             "backend.routers.terminal.stream_session",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ),
+        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=False)),
         patch(
             "backend.routers.terminal.get_session_meta",
             return_value=("", "", None),
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -209,13 +200,14 @@ async def test_ws_x_real_ip_extracted(auth_client):
 
     with (
         patch("backend.routers.terminal.stream_session", new=mock_stream),
+        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=False)),
         patch(
             "backend.routers.terminal.get_session_meta",
             return_value=("", "admin", None),
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -225,3 +217,71 @@ async def test_ws_x_real_ip_extracted(auth_client):
         await terminal_ws(fake_session_id, mock_ws)
 
     mock_stream.assert_called_once()
+
+
+async def test_ws_revoked_token_closes_4001_before_accept(auth_client):
+    """A revoked JWT must be rejected before websocket acceptance."""
+    from fastapi import WebSocket
+    from backend.routers.terminal import terminal_ws
+
+    raw_token = auth_client.headers["Authorization"].split(" ")[1]
+    fake_session_id = str(uuid.uuid4())
+
+    mock_ws = MagicMock(spec=WebSocket)
+    mock_ws.query_params = {"token": raw_token}
+    mock_ws.headers = {}
+    mock_ws.client = MagicMock()
+    mock_ws.client.host = "127.0.0.1"
+    mock_ws.accept = AsyncMock()
+    mock_ws.close = AsyncMock()
+    mock_ws.send_bytes = AsyncMock()
+
+    with (
+        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=True)),
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
+    ):
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_sl.return_value = mock_ctx
+
+        await terminal_ws(fake_session_id, mock_ws)
+
+    mock_ws.close.assert_called_once_with(code=4001)
+    mock_ws.accept.assert_not_called()
+
+
+async def test_ws_boot_id_mismatch_closes_4001_before_accept():
+    """A JWT with wrong boot id must be rejected before websocket acceptance."""
+    from fastapi import WebSocket
+    from backend.config import get_settings
+    from backend.main import BOOT_ID
+    from backend.routers.auth import ALGORITHM
+    from backend.routers.terminal import terminal_ws
+
+    settings = get_settings()
+    fake_session_id = str(uuid.uuid4())
+    wrong_bid_token = jose_jwt.encode(
+        {
+            "sub": "admin",
+            "jti": str(uuid.uuid4()),
+            "bid": f"{BOOT_ID}-mismatch",
+            "exp": datetime.now(timezone.utc).timestamp() + 3600,
+        },
+        settings.secret_key,
+        algorithm=ALGORITHM,
+    )
+
+    mock_ws = MagicMock(spec=WebSocket)
+    mock_ws.query_params = {"token": wrong_bid_token}
+    mock_ws.headers = {}
+    mock_ws.client = MagicMock()
+    mock_ws.client.host = "127.0.0.1"
+    mock_ws.accept = AsyncMock()
+    mock_ws.close = AsyncMock()
+    mock_ws.send_bytes = AsyncMock()
+
+    await terminal_ws(fake_session_id, mock_ws)
+
+    mock_ws.close.assert_called_once_with(code=4001)
+    mock_ws.accept.assert_not_called()

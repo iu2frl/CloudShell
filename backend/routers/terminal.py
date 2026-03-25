@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
-from backend.database import get_db
+from backend.database import AsyncSessionLocal, get_db
 from backend.models.device import AuthType, Device
 from backend.routers.auth import get_current_user
 from backend.services.audit import (
@@ -102,6 +102,7 @@ async def open_session(
 async def terminal_ws(session_id: str, websocket: WebSocket):
     """WebSocket endpoint — bridges browser ↔ SSH session. Frames are binary."""
     from jose import JWTError, jwt as jose_jwt
+    from backend.routers.auth import ALGORITHM, _get_boot_id, _is_revoked
 
     token = websocket.query_params.get("token")
     if not token:
@@ -112,7 +113,20 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
     source_ip: str | None = None
     try:
         settings = get_settings()
-        payload = jose_jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        payload = jose_jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        jti = payload.get("jti")
+        if not jti:
+            await websocket.close(code=4001)
+            return
+        if payload.get("bid") != _get_boot_id():
+            await websocket.close(code=4001)
+            return
+
+        async with AsyncSessionLocal() as db:
+            if await _is_revoked(jti, db):
+                await websocket.close(code=4001)
+                return
+
         username = payload.get("sub", "unknown")
         # Extract client IP from the WebSocket upgrade request
         xff = websocket.headers.get("x-forwarded-for")
@@ -124,7 +138,7 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
                 source_ip = xri.strip()[:45]
             elif websocket.client:
                 source_ip = websocket.client.host[:45]
-    except JWTError:
+    except (JWTError, ValueError, RuntimeError):
         await websocket.close(code=4001)
         return
 
@@ -146,7 +160,6 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
             audit_ip = source_ip
         await close_session(session_id)
         log.info("Logging SESSION_ENDED for user=%s session=%s", audit_user, session_id[:8])
-        from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
             await write_audit(
                 db,
