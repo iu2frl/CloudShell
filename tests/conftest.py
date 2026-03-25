@@ -22,6 +22,7 @@ os.environ.setdefault("AUDIT_RETENTION_DAYS", "7")
 from backend.config import get_settings  # noqa: E402
 from backend.database import Base, get_db  # noqa: E402
 from backend.main import app  # noqa: E402
+from backend.services.rate_limit import get_limiter  # noqa: E402
 
 
 @pytest_asyncio.fixture()
@@ -47,6 +48,9 @@ async def client(db_session: AsyncSession):
 
     app.dependency_overrides[get_db] = _override_db
     get_settings.cache_clear()
+    
+    # Reset rate limiter before each test to avoid cross-test pollution
+    get_limiter().reset()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

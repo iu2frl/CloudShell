@@ -45,11 +45,18 @@ async def test_get_2fa_status_direct(db_session):
 
 async def test_setup_2fa_direct(db_session):
     """Directly test 2FA setup generation."""
+    from unittest.mock import MagicMock
+    
     # Add a disabled record to test the 'delete existing' path
     db_session.add(AdminTOTPSecret(username="admin", secret="OLD_SECRET", is_enabled=False))
     await db_session.commit()
 
-    resp = await setup_2fa(current_user="admin", db=db_session)
+    # Mock request for rate limiting
+    request = MagicMock()
+    request.client = MagicMock(host="127.0.0.1")
+    request.headers = {}
+
+    resp = await setup_2fa(request=request, current_user="admin", db=db_session)
 
     assert resp.qr_code.startswith("data:image/")
     assert len(resp.secret) == 32
@@ -61,7 +68,7 @@ async def test_setup_2fa_direct(db_session):
     await db_session.commit()
 
     with pytest.raises(HTTPException) as exc:
-        await setup_2fa(current_user="admin", db=db_session)
+        await setup_2fa(request=request, current_user="admin", db=db_session)
     assert exc.value.status_code == 409
 
 

@@ -124,7 +124,9 @@ async def _get_auth_headers(client: AsyncClient) -> dict:
     """Helper to get valid auth headers."""
     response = await client.post(
         "/api/auth/token",
-        data={"username": "admin", "password": "changeme"},
+        data={"username": "admin", "password": "admin"},
     )
+    if response.status_code != 200:
+        raise ValueError(f"Failed to authenticate: {response.text}")
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
