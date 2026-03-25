@@ -131,11 +131,13 @@ describe('FtpFileManager — connecting state', () => {
       thumbprint: 'AA:BB:CC',
     });
     mockOpenFtpSession.mockRejectedValueOnce(challenge).mockResolvedValueOnce('sess-ftp-2');
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     setup({ connection_type: 'ftps' });
 
     await waitFor(() => expect(mockOpenFtpSession).toHaveBeenNthCalledWith(1, 5));
+    expect(screen.getByText('Trust FTPS Certificate')).toBeInTheDocument();
+    expect(screen.getByText('AA:BB:CC')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Trust certificate' }));
     await waitFor(() => expect(mockOpenFtpSession).toHaveBeenNthCalledWith(2, 5, { trustCert: true }));
   });
 });

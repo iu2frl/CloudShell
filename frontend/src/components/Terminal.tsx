@@ -3,9 +3,10 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { Device, SshHostChallengeError, openSession, terminalWsUrl } from "../api/client";
+import { Device, SshHostChallengeDetail, SshHostChallengeError, openSession, terminalWsUrl } from "../api/client";
 import { RefreshCw, Wifi, WifiOff, Loader, Copy } from "lucide-react";
 import { useToast } from "./Toast";
+import { FingerprintTrustModal } from "./FingerprintTrustModal";
 
 type ConnState = "connecting" | "connected" | "disconnected" | "error" | "failed";
 
@@ -23,29 +24,27 @@ export function Terminal({ device }: TerminalProps) {
   const retriesRef     = useRef(0);
   const connectingRef  = useRef(false);
   const onDataDisposer = useRef<ReturnType<XTerm["onData"]> | null>(null);
+  const challengeResolverRef = useRef<((accepted: boolean) => void) | null>(null);
   const [connState, setConnState] = useState<ConnState>("connecting");
+  const [sshChallenge, setSshChallenge] = useState<SshHostChallengeDetail | null>(null);
   const toast = useToast();
   // Stable ref so connect() doesn't need toast in its dep array (prevents reconnect loop)
   const toastRef = useRef(toast);
   useEffect(() => { toastRef.current = toast; });
 
-  const confirmSshHostFingerprint = useCallback((err: SshHostChallengeError): boolean => {
-    const detail = err.detail;
-    if (detail.code === "SSH_HOST_UNTRUSTED") {
-      return window.confirm(
-        `First SSH connection to ${device.hostname}.\n\n` +
-        `Host fingerprint (SHA-256):\n${detail.fingerprint}\n\n` +
-        "Accept and trust this host key for future connections?",
-      );
-    }
+  const requestSshHostTrust = useCallback((err: SshHostChallengeError): Promise<boolean> => {
+    setSshChallenge(err.detail);
+    return new Promise((resolve) => {
+      challengeResolverRef.current = resolve;
+    });
+  }, []);
 
-    return window.confirm(
-      `SSH host key changed for ${device.hostname}.\n\n` +
-      `Previously trusted:\n${detail.previous_fingerprint ?? "(unknown)"}\n\n` +
-      `Presented now:\n${detail.fingerprint}\n\n` +
-      "Accept the new host key and update trust?",
-    );
-  }, [device.hostname]);
+  const resolveSshHostTrust = useCallback((accepted: boolean) => {
+    setSshChallenge(null);
+    const resolver = challengeResolverRef.current;
+    challengeResolverRef.current = null;
+    resolver?.(accepted);
+  }, []);
 
   // -- Build the xterm instance once ------------------------------------------
   useEffect(() => {
@@ -122,7 +121,7 @@ export function Terminal({ device }: TerminalProps) {
         if (!(err instanceof SshHostChallengeError)) {
           throw err;
         }
-        const accepted = confirmSshHostFingerprint(err);
+        const accepted = await requestSshHostTrust(err);
         if (!accepted) {
           throw new Error("Connection cancelled: SSH host key not trusted");
         }
@@ -189,7 +188,7 @@ export function Terminal({ device }: TerminalProps) {
     });
   // toast intentionally excluded — accessed via toastRef to keep connect() stable
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmSshHostFingerprint, device.id, device.name]);
+  }, [device.id, device.name, requestSshHostTrust]);
 
   useEffect(() => { connect(); }, [connect]);
 
@@ -253,6 +252,10 @@ export function Terminal({ device }: TerminalProps) {
   // frame, so SESSION_ENDED is not written until the connection times out.
   useEffect(() => {
     return () => {
+      if (challengeResolverRef.current) {
+        challengeResolverRef.current(false);
+        challengeResolverRef.current = null;
+      }
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         wsRef.current = null;   // prevent onclose handler from firing
@@ -324,6 +327,20 @@ export function Terminal({ device }: TerminalProps) {
         className="flex-1 overflow-hidden border-x border-b border-slate-700 rounded-b-lg"
         style={{ background: "#0f1117" }}
       />
+
+      {sshChallenge && (
+        <FingerprintTrustModal
+          title={sshChallenge.code === "SSH_HOST_UNTRUSTED" ? "Trust SSH Host Key" : "SSH Host Key Changed"}
+          host={device.hostname}
+          currentLabel="Presented fingerprint (SHA-256)"
+          currentFingerprint={sshChallenge.fingerprint}
+          previousLabel={sshChallenge.code === "SSH_HOST_CHANGED" ? "Previously trusted fingerprint" : undefined}
+          previousFingerprint={sshChallenge.code === "SSH_HOST_CHANGED" ? sshChallenge.previous_fingerprint : undefined}
+          acceptLabel={sshChallenge.code === "SSH_HOST_UNTRUSTED" ? "Trust host key" : "Trust new host key"}
+          onAccept={() => resolveSshHostTrust(true)}
+          onCancel={() => resolveSshHostTrust(false)}
+        />
+      )}
     </div>
   );
 }

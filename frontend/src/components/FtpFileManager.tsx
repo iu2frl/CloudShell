@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Device,
+  FtpsCertificateChallengeDetail,
   FtpsCertificateChallengeError,
   SftpEntry,
   closeFtpSession,
@@ -27,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { useToast } from "./Toast";
+import { FingerprintTrustModal } from "./FingerprintTrustModal";
 
 interface FtpFileManagerProps {
   device: Device;
@@ -73,29 +75,28 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
   const [uploadPct, setUploadPct]     = useState<number | null>(null);
   const fileInputRef                  = useRef<HTMLInputElement>(null);
   const sessionRef                    = useRef<string | null>(null);
+  const challengeResolverRef          = useRef<((accepted: boolean) => void) | null>(null);
   const toast                         = useToast();
   const toastRef                      = useRef(toast);
   useEffect(() => { toastRef.current = toast; });
 
   const protocol = device.connection_type === "ftps" ? "FTPS" : "FTP";
 
-  const confirmFtpsCertificate = useCallback((err: FtpsCertificateChallengeError): boolean => {
-    const detail = err.detail;
-    if (detail.code === "FTPS_CERT_UNTRUSTED") {
-      return window.confirm(
-        `First FTPS connection to ${device.hostname}.\n\n` +
-        `Certificate SHA-256 thumbprint:\n${detail.thumbprint}\n\n` +
-        "Accept and trust this certificate for future connections?",
-      );
-    }
+  const [certificateChallenge, setCertificateChallenge] = useState<FtpsCertificateChallengeDetail | null>(null);
 
-    return window.confirm(
-      `FTPS certificate changed for ${device.hostname}.\n\n` +
-      `Previously trusted:\n${detail.previous_thumbprint ?? "(unknown)"}\n\n` +
-      `Presented now:\n${detail.thumbprint}\n\n` +
-      "Accept the new certificate and update trust?",
-    );
-  }, [device.hostname]);
+  const requestCertificateTrust = useCallback((err: FtpsCertificateChallengeError): Promise<boolean> => {
+    setCertificateChallenge(err.detail);
+    return new Promise((resolve) => {
+      challengeResolverRef.current = resolve;
+    });
+  }, []);
+
+  const resolveCertificateTrust = useCallback((accepted: boolean) => {
+    setCertificateChallenge(null);
+    const resolver = challengeResolverRef.current;
+    challengeResolverRef.current = null;
+    resolver?.(accepted);
+  }, []);
 
   // -- Session lifecycle ----------------------------------------------------
 
@@ -111,7 +112,7 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
           if (!(err instanceof FtpsCertificateChallengeError)) {
             throw err;
           }
-          const accepted = confirmFtpsCertificate(err);
+          const accepted = await requestCertificateTrust(err);
           if (!accepted) {
             throw new Error("Connection cancelled: FTPS certificate not trusted");
           }
@@ -129,11 +130,15 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
     } finally {
       setConnecting(false);
     }
-  }, [confirmFtpsCertificate, device.connection_type, device.id]);
+  }, [device.connection_type, device.id, requestCertificateTrust]);
 
   useEffect(() => {
     connect();
     return () => {
+      if (challengeResolverRef.current) {
+        challengeResolverRef.current(false);
+        challengeResolverRef.current = null;
+      }
       if (sessionRef.current) {
         closeFtpSession(sessionRef.current).catch(() => undefined);
         sessionRef.current = null;
@@ -272,24 +277,44 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
 
   // -- Render ---------------------------------------------------------------
 
+  const certificateTrustModal = certificateChallenge && (
+    <FingerprintTrustModal
+      title={certificateChallenge.code === "FTPS_CERT_UNTRUSTED" ? "Trust FTPS Certificate" : "FTPS Certificate Changed"}
+      host={device.hostname}
+      currentLabel="Presented certificate thumbprint (SHA-256)"
+      currentFingerprint={certificateChallenge.thumbprint}
+      previousLabel={certificateChallenge.code === "FTPS_CERT_CHANGED" ? "Previously trusted thumbprint" : undefined}
+      previousFingerprint={certificateChallenge.code === "FTPS_CERT_CHANGED" ? certificateChallenge.previous_thumbprint : undefined}
+      acceptLabel={certificateChallenge.code === "FTPS_CERT_UNTRUSTED" ? "Trust certificate" : "Trust new certificate"}
+      onAccept={() => resolveCertificateTrust(true)}
+      onCancel={() => resolveCertificateTrust(false)}
+    />
+  );
+
   if (connecting) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
-        <Loader size={32} className="animate-spin" />
-        <p className="text-sm">Connecting {protocol} to {device.hostname}...</p>
-      </div>
+      <>
+        <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
+          <Loader size={32} className="animate-spin" />
+          <p className="text-sm">Connecting {protocol} to {device.hostname}...</p>
+        </div>
+        {certificateTrustModal}
+      </>
     );
   }
 
   if (connError) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-8">
-        <WifiOff size={36} className="text-red-500" />
-        <p className="text-sm text-red-400">{connError}</p>
-        <button onClick={connect} className="btn-primary text-sm px-4 py-2">
-          Retry
-        </button>
-      </div>
+      <>
+        <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-8">
+          <WifiOff size={36} className="text-red-500" />
+          <p className="text-sm text-red-400">{connError}</p>
+          <button onClick={connect} className="btn-primary text-sm px-4 py-2">
+            Retry
+          </button>
+        </div>
+        {certificateTrustModal}
+      </>
     );
   }
 
@@ -530,6 +555,8 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
           </p>
         </SimpleModal>
       )}
+
+      {certificateTrustModal}
     </div>
   );
 }

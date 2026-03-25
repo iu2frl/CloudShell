@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Device,
+  SshHostChallengeDetail,
   SshHostChallengeError,
   SftpEntry,
   closeSftpSession,
@@ -27,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { useToast } from "./Toast";
+import { FingerprintTrustModal } from "./FingerprintTrustModal";
 
 interface FileManagerProps {
   device: Device;
@@ -73,6 +75,7 @@ export function FileManager({ device }: FileManagerProps) {
   const [uploadPct, setUploadPct]     = useState<number | null>(null);
   const fileInputRef                  = useRef<HTMLInputElement>(null);
   const sessionRef                    = useRef<string | null>(null);
+  const challengeResolverRef          = useRef<((accepted: boolean) => void) | null>(null);
   const toast                         = useToast();
   // Stable ref so loadDir / action handlers don't need toast in their dep
   // arrays — avoids the feedback loop where toast.error() recreates loadDir
@@ -81,23 +84,21 @@ export function FileManager({ device }: FileManagerProps) {
   const toastRef                      = useRef(toast);
   useEffect(() => { toastRef.current = toast; });
 
-  const confirmSshHostFingerprint = useCallback((err: SshHostChallengeError): boolean => {
-    const detail = err.detail;
-    if (detail.code === "SSH_HOST_UNTRUSTED") {
-      return window.confirm(
-        `First SFTP connection to ${device.hostname}.\n\n` +
-        `Host fingerprint (SHA-256):\n${detail.fingerprint}\n\n` +
-        "Accept and trust this host key for future connections?",
-      );
-    }
+  const [sshChallenge, setSshChallenge] = useState<SshHostChallengeDetail | null>(null);
 
-    return window.confirm(
-      `SFTP host key changed for ${device.hostname}.\n\n` +
-      `Previously trusted:\n${detail.previous_fingerprint ?? "(unknown)"}\n\n` +
-      `Presented now:\n${detail.fingerprint}\n\n` +
-      "Accept the new host key and update trust?",
-    );
-  }, [device.hostname]);
+  const requestSshHostTrust = useCallback((err: SshHostChallengeError): Promise<boolean> => {
+    setSshChallenge(err.detail);
+    return new Promise((resolve) => {
+      challengeResolverRef.current = resolve;
+    });
+  }, []);
+
+  const resolveSshHostTrust = useCallback((accepted: boolean) => {
+    setSshChallenge(null);
+    const resolver = challengeResolverRef.current;
+    challengeResolverRef.current = null;
+    resolver?.(accepted);
+  }, []);
 
   // -- Session lifecycle ----------------------------------------------------
 
@@ -112,7 +113,7 @@ export function FileManager({ device }: FileManagerProps) {
         if (!(err instanceof SshHostChallengeError)) {
           throw err;
         }
-        const accepted = confirmSshHostFingerprint(err);
+        const accepted = await requestSshHostTrust(err);
         if (!accepted) {
           throw new Error("Connection cancelled: SSH host key not trusted");
         }
@@ -127,11 +128,15 @@ export function FileManager({ device }: FileManagerProps) {
     } finally {
       setConnecting(false);
     }
-  }, [confirmSshHostFingerprint, device.id]);
+  }, [device.id, requestSshHostTrust]);
 
   useEffect(() => {
     connect();
     return () => {
+      if (challengeResolverRef.current) {
+        challengeResolverRef.current(false);
+        challengeResolverRef.current = null;
+      }
       if (sessionRef.current) {
         closeSftpSession(sessionRef.current).catch(() => undefined);
         sessionRef.current = null;
@@ -272,24 +277,44 @@ export function FileManager({ device }: FileManagerProps) {
 
   // -- Render ---------------------------------------------------------------
 
+  const sshTrustModal = sshChallenge && (
+    <FingerprintTrustModal
+      title={sshChallenge.code === "SSH_HOST_UNTRUSTED" ? "Trust SFTP Host Key" : "SFTP Host Key Changed"}
+      host={device.hostname}
+      currentLabel="Presented fingerprint (SHA-256)"
+      currentFingerprint={sshChallenge.fingerprint}
+      previousLabel={sshChallenge.code === "SSH_HOST_CHANGED" ? "Previously trusted fingerprint" : undefined}
+      previousFingerprint={sshChallenge.code === "SSH_HOST_CHANGED" ? sshChallenge.previous_fingerprint : undefined}
+      acceptLabel={sshChallenge.code === "SSH_HOST_UNTRUSTED" ? "Trust host key" : "Trust new host key"}
+      onAccept={() => resolveSshHostTrust(true)}
+      onCancel={() => resolveSshHostTrust(false)}
+    />
+  );
+
   if (connecting) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
-        <Loader size={32} className="animate-spin" />
-        <p className="text-sm">Connecting SFTP to {device.hostname}...</p>
-      </div>
+      <>
+        <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
+          <Loader size={32} className="animate-spin" />
+          <p className="text-sm">Connecting SFTP to {device.hostname}...</p>
+        </div>
+        {sshTrustModal}
+      </>
     );
   }
 
   if (connError) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-8">
-        <WifiOff size={36} className="text-red-500" />
-        <p className="text-sm text-red-400">{connError}</p>
-        <button onClick={connect} className="btn-primary text-sm px-4 py-2">
-          Retry
-        </button>
-      </div>
+      <>
+        <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-8">
+          <WifiOff size={36} className="text-red-500" />
+          <p className="text-sm text-red-400">{connError}</p>
+          <button onClick={connect} className="btn-primary text-sm px-4 py-2">
+            Retry
+          </button>
+        </div>
+        {sshTrustModal}
+      </>
     );
   }
 
@@ -530,6 +555,8 @@ export function FileManager({ device }: FileManagerProps) {
           </p>
         </SimpleModal>
       )}
+
+      {sshTrustModal}
     </div>
   );
 }
