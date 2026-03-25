@@ -19,6 +19,8 @@ from backend.models.auth import AdminTOTPSecret
 from backend.services.audit import (
     ACTION_2FA_ENABLED,
     ACTION_2FA_DISABLED,
+    ACTION_2FA_SETUP_INITIATED,
+    ACTION_2FA_VERIFICATION_FAILED,
     get_client_ip,
     write_audit,
 )
@@ -112,6 +114,13 @@ async def setup_2fa(
     db.add(totp_record)
     await db.commit()
 
+    # Log 2FA setup initiation
+    await write_audit(
+        db, current_user, ACTION_2FA_SETUP_INITIATED,
+        detail="User initiated 2FA setup (secret generated, awaiting verification)",
+        source_ip=get_client_ip(request),
+    )
+
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -153,6 +162,12 @@ async def enable_2fa(
 
     # Verify the token
     if not TOTPService.verify_token(totp_record.secret, body.token):
+        # Log failed verification attempt during setup
+        await write_audit(
+            db, current_user, ACTION_2FA_VERIFICATION_FAILED,
+            detail="Invalid or expired token during 2FA setup verification",
+            source_ip=get_client_ip(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -164,7 +179,7 @@ async def enable_2fa(
 
     await write_audit(
         db, current_user, ACTION_2FA_ENABLED,
-        detail="Two-factor authentication enabled",
+        detail="Two-factor authentication enabled (setup verified)",
         source_ip=get_client_ip(request),
     )
 
@@ -201,6 +216,12 @@ async def disable_2fa(
 
     # Verify the token
     if not TOTPService.verify_token(totp_record.secret, body.token):
+        # Log failed verification attempt during disable
+        await write_audit(
+            db, current_user, ACTION_2FA_VERIFICATION_FAILED,
+            detail="Invalid or expired token during 2FA disable request",
+            source_ip=get_client_ip(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",

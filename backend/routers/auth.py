@@ -235,12 +235,14 @@ async def login(
                 await db.commit()
                 is_valid_totp = True
                 backup_code_used = True
+                # Track remaining backup codes for audit
+                remaining_codes = len(TOTPService.codes_from_json(updated_json))
                 
         if not is_valid_totp:
             # Log failed 2FA attempt
             await write_audit(
                 db, form_data.username, ACTION_2FA_FAILED,
-                detail="Invalid or expired 2FA code",
+                detail="Invalid or expired 2FA code during login",
                 source_ip=get_client_ip(request),
             )
             raise HTTPException(
@@ -248,11 +250,11 @@ async def login(
                 detail="Invalid 2FA code",
             )
         
-        # If backup code was used, log it
+        # If backup code was used, log it with remaining count
         if backup_code_used:
             await write_audit(
                 db, form_data.username, ACTION_BACKUP_CODE_USED,
-                detail="User authenticated using backup code",
+                detail=f"User authenticated using backup code ({remaining_codes} codes remaining)",
                 source_ip=get_client_ip(request),
             )
 
