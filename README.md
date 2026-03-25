@@ -68,6 +68,7 @@ services:
       ADMIN_USER: "admin"
       ADMIN_PASSWORD: "changeme"
       TOKEN_TTL_HOURS: "8"
+      ENVIRONMENT: "CloudShell on IU2FRL server" # Used to distinguish TOTP tokens
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
       interval: 30s
