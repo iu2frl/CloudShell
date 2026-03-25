@@ -65,10 +65,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 // -- Auth ----------------------------------------------------------------------
 
-export async function login(username: string, password: string, totpCode?: string): Promise<void> {
+export async function login(
+  username: string,
+  password: string,
+  totpCode?: string,
+  rememberDevice?: boolean,
+): Promise<void> {
   const form = new URLSearchParams({ username, password });
   if (totpCode) {
     form.append("totp_code", totpCode);
+  }
+  if (rememberDevice) {
+    form.append("remember_device", "true");
   }
   const res = await fetch(`${BASE}/auth/token`, {
     method: "POST",

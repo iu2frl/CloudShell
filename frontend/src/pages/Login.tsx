@@ -10,6 +10,7 @@ export function Login({ onLogin }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [rememberDevice, setRememberDevice] = useState(false);
   const [requires2FA, setRequires2FA] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -27,7 +28,12 @@ export function Login({ onLogin }: Props) {
     setLoading(true);
     setError(null);
     try {
-      await login(username, password, requires2FA ? totpCode : undefined);
+      await login(
+        username,
+        password,
+        requires2FA ? totpCode : undefined,
+        requires2FA ? rememberDevice : false,
+      );
       onLogin();
     } catch (err: any) {
       if (err.message === "2FA_REQUIRED") {
@@ -107,6 +113,15 @@ export function Login({ onLogin }: Props) {
                 <p className="text-xs text-slate-500 mt-2">
                   Enter the 6-digit code from your authenticator app, or a backup code.
                 </p>
+                <label className="flex items-center gap-2 mt-3 text-xs text-slate-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rememberDevice}
+                    onChange={(e) => setRememberDevice(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  Remember this device for 30 days
+                </label>
               </div>
             )}
             <button
@@ -122,6 +137,7 @@ export function Login({ onLogin }: Props) {
                 onClick={() => {
                   setRequires2FA(false);
                   setTotpCode("");
+                  setRememberDevice(false);
                   setError(null);
                 }}
                 className="btn-ghost w-full mt-2"

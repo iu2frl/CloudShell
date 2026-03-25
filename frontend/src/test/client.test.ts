@@ -160,6 +160,21 @@ describe('request (via login helper)', () => {
     await expect(login('admin', 'wrong')).rejects.toThrow('Invalid credentials');
   });
 
+  it('sends remember_device=true when rememberDevice is selected', async () => {
+    const { login } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: 'tok-remember' }),
+    }));
+
+    await login('admin', 'admin', '123456', true);
+
+    const [, opts] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = (opts as RequestInit).body as URLSearchParams;
+    expect(body.get('remember_device')).toBe('true');
+  });
+
   it('fires cloudshell:session-expired event on 401 from request()', async () => {
     const { listDevices } = await import('../api/client');
     // Put a token so authHeaders() has something
