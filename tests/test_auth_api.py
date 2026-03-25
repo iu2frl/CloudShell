@@ -501,3 +501,163 @@ async def test_change_password_requires_auth(client):
         json={"current_password": "admin", "new_password": "ShouldFail1!"},
     )
     assert resp.status_code == 401
+
+
+# -- Backup code depletion warnings -------------------------------------------
+
+async def test_login_backup_codes_warning_normal_login(client):
+    """Normal login without backup codes should have no warning."""
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # No backup codes used, so warning should be None
+    assert body.get("backup_codes_warning") is None
+
+
+async def test_login_backup_codes_warning_when_depleting(client, db_session):
+    """Login using last backup code should include warning."""
+    from backend.services.totp import TOTPService
+    from backend.models.auth import AdminTOTPSecret
+    
+    # Setup and login to get token
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token = resp.json()["access_token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    
+    # Setup 2FA
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+    
+    # Manually enable with only 1 backup code remaining
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    record.is_enabled = True
+    
+    # Set just 1 backup code (depleted state)
+    test_codes = ["AAAA-BBBB"]
+    record.backup_codes = TOTPService.codes_to_json(test_codes, hashed=True)
+    await db_session.commit()
+    
+    # Logout
+    await client.post("/api/auth/logout", headers=auth_headers)
+    
+    # Login with backup code (the only one)
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={
+            "username": "admin",
+            "password": "admin",
+            "totp_code": "AAAA-BBBB",  # Last backup code
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    body = login_resp.json()
+    
+    # Should have warning about depletion
+    assert body.get("backup_codes_warning") is not None
+    assert "0 backup code" in body["backup_codes_warning"]
+    assert "WARNING" in body["backup_codes_warning"]
+
+
+async def test_login_backup_codes_warning_at_threshold(client, db_session):
+    """Login using 3rd-to-last backup code should trigger warning."""
+    from backend.services.totp import TOTPService
+    from backend.models.auth import AdminTOTPSecret
+    
+    # Setup and login to get token
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token = resp.json()["access_token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    
+    # Setup 2FA
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+    
+    # Manually enable with exactly 3 backup codes
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    record.is_enabled = True
+    
+    test_codes = ["AAAA-BBBB", "CCCC-DDDD", "EEEE-FFFF"]
+    record.backup_codes = TOTPService.codes_to_json(test_codes, hashed=True)
+    await db_session.commit()
+    
+    # Logout
+    await client.post("/api/auth/logout", headers=auth_headers)
+    
+    # Login with last code (will leave 2 remaining, below threshold)
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={
+            "username": "admin",
+            "password": "admin",
+            "totp_code": "EEEE-FFFF",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    body = login_resp.json()
+    
+    # Should have warning (2 codes remaining, which is < 3)
+    assert body.get("backup_codes_warning") is not None
+    assert "2 backup code" in body["backup_codes_warning"]
+
+
+async def test_login_backup_codes_no_warning_above_threshold(client, db_session):
+    """Login with >3 backup codes remaining should have no warning."""
+    from backend.services.totp import TOTPService
+    from backend.models.auth import AdminTOTPSecret
+    
+    # Setup and login to get token
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token = resp.json()["access_token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    
+    # Setup 2FA
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+    
+    # Manually enable with 5 backup codes
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    record.is_enabled = True
+    
+    test_codes = ["AAAA-BBBB", "CCCC-DDDD", "EEEE-FFFF", "GGGG-HHHH", "IIII-JJJJ"]
+    record.backup_codes = TOTPService.codes_to_json(test_codes, hashed=True)
+    await db_session.commit()
+    
+    # Logout
+    await client.post("/api/auth/logout", headers=auth_headers)
+    
+    # Login with one code (will leave 4 remaining, above threshold)
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={
+            "username": "admin",
+            "password": "admin",
+            "totp_code": "IIII-JJJJ",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    body = login_resp.json()
+    
+    # Should have no warning (4 codes remaining, which is >= 3)
+    assert body.get("backup_codes_warning") is None

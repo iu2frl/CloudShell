@@ -30,6 +30,7 @@ from backend.services.audit import (
     ACTION_PASSWORD_CHANGED,
     ACTION_2FA_FAILED,
     ACTION_BACKUP_CODE_USED,
+    ACTION_BACKUP_CODE_LOW,
     get_client_ip,
     write_audit,
 )
@@ -54,6 +55,7 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     expires_at: datetime   # ISO-8601 UTC, for the frontend countdown
+    backup_codes_warning: str | None = None  # Warning if backup codes running low
 
 
 class MeOut(BaseModel):
@@ -198,6 +200,8 @@ async def login(
         )
 
     totp_record = await db.get(AdminTOTPSecret, form_data.username)
+    backup_codes_warning = None
+    
     if totp_record and totp_record.is_enabled:
         from backend.services.totp import TOTPService, DeprecatedBackupCodeFormatError
         if not totp_code:
@@ -235,7 +239,7 @@ async def login(
                 await db.commit()
                 is_valid_totp = True
                 backup_code_used = True
-                # Track remaining backup codes for audit
+                # Track remaining backup codes for audit and warnings
                 remaining_codes = len(TOTPService.codes_from_json(updated_json))
                 
         if not is_valid_totp:
@@ -250,13 +254,22 @@ async def login(
                 detail="Invalid 2FA code",
             )
         
-        # If backup code was used, log it with remaining count
+        # If backup code was used, log it with remaining count and warn if low
         if backup_code_used:
             await write_audit(
                 db, form_data.username, ACTION_BACKUP_CODE_USED,
                 detail=f"User authenticated using backup code ({remaining_codes} codes remaining)",
                 source_ip=get_client_ip(request),
             )
+            
+            # Warn if backup codes running low (<3 remaining)
+            if remaining_codes < 3:
+                backup_codes_warning = f"WARNING: Only {remaining_codes} backup code(s) remaining. Regenerate 2FA backup codes soon."
+                await write_audit(
+                    db, form_data.username, ACTION_BACKUP_CODE_LOW,
+                    detail=f"Backup codes depleting: {remaining_codes} codes remaining after login",
+                    source_ip=get_client_ip(request),
+                )
 
     encoded, expire, _ = _make_token(form_data.username)
     await write_audit(
@@ -264,7 +277,7 @@ async def login(
         detail="User logged in",
         source_ip=get_client_ip(request),
     )
-    return Token(access_token=encoded, token_type="bearer", expires_at=expire)
+    return Token(access_token=encoded, token_type="bearer", expires_at=expire, backup_codes_warning=backup_codes_warning)
 
 
 @router.post("/refresh", response_model=Token)
