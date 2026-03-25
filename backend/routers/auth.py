@@ -31,6 +31,7 @@ from backend.services.audit import (
     get_client_ip,
     write_audit,
 )
+from backend.services.rate_limit import get_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -183,6 +184,10 @@ async def login(
     totp_code: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ):
+    # Rate limit: max 10 login attempts per minute from a single IP
+    limiter = get_limiter()
+    limiter.check_limit(request, endpoint="/auth/token", requests_per_minute=10)
+    
     if not await _verify_credentials(form_data.username, form_data.password, db):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
