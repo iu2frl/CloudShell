@@ -3,6 +3,7 @@ tests/test_auth_2fa_api.py — Integration tests for 2FA endpoints.
 """
 from datetime import datetime, timedelta, timezone
 import json
+from unittest.mock import patch, MagicMock
 
 from httpx import AsyncClient
 from sqlalchemy import text
@@ -72,6 +73,25 @@ class TestTwoFactorAuthAPI:
         assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert response.headers["Pragma"] == "no-cache"
         assert response.headers["Expires"] == "0"
+
+    async def test_setup_2fa_uses_environment_aware_issuer(self, client: AsyncClient):
+        """Setup should pass environment-aware issuer to provisioning URI helper."""
+        headers = await _get_auth_headers(client)
+
+        with patch("backend.routers.auth_2fa.get_settings") as mock_get_settings, patch(
+            "backend.routers.auth_2fa.TOTPService.get_provisioning_uri"
+        ) as mock_get_provisioning_uri:
+            mock_get_settings.return_value = MagicMock(environment="staging")
+            mock_get_provisioning_uri.return_value = "otpauth://dummy"
+
+            response = await client.post(
+                "/api/auth/2fa/setup",
+                headers=headers,
+            )
+            assert response.status_code == 200
+
+            _, kwargs = mock_get_provisioning_uri.call_args
+            assert kwargs["issuer"] == "CloudShell (staging)"
 
     async def test_setup_2fa_fails_if_setup_in_progress(
         self, client: AsyncClient

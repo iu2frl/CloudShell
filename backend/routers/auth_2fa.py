@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import get_settings
 from backend.database import get_db
 from backend.models.auth import AdminTOTPSecret
 from backend.services.audit import (
@@ -103,7 +104,9 @@ async def setup_2fa(
     backup_codes = TOTPService.generate_backup_codes()
 
     # Generate QR code
-    provisioning_uri = TOTPService.get_provisioning_uri(secret, current_user)
+    settings = get_settings()
+    issuer = f"CloudShell ({settings.environment})"
+    provisioning_uri = TOTPService.get_provisioning_uri(secret, current_user, issuer=issuer)
     qr_code_base64 = TOTPService.generate_qr_code(provisioning_uri)
 
     # Store secret (not yet enabled)

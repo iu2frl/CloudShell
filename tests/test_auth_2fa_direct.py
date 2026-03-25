@@ -75,6 +75,31 @@ async def test_setup_2fa_direct(db_session):
     assert exc.value.status_code == 409
 
 
+async def test_setup_2fa_uses_environment_aware_issuer_direct(db_session):
+    """Setup should pass environment-aware issuer to provisioning URI helper."""
+    from unittest.mock import MagicMock
+
+    request = MagicMock()
+    request.client = MagicMock(host="127.0.0.1")
+    request.headers = {}
+
+    with patch("backend.routers.auth_2fa.get_settings") as mock_get_settings, patch(
+        "backend.routers.auth_2fa.TOTPService.get_provisioning_uri"
+    ) as mock_get_provisioning_uri:
+        mock_get_settings.return_value = MagicMock(environment="production")
+        mock_get_provisioning_uri.return_value = "otpauth://dummy"
+
+        await setup_2fa(
+            request=request,
+            response=Response(),
+            current_user="admin",
+            db=db_session,
+        )
+
+        _, kwargs = mock_get_provisioning_uri.call_args
+        assert kwargs["issuer"] == "CloudShell (production)"
+
+
 async def test_reset_2fa_setup_direct(db_session):
     """Directly test pending 2FA setup reset flow."""
     from unittest.mock import MagicMock

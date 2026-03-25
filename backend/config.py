@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
+    environment: str = os.getenv("ENVIRONMENT", "development")
     secret_key: str = os.getenv("SECRET_KEY", "changeme-please-set-in-env")
     admin_user: str = os.getenv("ADMIN_USER", "admin")
     admin_password: str = os.getenv("ADMIN_PASSWORD", "changeme")
