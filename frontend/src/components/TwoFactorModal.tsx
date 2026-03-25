@@ -26,9 +26,11 @@ export function TwoFactorModal({ onClose }: Props) {
 
   const fetchStatus = async () => {
     try {
-      const status = await get2FAStatus();
-      setEnabled(status.enabled);
-      setSetupStep("idle");
+      const response = await get2FAStatus();
+      setEnabled(response.enabled);
+      if (response.backup_codes) {
+        setBackupCodes(response.backup_codes);
+      }
     } catch (err) {
       setError(String(err));
     } finally {

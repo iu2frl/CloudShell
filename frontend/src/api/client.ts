@@ -488,6 +488,7 @@ export interface TOTPSetupResponse {
 
 export interface TwoFAStatus {
   enabled: boolean;
+  backup_codes?: string[];
 }
 
 export const get2FAStatus = (): Promise<TwoFAStatus> => request("/auth/2fa/status");
