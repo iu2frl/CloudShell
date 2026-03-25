@@ -89,10 +89,14 @@ class TOTPService:
     @staticmethod
     def verify_token(secret: str, token: str, window: int = 1) -> bool:
         """
-        Verify a TOTP token.
+        Verify a TOTP token with constant-time comparison to prevent timing attacks.
 
         Allows a time window tolerance to account for clock drift between
         server and client. Default window=1 means ±30 seconds (±1 time step).
+
+        Uses constant-time verification: format validation errors are handled
+        by substituting a dummy token before calling pyotp.verify(), ensuring
+        timing is consistent regardless of input validity.
 
         Args:
             secret: Base32-encoded TOTP secret
@@ -102,8 +106,10 @@ class TOTPService:
         Returns:
             True if token is valid and within time window
         """
+        # Use dummy token if format is invalid, ensuring constant-time comparison
+        # pyotp.verify() performs timing-safe comparison internally
         if not token or len(token) != 6 or not token.isdigit():
-            return False
+            token = "000000"  # Dummy token for constant-time path
 
         totp = pyotp.TOTP(secret)
         try:

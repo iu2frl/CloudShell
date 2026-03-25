@@ -83,6 +83,52 @@ class TestTOTPService:
         # A malformed secret that pyotp might crash on
         assert TOTPService.verify_token("NOT_BASE32_#", "123456") is False
 
+    def test_verify_token_constant_time(self):
+        """Verify timing is approximately constant regardless of format validation.
+
+        This test verifies that format-invalid tokens (wrong length, non-numeric)
+        don't early-return, but instead use a dummy token to maintain constant
+        execution time and prevent timing attacks.
+
+        The test measures execution time for:
+        - Format-valid but cryptographically invalid tokens
+        - Format-invalid tokens
+
+        Both should have similar execution time since both paths call pyotp.verify().
+        """
+        import time
+        
+        secret = TOTPService.generate_secret()
+        iterations = 100
+
+        # Measure time for format-valid but crypto-invalid token
+        start_valid_format = time.perf_counter()
+        for _ in range(iterations):
+            # "000000" is format-valid but cryptographically invalid (wrong secret)
+            TOTPService.verify_token(secret, "000000")
+        elapsed_valid_format = time.perf_counter() - start_valid_format
+
+        # Measure time for format-invalid token
+        start_invalid_format = time.perf_counter()
+        for _ in range(iterations):
+            # "abcdef" is format-invalid (non-numeric)
+            TOTPService.verify_token(secret, "abcdef")
+        elapsed_invalid_format = time.perf_counter() - start_invalid_format
+
+        # Both should take similar time (within 50% margin to account for variance)
+        # If format-invalid early-returns, it would be much faster
+        min_time = min(elapsed_valid_format, elapsed_invalid_format)
+        max_time = max(elapsed_valid_format, elapsed_invalid_format)
+        
+        # Ratio should be close to 1.0; allow 50% variance for system noise
+        ratio = max_time / min_time if min_time > 0 else 1.0
+        assert ratio < 1.5, (
+            f"Timing discrepancy suggests early-return on format validation. "
+            f"valid_format={elapsed_valid_format:.4f}s, "
+            f"invalid_format={elapsed_invalid_format:.4f}s, "
+            f"ratio={ratio:.2f}"
+        )
+
     def test_generate_backup_codes(self):
         """Should generate requested number of backup codes."""
         codes = TOTPService.generate_backup_codes(10)
