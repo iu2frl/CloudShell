@@ -92,6 +92,61 @@ class TestTwoFactorAuthAPI:
         assert response.status_code == 409
         assert "already in progress" in response.json()["detail"]
 
+    async def test_reset_2fa_pending_setup_allows_new_setup(
+        self, client: AsyncClient
+    ):
+        """Reset endpoint should clear pending setup and allow a new setup."""
+        headers = await _get_auth_headers(client)
+
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+        response = await client.post(
+            "/api/auth/2fa/reset",
+            headers=headers,
+        )
+        assert response.status_code == 204
+
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+    async def test_reset_2fa_fails_if_enabled(
+        self, client: AsyncClient, db_session
+    ):
+        """Reset endpoint should reject resetting when 2FA is already enabled."""
+        import pyotp
+
+        headers = await _get_auth_headers(client)
+
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+
+        totp = pyotp.TOTP(record.secret)
+        response = await client.post(
+            "/api/auth/2fa/enable",
+            json={"token": totp.now()},
+            headers=headers,
+        )
+        assert response.status_code == 204
+
+        response = await client.post(
+            "/api/auth/2fa/reset",
+            headers=headers,
+        )
+        assert response.status_code == 409
+        assert "Disable 2FA before resetting setup" in response.json()["detail"]
+
     async def test_setup_2fa_fails_if_already_enabled(
         self, client: AsyncClient, db_session
     ):
@@ -288,6 +343,9 @@ class TestTwoFactorAuthAPI:
         assert response.status_code == 401
         
         response = await client.post("/api/auth/2fa/setup")
+        assert response.status_code == 401
+
+        response = await client.post("/api/auth/2fa/reset")
         assert response.status_code == 401
         
         response = await client.post("/api/auth/2fa/enable", json={"token": "000000"})

@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from backend.routers.auth_2fa import (
     get_2fa_status,
     setup_2fa,
+    reset_2fa_setup,
     enable_2fa,
     disable_2fa,
     TOTPVerifyIn,
@@ -71,6 +72,40 @@ async def test_setup_2fa_direct(db_session):
             current_user="admin",
             db=db_session,
         )
+    assert exc.value.status_code == 409
+
+
+async def test_reset_2fa_setup_direct(db_session):
+    """Directly test pending 2FA setup reset flow."""
+    from unittest.mock import MagicMock
+
+    request = MagicMock()
+    request.client = MagicMock(host="127.0.0.1")
+    request.headers = {}
+
+    # No setup should return not found
+    with pytest.raises(HTTPException) as exc:
+        await reset_2fa_setup(request=request, current_user="admin", db=db_session)
+    assert exc.value.status_code == 404
+
+    # Pending setup can be reset
+    await setup_2fa(
+        request=request,
+        response=Response(),
+        current_user="admin",
+        db=db_session,
+    )
+    await reset_2fa_setup(request=request, current_user="admin", db=db_session)
+
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is None
+
+    # Enabled setup cannot be reset
+    db_session.add(AdminTOTPSecret(username="admin", secret="ABCD", is_enabled=True))
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await reset_2fa_setup(request=request, current_user="admin", db=db_session)
     assert exc.value.status_code == 409
 
     # Test conflict when already enabled

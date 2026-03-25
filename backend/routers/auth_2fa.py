@@ -5,6 +5,7 @@ Endpoints
 ---------
 GET  /api/auth/2fa/status       Check if 2FA is enabled
 POST /api/auth/2fa/setup        Generate TOTP secret and QR code
+POST /api/auth/2fa/reset        Reset pending 2FA setup
 POST /api/auth/2fa/enable       Verify and enable 2FA
 POST /api/auth/2fa/disable      Disable 2FA (requires verification)
 """
@@ -20,6 +21,7 @@ from backend.services.audit import (
     ACTION_2FA_ENABLED,
     ACTION_2FA_DISABLED,
     ACTION_2FA_SETUP_INITIATED,
+    ACTION_2FA_SETUP_RESET,
     ACTION_2FA_VERIFICATION_FAILED,
     get_client_ip,
     write_audit,
@@ -128,6 +130,43 @@ async def setup_2fa(
     return TOTPSetupResponse(
         qr_code=qr_code_base64,
         backup_codes=backup_codes,
+    )
+
+
+@router.post("/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_2fa_setup(
+    request: Request,
+    current_user: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset a pending 2FA setup.
+
+    Only pending setup records (`is_enabled=False`) can be reset.
+    Enabled 2FA must be disabled via /2fa/disable.
+    """
+    limiter = get_limiter()
+    limiter.check_limit(request, endpoint="/auth/2fa/reset", requests_per_minute=10)
+
+    totp_record = await db.get(AdminTOTPSecret, current_user)
+    if not totp_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="2FA setup not found",
+        )
+
+    if totp_record.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="2FA is enabled. Disable 2FA before resetting setup.",
+        )
+
+    await db.delete(totp_record)
+    await db.commit()
+
+    await write_audit(
+        db, current_user, ACTION_2FA_SETUP_RESET,
+        detail="User reset pending 2FA setup",
+        source_ip=get_client_ip(request),
     )
 
 
