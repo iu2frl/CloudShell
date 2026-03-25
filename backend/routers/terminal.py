@@ -184,16 +184,8 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
                 return
 
         username = payload.get("sub", "unknown")
-        # Extract client IP from the WebSocket upgrade request
-        xff = websocket.headers.get("x-forwarded-for")
-        if xff:
-            source_ip = xff.split(",")[0].strip()[:45]
-        else:
-            xri = websocket.headers.get("x-real-ip")
-            if xri:
-                source_ip = xri.strip()[:45]
-            elif websocket.client:
-                source_ip = websocket.client.host[:45]
+        # Reuse the same trusted-proxy logic as audit/rate-limit helpers
+        source_ip = get_client_ip(websocket)  # type: ignore[arg-type]
     except (JWTError, ValueError, RuntimeError):
         await websocket.close(code=4001)
         return

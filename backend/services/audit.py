@@ -12,6 +12,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.audit import AuditLog
+from backend.services.rate_limit import _get_client_ip
 
 log = logging.getLogger(__name__)
 
@@ -35,31 +36,15 @@ ACTION_BACKUP_CODE_LOW = "BACKUP_CODE_LOW"
 # -- IP extraction -------------------------------------------------------------
 
 def get_client_ip(request: Request) -> str | None:
-    """Return the real client IP, honouring proxy headers.
+    """Return client IP using the same trusted-proxy rules as rate limiting.
 
-    Priority (highest first):
-      1. X-Forwarded-For  — leftmost entry is the original client when set by
-                            a trusted proxy chain (Nginx, Traefik, Caddy, etc.)
-      2. X-Real-IP        — single-value header set by some proxies
-      3. request.client   — direct TCP peer (the immediate caller)
-
-    The value is truncated to 45 characters to fit both IPv4 and IPv6 addresses
-    (including IPv4-mapped IPv6 like ::ffff:1.2.3.4).
+    Forwarded headers are honoured only when the direct peer is configured in
+    ``TRUSTED_PROXIES``; otherwise, the direct peer address is used.
     """
-    xff: str | None = request.headers.get("x-forwarded-for")
-    if xff:
-        # "client, proxy1, proxy2" — take the leftmost (original client)
-        ip = xff.split(",")[0].strip()
-        return ip[:45] if ip else None
-
-    xri: str | None = request.headers.get("x-real-ip")
-    if xri:
-        return xri.strip()[:45]
-
-    if request.client:
-        return request.client.host[:45]
-
-    return None
+    ip = _get_client_ip(request)
+    if ip == "unknown":
+        return None
+    return ip[:45]
 
 
 # -- Write helpers -------------------------------------------------------------
