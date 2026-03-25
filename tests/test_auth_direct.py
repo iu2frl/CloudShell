@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import bcrypt
 import pytest
 from fastapi import HTTPException, Request
+from starlette.responses import Response
 from jose import jwt as jose_jwt
 from starlette.datastructures import Headers
 
@@ -48,6 +49,7 @@ class _FakeRequest:
     def __init__(self):
         self.headers = Headers(headers={})
         self.client = None
+        self.cookies = {}
 
 
 class _FakeDB:
@@ -196,10 +198,11 @@ async def test_login_direct_success():
 
     db = _FakeDB()
     request = _FakeRequest()
+    response = Response()
 
     with patch("backend.routers.auth._verify_credentials", new_callable=AsyncMock, return_value=True), \
          patch("backend.routers.auth.write_audit", new_callable=AsyncMock):
-        token = await login(request=request, form_data=form, db=db)
+        token = await login(request=request, response=response, form_data=form, db=db)
 
     assert token.token_type == "bearer"
     assert token.access_token
@@ -216,10 +219,11 @@ async def test_login_direct_bad_credentials_raises_401():
 
     db = _FakeDB()
     request = _FakeRequest()
+    response = Response()
 
     with patch("backend.routers.auth._verify_credentials", new_callable=AsyncMock, return_value=False):
         with pytest.raises(HTTPException) as exc_info:
-            await login(request=request, form_data=form, db=db)
+            await login(request=request, response=response, form_data=form, db=db)
     assert exc_info.value.status_code == 401
 
 
