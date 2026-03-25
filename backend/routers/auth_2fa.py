@@ -99,10 +99,10 @@ async def setup_2fa(
             detail="2FA is already enabled for this user",
         )
     if existing and not existing.is_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="2FA setup already in progress. Complete setup or reset it.",
-        )
+        # Replace stale/pending setup so users can restart provisioning without
+        # a separate reset call.
+        await db.delete(existing)
+        await db.flush()
 
     # Generate new secret and backup codes
     secret = TOTPService.generate_secret()
@@ -293,8 +293,9 @@ async def disable_2fa(
             detail="Invalid or expired token",
         )
 
-    # Disable 2FA
-    totp_record.is_enabled = False
+    # Disable 2FA by removing the existing setup.
+    # This avoids leaving a non-enabled row that blocks a fresh /2fa/setup.
+    await db.delete(totp_record)
     await db.commit()
 
     await write_audit(

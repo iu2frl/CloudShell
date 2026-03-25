@@ -321,6 +321,11 @@ export function TwoFactorModal({ onClose }: Props) {
               <p className="text-sm text-slate-400">
                 Protect your account with two-factor authentication. You will be asked for a code from your phone whenever you log in.
               </p>
+              {error && (
+                <div className="bg-red-900/40 border border-red-700 text-red-300 rounded-lg px-3 py-2 text-xs">
+                  {error}
+                </div>
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={onClose}

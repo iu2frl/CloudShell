@@ -93,10 +93,10 @@ class TestTwoFactorAuthAPI:
             _, kwargs = mock_get_provisioning_uri.call_args
             assert kwargs["issuer"] == "CloudShell (staging)"
 
-    async def test_setup_2fa_fails_if_setup_in_progress(
+    async def test_setup_2fa_restarts_if_setup_in_progress(
         self, client: AsyncClient
     ):
-        """Should reject setup when a pending setup already exists."""
+        """Should restart setup when a pending setup already exists."""
         headers = await _get_auth_headers(client)
 
         response = await client.post(
@@ -104,13 +104,15 @@ class TestTwoFactorAuthAPI:
             headers=headers,
         )
         assert response.status_code == 200
+        first_payload = response.json()
 
         response = await client.post(
             "/api/auth/2fa/setup",
             headers=headers,
         )
-        assert response.status_code == 409
-        assert "already in progress" in response.json()["detail"]
+        assert response.status_code == 200
+        second_payload = response.json()
+        assert second_payload["qr_code"] != first_payload["qr_code"]
 
     async def test_reset_2fa_pending_setup_allows_new_setup(
         self, client: AsyncClient
@@ -355,6 +357,49 @@ class TestTwoFactorAuthAPI:
             headers=headers,
         )
         assert response.json()["enabled"] is False
+
+    async def test_setup_2fa_allowed_again_after_disable(
+        self, client: AsyncClient, db_session
+    ):
+        """After disabling 2FA, user should be able to start setup again."""
+        import pyotp
+
+        headers = await _get_auth_headers(client)
+
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        totp = pyotp.TOTP(record.secret)
+
+        response = await client.post(
+            "/api/auth/2fa/enable",
+            json={"token": totp.now()},
+            headers=headers,
+        )
+        assert response.status_code == 204
+
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        record.created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await db_session.commit()
+
+        response = await client.post(
+            "/api/auth/2fa/disable",
+            json={"token": totp.now()},
+            headers=headers,
+        )
+        assert response.status_code == 204
+
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
 
     async def test_2fa_endpoints_require_auth(self, client: AsyncClient):
         """2FA endpoints should require authentication."""

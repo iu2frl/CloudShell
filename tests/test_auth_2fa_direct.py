@@ -64,15 +64,15 @@ async def test_setup_2fa_direct(db_session):
     assert resp.qr_code.startswith("data:image/")
     assert len(resp.backup_codes) == 10
 
-    # Pending setup should now conflict
-    with pytest.raises(HTTPException) as exc:
-        await setup_2fa(
-            request=request,
-            response=Response(),
-            current_user="admin",
-            db=db_session,
-        )
-    assert exc.value.status_code == 409
+    # Pending setup should be restartable
+    second = await setup_2fa(
+        request=request,
+        response=Response(),
+        current_user="admin",
+        db=db_session,
+    )
+    assert second.qr_code.startswith("data:image/")
+    assert second.qr_code != resp.qr_code
 
 
 async def test_setup_2fa_uses_environment_aware_issuer_direct(db_session):
@@ -219,7 +219,7 @@ async def test_disable_2fa_direct(db_session):
         await disable_2fa(request=mock_request, body=TOTPVerifyIn(token="123456"), current_user="admin", db=db_session)
 
     record = await db_session.get(AdminTOTPSecret, "admin")
-    assert record.is_enabled is False
+    assert record is None
 
 
 async def test_disable_2fa_direct_handles_naive_created_at(db_session):
@@ -245,5 +245,4 @@ async def test_disable_2fa_direct_handles_naive_created_at(db_session):
         )
 
     updated = await db_session.get(AdminTOTPSecret, "admin")
-    assert updated is not None
-    assert updated.is_enabled is False
+    assert updated is None
