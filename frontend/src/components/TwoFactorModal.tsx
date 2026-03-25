@@ -28,9 +28,6 @@ export function TwoFactorModal({ onClose }: Props) {
     try {
       const response = await get2FAStatus();
       setEnabled(response.enabled);
-      if (response.backup_codes) {
-        setBackupCodes(response.backup_codes);
-      }
     } catch (err) {
       setError(String(err));
     } finally {

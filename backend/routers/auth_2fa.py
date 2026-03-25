@@ -42,7 +42,6 @@ class TOTPVerifyIn(BaseModel):
 class TwoFAStatusOut(BaseModel):
     """Response indicating if 2FA is enabled."""
     enabled: bool
-    backup_codes: list[str] | None = None
 
 
 # -- Routes --------------------------------------------------------------------
@@ -56,8 +55,7 @@ async def get_2fa_status(
     totp_record = await db.get(AdminTOTPSecret, current_user)
     
     if totp_record and totp_record.is_enabled:
-        codes = TOTPService.codes_from_json(totp_record.backup_codes)
-        return TwoFAStatusOut(enabled=True, backup_codes=codes)
+        return TwoFAStatusOut(enabled=True)
         
     return TwoFAStatusOut(enabled=False)
 
