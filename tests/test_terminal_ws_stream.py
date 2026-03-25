@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncssh
+import pytest
 from jose import jwt as jose_jwt
 from backend.services.crypto import generate_key_pair
 
@@ -43,6 +44,16 @@ def _key_device_payload(pem: str, **overrides) -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def _mock_probe_fingerprint():
+    """Avoid real-network probe calls in tests by returning a stable fingerprint."""
+    with patch(
+        "backend.routers.terminal.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="AA:BB:CC"),
+    ):
+        yield
+
+
 # -- POST /api/terminal/session/{id}: SSH key device path ---------------------
 
 async def test_open_session_key_device_creates_session(auth_client):
@@ -59,7 +70,7 @@ async def test_open_session_key_device_creates_session(auth_client):
         "backend.routers.terminal.create_session",
         new=AsyncMock(return_value=fake_id),
     ):
-        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}?trust_host=true")
 
     assert resp.status_code == 200
     assert resp.json()["session_id"] == fake_id
@@ -78,7 +89,7 @@ async def test_open_session_host_key_not_verifiable_returns_502(auth_client):
             side_effect=asyncssh.HostKeyNotVerifiable(reason="key mismatch")
         ),
     ):
-        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}?trust_host=true")
 
     assert resp.status_code == 502
     assert "Host key not verifiable" in resp.json()["detail"]

@@ -41,6 +41,8 @@ class Device(Base):
     )
     # AES-256-GCM encrypted, base64-encoded
     encrypted_password: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # SHA-256 SSH host key fingerprint for SSH/SFTP trust-on-first-use pinning
+    ssh_host_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # filename inside keys_dir
     key_filename: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # SHA-256 certificate thumbprint for FTPS trust-on-first-use pinning

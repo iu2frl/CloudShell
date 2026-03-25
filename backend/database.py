@@ -42,6 +42,7 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 # rows are backfilled automatically (SQLite respects DEFAULT on ADD COLUMN).
 _MIGRATIONS: list[tuple[str, str, str, str, bool]] = [
     ("devices", "connection_type", "VARCHAR(4)", "'ssh'", False),
+    ("devices", "ssh_host_fingerprint", "VARCHAR(128)", "NULL", True),
     ("devices", "ftps_cert_thumbprint", "VARCHAR(128)", "NULL", True),
 ]
 

@@ -43,6 +43,16 @@ def _make_fake_session_id() -> str:
     return str(uuid.uuid4())
 
 
+@pytest.fixture(autouse=True)
+def _mock_probe_fingerprint():
+    """Avoid real-network probe calls in tests by returning a stable fingerprint."""
+    with patch(
+        "backend.routers.terminal.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="AA:BB:CC"),
+    ):
+        yield
+
+
 # -- POST /api/terminal/session/{device_id} ------------------------------------
 
 async def test_open_session_requires_auth(client, db_session):
@@ -79,7 +89,7 @@ async def test_open_session_ssh_connection_error_returns_502(auth_client):
         "backend.routers.terminal.create_session",
         new=AsyncMock(side_effect=OSError("Connection refused")),
     ):
-        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}?trust_host=true")
     assert resp.status_code == 502
 
 
@@ -92,7 +102,7 @@ async def test_open_session_ssh_auth_failure_returns_502(auth_client):
         "backend.routers.terminal.create_session",
         new=AsyncMock(side_effect=asyncssh.PermissionDenied(reason="Bad password")),
     ):
-        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}?trust_host=true")
     assert resp.status_code == 502
 
 
@@ -105,7 +115,7 @@ async def test_open_session_ssh_generic_error_returns_502(auth_client):
         "backend.routers.terminal.create_session",
         new=AsyncMock(side_effect=asyncssh.Error(code=0, reason="Something failed")),
     ):
-        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}?trust_host=true")
     assert resp.status_code == 502
 
 
@@ -121,7 +131,7 @@ async def test_open_session_returns_session_id(auth_client):
         "backend.routers.terminal.create_session",
         new=AsyncMock(return_value=fake_id),
     ):
-        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}?trust_host=true")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -143,7 +153,7 @@ async def test_open_session_writes_audit_entry(auth_client, db_session):
         "backend.routers.terminal.create_session",
         new=AsyncMock(return_value=fake_id),
     ):
-        await auth_client.post(f"/api/terminal/session/{device_id}")
+        await auth_client.post(f"/api/terminal/session/{device_id}?trust_host=true")
 
     rows = (await db_session.execute(select(AuditLog))).scalars().all()
     assert len(rows) == before + 1
@@ -160,8 +170,49 @@ async def test_open_session_ssh_connection_lost_returns_504(auth_client):
         "backend.routers.terminal.create_session",
         new=AsyncMock(side_effect=asyncssh.ConnectionLost(reason="Connection lost")),
     ):
-        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}?trust_host=true")
     assert resp.status_code == 504
+
+
+async def test_open_session_untrusted_host_returns_409(auth_client):
+    """Unknown SSH host fingerprint must require explicit trust confirmation."""
+    create_resp = await auth_client.post("/api/devices/", json=_password_device_payload())
+    device_id = create_resp.json()["id"]
+
+    with patch(
+        "backend.routers.terminal.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="AA:BB:CC"),
+    ):
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["code"] == "SSH_HOST_UNTRUSTED"
+    assert detail["fingerprint"] == "AA:BB:CC"
+
+
+async def test_open_session_changed_host_returns_409(auth_client):
+    """Changed SSH host fingerprint must require re-confirmation."""
+    create_resp = await auth_client.post("/api/devices/", json=_password_device_payload())
+    device_id = create_resp.json()["id"]
+
+    upd = await auth_client.put(
+        f"/api/devices/{device_id}",
+        json={"ssh_host_fingerprint": "11:22:33"},
+    )
+    assert upd.status_code == 200
+
+    with patch(
+        "backend.routers.terminal.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="AA:BB:CC"),
+    ):
+        resp = await auth_client.post(f"/api/terminal/session/{device_id}")
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["code"] == "SSH_HOST_CHANGED"
+    assert detail["previous_fingerprint"] == "11:22:33"
+    assert detail["fingerprint"] == "AA:BB:CC"
 
 
 # -- WebSocket /api/terminal/ws/{session_id} -----------------------------------

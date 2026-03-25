@@ -205,6 +205,66 @@ describe('request (via login helper)', () => {
   });
 });
 
+// -- SSH / SFTP host trust challenge API functions ----------------------------
+
+describe('SSH host trust challenge API functions', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem('token', 'test-token');
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('openSession appends trust_host=true when requested', async () => {
+    const { openSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ session_id: 'ssh-sess-1' }),
+    }));
+
+    const id = await openSession(7, { trustHost: true });
+    expect(id).toBe('ssh-sess-1');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/terminal/session/7?trust_host=true');
+  });
+
+  it('openSftpSession appends trust_host=true when requested', async () => {
+    const { openSftpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ session_id: 'sftp-sess-1' }),
+    }));
+
+    const id = await openSftpSession(9, { trustHost: true });
+    expect(id).toBe('sftp-sess-1');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/sftp/session/9?trust_host=true');
+  });
+
+  it('openSession throws SshHostChallengeError on 409 challenge', async () => {
+    const { openSession, SshHostChallengeError } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: { code: 'SSH_HOST_UNTRUSTED', fingerprint: 'AA:BB' } }),
+    }));
+
+    await expect(openSession(11)).rejects.toBeInstanceOf(SshHostChallengeError);
+  });
+
+  it('openSftpSession throws SshHostChallengeError on 409 challenge', async () => {
+    const { openSftpSession, SshHostChallengeError } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: { code: 'SSH_HOST_CHANGED', fingerprint: 'AA:BB', previous_fingerprint: 'CC:DD' } }),
+    }));
+
+    await expect(openSftpSession(12)).rejects.toBeInstanceOf(SshHostChallengeError);
+  });
+});
+
 // -- FTP / FTPS API functions --------------------------------------------------
 
 describe('FTP API functions', () => {

@@ -14,6 +14,7 @@ Server → Browser (binary WebSocket frames):
   • Raw bytes from SSH stdout+stderr concatenated
 """
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -39,6 +40,19 @@ class _Session:
 
 
 _sessions: dict[str, _Session] = {}
+
+
+class SSHHostFingerprintUnavailableError(RuntimeError):
+    """Raised when a host key fingerprint cannot be obtained during probe."""
+
+
+class SSHHostFingerprintMismatchError(RuntimeError):
+    """Raised when the presented SSH host fingerprint mismatches the expected value."""
+
+    def __init__(self, expected: str, presented: str):
+        super().__init__("SSH host fingerprint mismatch")
+        self.expected = expected
+        self.presented = presented
 
 
 # -- known_hosts helper --------------------------------------------------------
@@ -102,6 +116,76 @@ def _make_accept_new_client(known_hosts_path: str) -> type:
     return _AcceptNewClient
 
 
+def _format_ssh_host_fingerprint(key: asyncssh.SSHKey) -> str:
+    """Return SHA-256 host-key fingerprint as uppercase colon-separated hex."""
+    digest = hashlib.sha256(key.export_public_key()).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
+
+
+def _make_pinned_fingerprint_client(expected: str, captured: dict[str, str]) -> type:
+    """Return an SSHClient class which only accepts the expected host fingerprint."""
+
+    class _PinnedFingerprintClient(asyncssh.SSHClient):
+        """Host key validator enforcing a pinned fingerprint."""
+
+        def validate_host_public_key(
+            self,
+            host: str,
+            addr: str,
+            port: int,
+            key: asyncssh.SSHKey,
+        ) -> bool:
+            presented = _format_ssh_host_fingerprint(key)
+            captured["presented"] = presented
+            if presented == expected:
+                return True
+            log.warning("Host fingerprint mismatch for %s", host)
+            return False
+
+    return _PinnedFingerprintClient
+
+
+async def probe_ssh_host_fingerprint(hostname: str, port: int) -> str:
+    """Return the presented SSH host-key fingerprint without trusting it."""
+    captured: dict[str, str] = {}
+
+    class _ProbeClient(asyncssh.SSHClient):
+        """Capture host fingerprint and reject connection intentionally."""
+
+        def validate_host_public_key(
+            self,
+            host: str,
+            addr: str,
+            peer_port: int,
+            key: asyncssh.SSHKey,
+        ) -> bool:
+            _ = host, addr, peer_port
+            captured["presented"] = _format_ssh_host_fingerprint(key)
+            return False
+
+    try:
+        await asyncssh.connect(
+            host=hostname,
+            port=port,
+            username="probe",
+            password="probe",
+            known_hosts=None,
+            client_factory=_ProbeClient,
+        )
+    except asyncssh.HostKeyNotVerifiable:
+        pass
+    except (OSError, asyncssh.Error) as exc:
+        if "presented" not in captured:
+            raise SSHHostFingerprintUnavailableError(
+                f"Unable to retrieve SSH host fingerprint: {exc}"
+            ) from exc
+
+    presented = captured.get("presented")
+    if not presented:
+        raise SSHHostFingerprintUnavailableError("SSH host fingerprint not presented by server")
+    return presented
+
+
 # -- Public API ----------------------------------------------------------------
 
 async def create_session(
@@ -114,6 +198,7 @@ async def create_session(
     device_label: str = "",
     cloudshell_user: str = "",
     source_ip: str | None = None,
+    expected_ssh_host_fingerprint: str | None = None,
 ) -> str:
     """
     Open an SSH connection and return a session_id.
@@ -133,7 +218,14 @@ async def create_session(
         "username": username,
     }
 
-    if known_hosts == "auto":
+    if expected_ssh_host_fingerprint:
+        captured: dict[str, str] = {}
+        connect_kwargs["client_factory"] = _make_pinned_fingerprint_client(
+            expected_ssh_host_fingerprint,
+            captured,
+        )
+        connect_kwargs["known_hosts"] = None
+    elif known_hosts == "auto":
         kh_path = _known_hosts_path()
         if kh_path:
             # Use accept-new client: validates known hosts strictly,
@@ -153,7 +245,16 @@ async def create_session(
 
     # Let connection errors propagate — the caller (router) will catch them
     # and send a proper error frame to the WebSocket client.
-    conn = await asyncssh.connect(**connect_kwargs)
+    try:
+        conn = await asyncssh.connect(**connect_kwargs)
+    except asyncssh.HostKeyNotVerifiable as exc:
+        presented = locals().get("captured", {}).get("presented")
+        if expected_ssh_host_fingerprint and presented:
+            raise SSHHostFingerprintMismatchError(
+                expected=expected_ssh_host_fingerprint,
+                presented=presented,
+            ) from exc
+        raise
     _sessions[session_id] = _Session(
         conn=conn,
         device_label=device_label,

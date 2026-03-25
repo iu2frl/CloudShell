@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Device,
+  SshHostChallengeError,
   SftpEntry,
   closeSftpSession,
   openSftpSession,
@@ -80,13 +81,45 @@ export function FileManager({ device }: FileManagerProps) {
   const toastRef                      = useRef(toast);
   useEffect(() => { toastRef.current = toast; });
 
+  const confirmSshHostFingerprint = useCallback((err: SshHostChallengeError): boolean => {
+    const detail = err.detail;
+    if (detail.code === "SSH_HOST_UNTRUSTED") {
+      return window.confirm(
+        `First SFTP connection to ${device.hostname}.\n\n` +
+        `Host fingerprint (SHA-256):\n${detail.fingerprint}\n\n` +
+        "Accept and trust this host key for future connections?",
+      );
+    }
+
+    return window.confirm(
+      `SFTP host key changed for ${device.hostname}.\n\n` +
+      `Previously trusted:\n${detail.previous_fingerprint ?? "(unknown)"}\n\n` +
+      `Presented now:\n${detail.fingerprint}\n\n` +
+      "Accept the new host key and update trust?",
+    );
+  }, [device.hostname]);
+
   // -- Session lifecycle ----------------------------------------------------
 
   const connect = useCallback(async () => {
     setConnecting(true);
     setConnError(null);
     try {
-      const sid = await openSftpSession(device.id);
+      let sid: string;
+      try {
+        sid = await openSftpSession(device.id);
+      } catch (err) {
+        if (!(err instanceof SshHostChallengeError)) {
+          throw err;
+        }
+        const accepted = confirmSshHostFingerprint(err);
+        if (!accepted) {
+          throw new Error("Connection cancelled: SSH host key not trusted");
+        }
+        sid = await openSftpSession(device.id, { trustHost: true });
+        toastRef.current.success("SFTP host key trusted and saved for this device");
+      }
+
       setSessionId(sid);
       sessionRef.current = sid;
     } catch (err) {
@@ -94,7 +127,7 @@ export function FileManager({ device }: FileManagerProps) {
     } finally {
       setConnecting(false);
     }
-  }, [device.id]);
+  }, [confirmSshHostFingerprint, device.id]);
 
   useEffect(() => {
     connect();

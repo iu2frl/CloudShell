@@ -40,6 +40,7 @@ class DeviceUpdate(BaseModel):
     connection_type: Optional[ConnectionType] = None
     password: Optional[str] = None
     private_key: Optional[str] = None
+    ssh_host_fingerprint: Optional[str] = None
     ftps_cert_thumbprint: Optional[str] = None
 
 
@@ -51,6 +52,7 @@ class DeviceOut(BaseModel):
     username: str
     auth_type: AuthType
     connection_type: ConnectionType
+    ssh_host_fingerprint: str | None = None
     key_filename: str | None = None
     ftps_cert_thumbprint: str | None = None
     created_at: datetime
@@ -145,6 +147,7 @@ async def update_device(
         "username",
         "auth_type",
         "connection_type",
+        "ssh_host_fingerprint",
         "ftps_cert_thumbprint",
     ):
         val = getattr(payload, field)

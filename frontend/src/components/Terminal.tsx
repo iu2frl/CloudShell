@@ -3,7 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { Device, openSession, terminalWsUrl } from "../api/client";
+import { Device, SshHostChallengeError, openSession, terminalWsUrl } from "../api/client";
 import { RefreshCw, Wifi, WifiOff, Loader, Copy } from "lucide-react";
 import { useToast } from "./Toast";
 
@@ -28,6 +28,24 @@ export function Terminal({ device }: TerminalProps) {
   // Stable ref so connect() doesn't need toast in its dep array (prevents reconnect loop)
   const toastRef = useRef(toast);
   useEffect(() => { toastRef.current = toast; });
+
+  const confirmSshHostFingerprint = useCallback((err: SshHostChallengeError): boolean => {
+    const detail = err.detail;
+    if (detail.code === "SSH_HOST_UNTRUSTED") {
+      return window.confirm(
+        `First SSH connection to ${device.hostname}.\n\n` +
+        `Host fingerprint (SHA-256):\n${detail.fingerprint}\n\n` +
+        "Accept and trust this host key for future connections?",
+      );
+    }
+
+    return window.confirm(
+      `SSH host key changed for ${device.hostname}.\n\n` +
+      `Previously trusted:\n${detail.previous_fingerprint ?? "(unknown)"}\n\n` +
+      `Presented now:\n${detail.fingerprint}\n\n` +
+      "Accept the new host key and update trust?",
+    );
+  }, [device.hostname]);
 
   // -- Build the xterm instance once ------------------------------------------
   useEffect(() => {
@@ -98,7 +116,19 @@ export function Terminal({ device }: TerminalProps) {
 
     let sessionId: string;
     try {
-      sessionId = await openSession(device.id);
+      try {
+        sessionId = await openSession(device.id);
+      } catch (err) {
+        if (!(err instanceof SshHostChallengeError)) {
+          throw err;
+        }
+        const accepted = confirmSshHostFingerprint(err);
+        if (!accepted) {
+          throw new Error("Connection cancelled: SSH host key not trusted");
+        }
+        sessionId = await openSession(device.id, { trustHost: true });
+        toastRef.current.success("SSH host key trusted and saved for this device");
+      }
     } catch (err) {
       retriesRef.current += 1;
       const msg = String(err);
@@ -159,7 +189,7 @@ export function Terminal({ device }: TerminalProps) {
     });
   // toast intentionally excluded — accessed via toastRef to keep connect() stable
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [device.id, device.name]);
+  }, [confirmSshHostFingerprint, device.id, device.name]);
 
   useEffect(() => { connect(); }, [connect]);
 

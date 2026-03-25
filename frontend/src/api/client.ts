@@ -183,11 +183,57 @@ export const deleteDevice = (id: number): Promise<void> =>
 
 // -- Terminal ------------------------------------------------------------------
 
-export async function openSession(deviceId: number): Promise<string> {
-  const data = await request<{ session_id: string }>(`/terminal/session/${deviceId}`, {
+export type SshHostChallengeCode = "SSH_HOST_UNTRUSTED" | "SSH_HOST_CHANGED";
+
+export interface SshHostChallengeDetail {
+  code: SshHostChallengeCode;
+  fingerprint: string;
+  previous_fingerprint?: string;
+}
+
+export class SshHostChallengeError extends Error {
+  readonly detail: SshHostChallengeDetail;
+
+  constructor(detail: SshHostChallengeDetail) {
+    super(detail.code);
+    this.name = "SshHostChallengeError";
+    this.detail = detail;
+  }
+}
+
+function isSshHostChallengeDetail(value: unknown): value is SshHostChallengeDetail {
+  if (!value || typeof value !== "object") return false;
+  const detail = value as Record<string, unknown>;
+  const code = detail.code;
+  if (code !== "SSH_HOST_UNTRUSTED" && code !== "SSH_HOST_CHANGED") return false;
+  return typeof detail.fingerprint === "string";
+}
+
+export async function openSession(
+  deviceId: number,
+  options?: { trustHost?: boolean },
+): Promise<string> {
+  const trustHost = options?.trustHost === true;
+  const suffix = trustHost ? "?trust_host=true" : "";
+  const res = await fetch(`${BASE}/terminal/session/${deviceId}${suffix}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
   });
-  return data.session_id;
+
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
+
+  const data = await res.json().catch(() => ({ detail: res.statusText }));
+  if (!res.ok) {
+    if (res.status === 409 && isSshHostChallengeDetail(data.detail)) {
+      throw new SshHostChallengeError(data.detail);
+    }
+    throw new Error(data.detail ?? "Request failed");
+  }
+
+  return (data as { session_id: string }).session_id;
 }
 
 export function terminalWsUrl(sessionId: string): string {
@@ -233,11 +279,31 @@ export interface SftpListResponse {
   entries: SftpEntry[];
 }
 
-export async function openSftpSession(deviceId: number): Promise<string> {
-  const data = await request<{ session_id: string }>(`/sftp/session/${deviceId}`, {
+export async function openSftpSession(
+  deviceId: number,
+  options?: { trustHost?: boolean },
+): Promise<string> {
+  const trustHost = options?.trustHost === true;
+  const suffix = trustHost ? "?trust_host=true" : "";
+  const res = await fetch(`${BASE}/sftp/session/${deviceId}${suffix}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
   });
-  return data.session_id;
+
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
+
+  const data = await res.json().catch(() => ({ detail: res.statusText }));
+  if (!res.ok) {
+    if (res.status === 409 && isSshHostChallengeDetail(data.detail)) {
+      throw new SshHostChallengeError(data.detail);
+    }
+    throw new Error(data.detail ?? "Request failed");
+  }
+
+  return (data as { session_id: string }).session_id;
 }
 
 export async function closeSftpSession(sessionId: string): Promise<void> {
