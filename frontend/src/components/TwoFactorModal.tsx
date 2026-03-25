@@ -63,9 +63,6 @@ export function TwoFactorModal({ onClose }: Props) {
       await enable2FA(verifyCode);
       setSetupStep("success");
       setEnabled(true);
-      setTimeout(() => {
-        onClose();
-      }, 2000);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -134,37 +131,13 @@ export function TwoFactorModal({ onClose }: Props) {
 
         {/* Body */}
         <div className="px-6 py-5">
-          {enabled ? (
+          {enabled && setupStep !== "success" ? (
             <div className="space-y-4">
               {/* Status badge */}
               <div className="bg-green-900/20 border border-green-700 rounded-lg px-4 py-3">
                 <div className="flex items-center gap-2 text-green-300 text-sm font-medium">
                   <Check size={16} />
                   Two-factor authentication is enabled
-                </div>
-              </div>
-
-              {/* Backup codes section */}
-              <div className="space-y-3">
-                <div className="text-sm text-slate-400">
-                  <div className="font-medium mb-2">Backup codes</div>
-                  <p className="text-xs mb-3">
-                    Use these codes if you lose access to your authenticator app. Each code can be used once.
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleDownloadBackupCodes}
-                      className="btn-secondary text-sm flex-1"
-                    >
-                      Download
-                    </button>
-                    <button
-                      onClick={() => navigator.clipboard.writeText(backupCodes.join("\n"))}
-                      className="btn-secondary text-sm flex-1"
-                    >
-                      Copy
-                    </button>
-                  </div>
                 </div>
               </div>
 
@@ -220,7 +193,42 @@ export function TwoFactorModal({ onClose }: Props) {
               <p className="text-xs text-slate-400">
                 Your account is now protected with two-factor authentication.
               </p>
-              <button onClick={onClose} className="btn-primary w-full">
+
+              {backupCodes.length > 0 && (
+                <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg px-4 py-4 space-y-3 mt-4 text-left">
+                  <p className="text-sm font-medium text-yellow-300 flex items-center gap-2">
+                    <AlertCircle size={16} />
+                    Save your backup codes
+                  </p>
+                  <p className="text-xs text-yellow-200/90 leading-relaxed">
+                    These are your emergency backup codes. You will only see these once.
+                    Save them securely. Each code can be used once if you lose access to your authenticator app.
+                  </p>
+
+                  <div className="bg-slate-900/50 p-3 rounded font-mono text-sm tracking-wider text-slate-300 columns-2 gap-4">
+                    {backupCodes.map((code, idx) => (
+                      <div key={idx} className="mb-1">{code}</div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      onClick={handleDownloadBackupCodes}
+                      className="btn-secondary text-xs flex-1 border-yellow-700/50 hover:bg-yellow-900/30"
+                    >
+                      Download as .txt
+                    </button>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(backupCodes.join("\n"))}
+                      className="btn-secondary text-xs flex-1 border-yellow-700/50 hover:bg-yellow-900/30"
+                    >
+                      Copy to Clipboard
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <button onClick={onClose} className="btn-primary w-full mt-4">
                 Close
               </button>
             </div>
@@ -288,24 +296,6 @@ export function TwoFactorModal({ onClose }: Props) {
                   </div>
                 </form>
               </div>
-
-              {backupCodes.length > 0 && (
-                <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg px-4 py-3 space-y-2">
-                  <p className="text-xs font-medium text-yellow-300 flex items-center gap-2">
-                    <AlertCircle size={14} />
-                    Save your backup codes
-                  </p>
-                  <p className="text-xs text-yellow-200">
-                    Each code can be used once if you lose your phone.
-                  </p>
-                  <button
-                    onClick={handleDownloadBackupCodes}
-                    className="btn-secondary text-xs w-full"
-                  >
-                    Download Backup Codes
-                  </button>
-                </div>
-              )}
             </div>
           ) : (
             <div className="space-y-4">
