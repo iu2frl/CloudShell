@@ -108,6 +108,19 @@ class TestTOTPService:
         assert "AAAA-BBBB" in json_str
         assert "CCCC-DDDD" in json_str
 
+    def test_codes_to_json_hashed(self):
+        """Should serialize hashed codes to JSON when requested."""
+        codes = ["AAAA-BBBB", "CCCC-DDDD"]
+        json_str = TOTPService.codes_to_json(codes, hashed=True)
+        assert isinstance(json_str, str)
+        # Raw codes must not appear in hashed storage
+        assert "AAAA-BBBB" not in json_str
+        assert "CCCC-DDDD" not in json_str
+        recovered = TOTPService.codes_from_json(json_str)
+        assert len(recovered) == 2
+        assert all(isinstance(x, str) for x in recovered)
+        assert all(len(x) == 64 for x in recovered)  # sha256 hex
+
     def test_codes_from_json(self):
         """Should deserialize codes from JSON."""
         original = ["AAAA-BBBB", "CCCC-DDDD"]
@@ -127,3 +140,25 @@ class TestTOTPService:
         json_str = TOTPService.codes_to_json(codes)
         recovered = TOTPService.codes_from_json(json_str)
         assert recovered == codes
+
+    def test_verify_and_consume_backup_code_success(self):
+        """Should accept a valid backup code and remove it from storage."""
+        codes = ["AAAA-BBBB", "CCCC-DDDD"]
+        stored = TOTPService.codes_to_json(codes, hashed=True)
+        ok, updated = TOTPService.verify_and_consume_backup_code(stored, "AAAA-BBBB")
+        assert ok is True
+        remaining = TOTPService.codes_from_json(updated)
+        assert len(remaining) == 1
+
+        # Second use of the same code must fail
+        ok2, updated2 = TOTPService.verify_and_consume_backup_code(updated, "AAAA-BBBB")
+        assert ok2 is False
+        assert TOTPService.codes_from_json(updated2) == remaining
+
+    def test_verify_and_consume_backup_code_failure(self):
+        """Should reject invalid backup codes without changing stored hashes."""
+        codes = ["AAAA-BBBB", "CCCC-DDDD"]
+        stored = TOTPService.codes_to_json(codes, hashed=True)
+        ok, updated = TOTPService.verify_and_consume_backup_code(stored, "EEEE-FFFF")
+        assert ok is False
+        assert TOTPService.codes_from_json(updated) == TOTPService.codes_from_json(stored)

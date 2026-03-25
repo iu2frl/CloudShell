@@ -204,13 +204,14 @@ async def login(
         is_valid_totp = TOTPService.verify_token(totp_record.secret, totp_code)
         
         if not is_valid_totp:
-            # Check backup codes if totally invalid
-            # TODO: implement backup code using json deserialization in a loop
-            codes = TOTPService.codes_from_json(totp_record.backup_codes)
-            if totp_code in codes:
-                # Remove used backup code
-                codes.remove(totp_code)
-                totp_record.backup_codes = TOTPService.codes_to_json(codes)
+            # Check backup codes if TOTPs fail.
+            # Backup codes are stored hashed; on success we consume (remove) the used one.
+            ok, updated_json = TOTPService.verify_and_consume_backup_code(
+                getattr(totp_record, "backup_codes", None),
+                totp_code,
+            )
+            if ok:
+                totp_record.backup_codes = updated_json
                 await db.commit()
                 is_valid_totp = True
                 

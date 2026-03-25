@@ -249,17 +249,20 @@ class TestTwoFactorAuthAPI:
     ):
         """Backup codes should be stored in database."""
         headers = await _get_auth_headers(client)
-        
+
         response = await client.post(
             "/api/auth/2fa/setup",
             headers=headers,
         )
         backup_codes = response.json()["backup_codes"]
-        
+
         # Check database
         record = await db_session.get(AdminTOTPSecret, "admin")
         assert record is not None
         assert record.is_enabled is False
-        
+
         stored_codes = json.loads(record.backup_codes)
-        assert stored_codes == backup_codes
+        assert stored_codes != backup_codes
+        assert len(stored_codes) == len(backup_codes)
+        assert all(isinstance(x, str) for x in stored_codes)
+        assert all(len(x) == 64 for x in stored_codes)  # sha256 hex digests

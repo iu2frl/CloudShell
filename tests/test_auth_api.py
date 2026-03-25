@@ -140,6 +140,7 @@ async def test_login_invalid_2fa(client, monkeypatch):
     class MockTOTPRecord:
         is_enabled = True
         secret = "SECRET"
+        
         backup_codes = "[]"
         
     class MockDB:
@@ -178,6 +179,7 @@ async def test_login_valid_2fa(client, monkeypatch):
     class MockTOTPRecord:
         is_enabled = True
         secret = "SECRET"
+        backup_codes = "[]"
         
     class MockDB:
         async def get(self, model, ident):

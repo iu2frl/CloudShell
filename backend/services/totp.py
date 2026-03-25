@@ -11,6 +11,8 @@ Provides utilities for:
 import json
 import secrets
 import logging
+import hmac
+import hashlib
 from typing import Optional
 
 import pyotp
@@ -129,17 +131,76 @@ class TOTPService:
         return codes
 
     @staticmethod
-    def codes_to_json(codes: list[str]) -> str:
-        """
-        Serialize backup codes to JSON for storage.
+    def hash_backup_code(code: str) -> str:
+        """Hash a single backup code for storage.
+
+        Notes:
+            - We purposely use a one-way hash so a DB read doesn't reveal usable
+              backup codes.
+            - This is an online-checked secret (like a password). A slow KDF
+              would be stronger, but sha256 is a pragmatic baseline with no new
+              dependencies.
 
         Args:
-            codes: List of backup code strings
+            code: Backup code in the format produced by generate_backup_codes()
 
         Returns:
-            JSON-encoded string
+            Hex-encoded sha256 digest.
         """
-        return json.dumps(codes)
+        normalized = (code or "").strip().upper()
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        return digest
+
+    @staticmethod
+    def hash_backup_codes(codes: list[str]) -> list[str]:
+        """Hash a list of backup codes."""
+        return [TOTPService.hash_backup_code(c) for c in codes]
+
+    @staticmethod
+    def codes_to_json(codes: list[str], *, hashed: bool = False) -> str:
+        """Serialize backup codes to JSON for storage.
+
+        Args:
+            codes: List of backup code strings.
+            hashed: When True, store hashes instead of raw codes.
+
+        Returns:
+            JSON-encoded string.
+        """
+        payload = TOTPService.hash_backup_codes(codes) if hashed else codes
+        return json.dumps(payload)
+
+    @staticmethod
+    def verify_and_consume_backup_code(
+        stored_json: Optional[str],
+        provided_code: str,
+    ) -> tuple[bool, str]:
+        """Verify a provided backup code against stored hashes and consume it.
+
+        Args:
+            stored_json: JSON string containing hashed backup codes.
+            provided_code: User-supplied backup code.
+
+        Returns:
+            (is_valid, updated_json). If is_valid is True, updated_json will
+            have the matched code removed.
+        """
+        stored = TOTPService.codes_from_json(stored_json)
+        if not stored:
+            return False, TOTPService.codes_to_json([], hashed=False)
+
+        provided_hash = TOTPService.hash_backup_code(provided_code)
+
+        # Constant-time compare each entry, keep all non-matching entries.
+        matched = False
+        remaining: list[str] = []
+        for entry in stored:
+            if hmac.compare_digest(entry, provided_hash) and not matched:
+                matched = True
+                continue
+            remaining.append(entry)
+
+        return matched, json.dumps(remaining)
 
     @staticmethod
     def codes_from_json(json_str: Optional[str]) -> list[str]:

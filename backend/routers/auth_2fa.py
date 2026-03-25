@@ -92,7 +92,7 @@ async def setup_2fa(
         username=current_user,
         secret=secret,
         is_enabled=False,
-        backup_codes=TOTPService.codes_to_json(backup_codes),
+    backup_codes=TOTPService.codes_to_json(backup_codes, hashed=True),
     )
     # Upsert: delete old setup if exists and create new one
     if existing:
