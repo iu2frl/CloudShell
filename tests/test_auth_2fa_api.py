@@ -4,6 +4,7 @@ tests/test_auth_2fa_api.py — Integration tests for 2FA endpoints.
 import json
 
 from httpx import AsyncClient
+from sqlalchemy import text
 
 from backend.models.auth import AdminTOTPSecret
 
@@ -61,7 +62,7 @@ class TestTwoFactorAuthAPI:
             assert code[4] == "-"
 
     async def test_setup_2fa_fails_if_already_enabled(
-        self, client: AsyncClient, db_session
+        self, client: AsyncClient
     ):
         """Should reject setup if 2FA already enabled."""
         import pyotp
@@ -266,3 +267,26 @@ class TestTwoFactorAuthAPI:
         assert len(stored_codes) == len(backup_codes)
         assert all(isinstance(x, str) for x in stored_codes)
         assert all(x.startswith("$2") for x in stored_codes)  # bcrypt hashes
+
+    async def test_totp_secret_encrypted_at_rest(
+        self, client: AsyncClient, db_session
+    ):
+        """TOTP secret should not be stored as plaintext in the database."""
+        headers = await _get_auth_headers(client)
+
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        setup_secret = response.json()["secret"]
+
+        query = await db_session.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        raw_secret = query.scalar_one()
+        assert raw_secret != setup_secret
+
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        assert record.secret == setup_secret

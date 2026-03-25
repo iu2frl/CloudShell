@@ -1,11 +1,14 @@
 import logging
 import os
+import binascii
 from collections.abc import AsyncGenerator
+from cryptography.exceptions import InvalidTag
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import get_settings
+from backend.services.crypto import decrypt, encrypt
 
 log = logging.getLogger(__name__)
 
@@ -57,12 +60,42 @@ async def _run_migrations(conn) -> None:
             log.info("Migration: added column %s.%s (default=%s)", table, column, default)
 
 
+async def _encrypt_legacy_totp_secrets(conn) -> None:
+    """Encrypt any legacy plaintext 2FA secrets stored in admin_totp_secrets."""
+    result = await conn.execute(text("SELECT username, secret FROM admin_totp_secrets"))
+    rows = result.fetchall()
+    migrated_count = 0
+
+    for username, secret in rows:
+        if not isinstance(secret, str) or not secret:
+            continue
+
+        try:
+            decrypt(secret)
+            continue
+        except (ValueError, TypeError, binascii.Error, InvalidTag):
+            encrypted_secret = encrypt(secret)
+            await conn.execute(
+                text(
+                    "UPDATE admin_totp_secrets "
+                    "SET secret = :secret "
+                    "WHERE username = :username"
+                ),
+                {"secret": encrypted_secret, "username": username},
+            )
+            migrated_count += 1
+
+    if migrated_count:
+        log.info("Migration: encrypted %s legacy TOTP secrets", migrated_count)
+
+
 async def init_db():
     """Create all tables on startup, then run incremental column migrations."""
     _import_models()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _run_migrations(conn)
+        await _encrypt_legacy_totp_secrets(conn)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

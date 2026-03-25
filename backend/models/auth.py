@@ -5,11 +5,18 @@ models/auth.py — persistence for auth-related state:
   - AdminTOTPSecret: TOTP secrets for two-factor authentication
 """
 from datetime import datetime, timezone
+import binascii
+import logging
 
+from cryptography.exceptions import InvalidTag
 from sqlalchemy import DateTime, String, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
+from backend.services.crypto import encrypt, decrypt
+
+
+log = logging.getLogger(__name__)
 
 
 class RevokedToken(Base):
@@ -59,10 +66,24 @@ class AdminTOTPSecret(Base):
     __tablename__ = "admin_totp_secrets"
 
     username: Mapped[str] = mapped_column(String(128), primary_key=True)
-    secret: Mapped[str] = mapped_column(String(32), nullable=False)  # base32-encoded
+    _secret_encrypted: Mapped[str] = mapped_column("secret", String(512), nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     backup_codes: Mapped[str] = mapped_column(String(512), nullable=True)  # JSON list
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+
+    @property
+    def secret(self) -> str:
+        """Return decrypted TOTP secret with legacy plaintext fallback."""
+        try:
+            return decrypt(self._secret_encrypted)
+        except (ValueError, TypeError, binascii.Error, InvalidTag):
+            log.warning("Legacy plaintext TOTP secret loaded from database")
+            return self._secret_encrypted
+
+    @secret.setter
+    def secret(self, value: str) -> None:
+        """Encrypt TOTP secret before storing it in the database."""
+        self._secret_encrypted = encrypt(value)

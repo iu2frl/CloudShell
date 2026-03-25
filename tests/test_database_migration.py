@@ -10,9 +10,10 @@ Covers:
 """
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from backend.database import _run_migrations, _MIGRATIONS
+from backend.database import _run_migrations, _MIGRATIONS, _encrypt_legacy_totp_secrets
+from backend.services.crypto import decrypt
 
 
 # -- Helpers -------------------------------------------------------------------
@@ -149,3 +150,40 @@ async def test_migrations_table_covers_all_entries():
         assert column, "column name must not be empty"
         assert col_type, "col_type must not be empty"
         assert default, "default must not be empty"
+
+
+@pytest.mark.asyncio
+async def test_migration_encrypts_plaintext_totp_secret():
+    """Legacy plaintext TOTP secrets should be encrypted during startup migration."""
+    engine = await _make_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE admin_totp_secrets ("
+            "  username VARCHAR(128) PRIMARY KEY,"
+            "  secret VARCHAR(512) NOT NULL,"
+            "  is_enabled BOOLEAN NOT NULL DEFAULT 0,"
+            "  backup_codes VARCHAR(512),"
+            "  created_at DATETIME"
+            ")"
+        ))
+        await conn.execute(text(
+            "INSERT INTO admin_totp_secrets (username, secret, is_enabled) "
+            "VALUES ('admin', 'ABCDEFGHIJKLMNOPQRSTUVWX12345678', 1)"
+        ))
+
+        before = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        plaintext = before.scalar_one()
+
+        await _encrypt_legacy_totp_secrets(conn)
+
+        after = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        encrypted_value = after.scalar_one()
+
+        assert encrypted_value != plaintext
+        assert decrypt(encrypted_value) == plaintext
+
+    await engine.dispose()
