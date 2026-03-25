@@ -234,6 +234,24 @@ describe('FTP API functions', () => {
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/ftp/session/42');
   });
 
+  it('openFtpSession appends trust_cert=true when requested', async () => {
+    const { openFtpSession } = await import('../api/client');
+    mockFetch({ session_id: 'ftp-sess-2' });
+    const id = await openFtpSession(42, { trustCert: true });
+    expect(id).toBe('ftp-sess-2');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/ftp/session/42?trust_cert=true');
+  });
+
+  it('openFtpSession throws FtpsCertificateChallengeError on 409 challenge', async () => {
+    const { openFtpSession, FtpsCertificateChallengeError } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: { code: 'FTPS_CERT_UNTRUSTED', thumbprint: 'AA:BB' } }),
+    }));
+    await expect(openFtpSession(42)).rejects.toBeInstanceOf(FtpsCertificateChallengeError);
+  });
+
   it('closeFtpSession calls DELETE on the session endpoint', async () => {
     const { closeFtpSession } = await import('../api/client');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({

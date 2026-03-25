@@ -40,6 +40,7 @@ class DeviceUpdate(BaseModel):
     connection_type: Optional[ConnectionType] = None
     password: Optional[str] = None
     private_key: Optional[str] = None
+    ftps_cert_thumbprint: Optional[str] = None
 
 
 class DeviceOut(BaseModel):
@@ -51,6 +52,7 @@ class DeviceOut(BaseModel):
     auth_type: AuthType
     connection_type: ConnectionType
     key_filename: str | None = None
+    ftps_cert_thumbprint: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -136,7 +138,15 @@ async def update_device(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
-    for field in ("name", "hostname", "port", "username", "auth_type", "connection_type"):
+    for field in (
+        "name",
+        "hostname",
+        "port",
+        "username",
+        "auth_type",
+        "connection_type",
+        "ftps_cert_thumbprint",
+    ):
         val = getattr(payload, field)
         if val is not None:
             setattr(device, field, val)

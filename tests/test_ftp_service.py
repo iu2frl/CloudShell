@@ -72,6 +72,15 @@ def _make_fake_client() -> MagicMock:
     client.rename = AsyncMock()
     client.make_directory = AsyncMock()
     client.upgrade_to_tls = AsyncMock()
+
+    ssl_obj = MagicMock()
+    ssl_obj.getpeercert.return_value = b"fake-cert-der"
+    writer = MagicMock()
+    writer.get_extra_info.return_value = ssl_obj
+    stream = MagicMock()
+    stream.writer = writer
+    client.stream = stream
+
     return client
 
 
@@ -123,6 +132,21 @@ async def test_open_ftp_session_ftps():
     # AUTH TLS upgrade must happen before login
     fake.upgrade_to_tls.assert_awaited_once()
     fake.login.assert_awaited_once_with("user", "pass")
+
+
+@pytest.mark.asyncio
+async def test_open_ftp_session_ftps_thumbprint_mismatch_raises():
+    fake = _make_fake_client()
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        with pytest.raises(ftp_service.FTPSCertificateMismatchError):
+            await open_ftp_session(
+                hostname="ftp.example.com",
+                port=21,
+                username="user",
+                password="pass",
+                use_tls=True,
+                expected_ftps_thumbprint="AA:BB:CC",
+            )
 
 
 @pytest.mark.asyncio

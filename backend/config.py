@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     audit_retention_days: int = int(os.getenv("AUDIT_RETENTION_DAYS", "7"))
     data_dir: str = os.getenv("DATA_DIR", "/data")
     trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "")
+    ftps_allow_insecure: bool = os.getenv("FTPS_ALLOW_INSECURE", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
     db_path: str = ""
     keys_dir: str = ""
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Device,
+  FtpsCertificateChallengeError,
   SftpEntry,
   closeFtpSession,
   openFtpSession,
@@ -78,13 +79,49 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
 
   const protocol = device.connection_type === "ftps" ? "FTPS" : "FTP";
 
+  const confirmFtpsCertificate = useCallback((err: FtpsCertificateChallengeError): boolean => {
+    const detail = err.detail;
+    if (detail.code === "FTPS_CERT_UNTRUSTED") {
+      return window.confirm(
+        `First FTPS connection to ${device.hostname}.\n\n` +
+        `Certificate SHA-256 thumbprint:\n${detail.thumbprint}\n\n` +
+        "Accept and trust this certificate for future connections?",
+      );
+    }
+
+    return window.confirm(
+      `FTPS certificate changed for ${device.hostname}.\n\n` +
+      `Previously trusted:\n${detail.previous_thumbprint ?? "(unknown)"}\n\n` +
+      `Presented now:\n${detail.thumbprint}\n\n` +
+      "Accept the new certificate and update trust?",
+    );
+  }, [device.hostname]);
+
   // -- Session lifecycle ----------------------------------------------------
 
   const connect = useCallback(async () => {
     setConnecting(true);
     setConnError(null);
     try {
-      const sid = await openFtpSession(device.id);
+      let sid: string;
+      if (device.connection_type === "ftps") {
+        try {
+          sid = await openFtpSession(device.id);
+        } catch (err) {
+          if (!(err instanceof FtpsCertificateChallengeError)) {
+            throw err;
+          }
+          const accepted = confirmFtpsCertificate(err);
+          if (!accepted) {
+            throw new Error("Connection cancelled: FTPS certificate not trusted");
+          }
+          sid = await openFtpSession(device.id, { trustCert: true });
+          toastRef.current.success("FTPS certificate trusted and saved for this device");
+        }
+      } else {
+        sid = await openFtpSession(device.id);
+      }
+
       setSessionId(sid);
       sessionRef.current = sid;
     } catch (err) {
@@ -92,7 +129,7 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
     } finally {
       setConnecting(false);
     }
-  }, [device.id]);
+  }, [confirmFtpsCertificate, device.connection_type, device.id]);
 
   useEffect(() => {
     connect();

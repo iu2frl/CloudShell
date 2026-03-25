@@ -114,6 +114,14 @@ def _make_fake_ftp_client() -> MagicMock:
     client.make_directory = AsyncMock()
     client.upgrade_to_tls = AsyncMock()
 
+    ssl_obj = MagicMock()
+    ssl_obj.getpeercert.return_value = b"fake-cert-der"
+    writer = MagicMock()
+    writer.get_extra_info.return_value = ssl_obj
+    stream = MagicMock()
+    stream.writer = writer
+    client.stream = stream
+
     return client
 
 
@@ -199,10 +207,33 @@ async def test_open_ftps_session_success(auth_client):
 
     fake_client = _make_fake_ftp_client()
     with patch("backend.services.ftp.aioftp.Client", return_value=fake_client):
-        resp = await auth_client.post(f"/api/ftp/session/{device_id}")
+        challenge = await auth_client.post(f"/api/ftp/session/{device_id}")
+        assert challenge.status_code == 409
+        assert challenge.json()["detail"]["code"] == "FTPS_CERT_UNTRUSTED"
+
+        resp = await auth_client.post(f"/api/ftp/session/{device_id}?trust_cert=true")
 
     assert resp.status_code == 200
     assert "session_id" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_open_ftps_session_changed_cert_requires_confirmation(auth_client):
+    payload = _ftp_device_payload(connection_type="ftps", port=21)
+    resp = await auth_client.post("/api/devices/", json=payload)
+    assert resp.status_code == 201
+    device_id = resp.json()["id"]
+
+    await auth_client.put(
+        f"/api/devices/{device_id}",
+        json={"ftps_cert_thumbprint": "AA:BB:CC"},
+    )
+
+    fake_client = _make_fake_ftp_client()
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake_client):
+        challenge = await auth_client.post(f"/api/ftp/session/{device_id}")
+        assert challenge.status_code == 409
+        assert challenge.json()["detail"]["code"] == "FTPS_CERT_CHANGED"
 
 
 # -- Session close -------------------------------------------------------------

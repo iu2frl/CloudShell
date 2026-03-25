@@ -43,6 +43,8 @@ class Device(Base):
     encrypted_password: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # filename inside keys_dir
     key_filename: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # SHA-256 certificate thumbprint for FTPS trust-on-first-use pinning
+    ftps_cert_thumbprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

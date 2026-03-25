@@ -345,11 +345,57 @@ export async function sftpMkdir(sessionId: string, path: string): Promise<void> 
 
 // -- FTP / FTPS ----------------------------------------------------------------
 
-export async function openFtpSession(deviceId: number): Promise<string> {
-  const data = await request<{ session_id: string }>(`/ftp/session/${deviceId}`, {
+export type FtpsCertificateChallengeCode = "FTPS_CERT_UNTRUSTED" | "FTPS_CERT_CHANGED";
+
+export interface FtpsCertificateChallengeDetail {
+  code: FtpsCertificateChallengeCode;
+  thumbprint: string;
+  previous_thumbprint?: string;
+}
+
+export class FtpsCertificateChallengeError extends Error {
+  readonly detail: FtpsCertificateChallengeDetail;
+
+  constructor(detail: FtpsCertificateChallengeDetail) {
+    super(detail.code);
+    this.name = "FtpsCertificateChallengeError";
+    this.detail = detail;
+  }
+}
+
+function isFtpsCertificateChallengeDetail(value: unknown): value is FtpsCertificateChallengeDetail {
+  if (!value || typeof value !== "object") return false;
+  const detail = value as Record<string, unknown>;
+  const code = detail.code;
+  if (code !== "FTPS_CERT_UNTRUSTED" && code !== "FTPS_CERT_CHANGED") return false;
+  return typeof detail.thumbprint === "string";
+}
+
+export async function openFtpSession(
+  deviceId: number,
+  options?: { trustCert?: boolean },
+): Promise<string> {
+  const trustCert = options?.trustCert === true;
+  const suffix = trustCert ? "?trust_cert=true" : "";
+  const res = await fetch(`${BASE}/ftp/session/${deviceId}${suffix}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
   });
-  return data.session_id;
+
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
+
+  const err = await res.json().catch(() => ({ detail: res.statusText }));
+  if (!res.ok) {
+    if (res.status === 409 && isFtpsCertificateChallengeDetail(err.detail)) {
+      throw new FtpsCertificateChallengeError(err.detail);
+    }
+    throw new Error(err.detail ?? "Request failed");
+  }
+
+  return (err as { session_id: string }).session_id;
 }
 
 export async function closeFtpSession(sessionId: string): Promise<void> {

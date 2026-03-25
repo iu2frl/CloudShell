@@ -27,6 +27,7 @@ Note on encoding:
 import logging
 import ssl
 import uuid
+import hashlib
 from dataclasses import dataclass, field
 
 import aioftp
@@ -51,20 +52,70 @@ class _FtpSession:
 _ftp_sessions: dict[str, _FtpSession] = {}
 
 
+class FTPSCertificateUnavailableError(RuntimeError):
+    """Raised when no peer TLS certificate is available from an FTPS connection."""
+
+
+class FTPSCertificateMismatchError(RuntimeError):
+    """Raised when the presented FTPS certificate thumbprint does not match the expected one."""
+
+    def __init__(self, expected: str, presented: str):
+        super().__init__("FTPS certificate thumbprint mismatch")
+        self.expected = expected
+        self.presented = presented
+
+
 # -- Helpers -------------------------------------------------------------------
 
 
 def _make_ssl_context() -> ssl.SSLContext:
     """
-    Return a permissive SSL context for FTPS connections.
+    Return an SSL context for FTPS thumbprint validation.
 
-    Certificate verification is disabled so that self-signed certs on home /
-    private FTP servers are accepted without error.
+    X.509 trust is intentionally disabled here because CloudShell validates the
+    presented certificate by explicit per-device SHA-256 thumbprint pinning.
     """
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+
+def _format_thumbprint_sha256(cert_der: bytes) -> str:
+    """Return uppercase colon-separated SHA-256 certificate thumbprint."""
+    digest = hashlib.sha256(cert_der).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
+
+
+def get_ftps_peer_thumbprint(ftp_client: aioftp.Client) -> str:
+    """Read the active FTPS peer certificate and return its SHA-256 thumbprint."""
+    ssl_obj = ftp_client.stream.writer.get_extra_info("ssl_object")
+    if ssl_obj is None:
+        raise FTPSCertificateUnavailableError("TLS socket does not expose ssl_object")
+
+    cert_der = ssl_obj.getpeercert(binary_form=True)
+    if not cert_der:
+        raise FTPSCertificateUnavailableError("Peer certificate is unavailable")
+
+    return _format_thumbprint_sha256(cert_der)
+
+
+async def probe_ftps_thumbprint(hostname: str, port: int) -> str:
+    """Connect using explicit FTPS (AUTH TLS), return server cert thumbprint, and close."""
+    ftp_client = aioftp.Client(
+        encoding="latin-1",
+        connection_timeout=15,
+    )
+    try:
+        await ftp_client.connect(hostname, port)
+        ssl_ctx = _make_ssl_context()
+        await ftp_client.upgrade_to_tls(sslcontext=ssl_ctx)
+        return get_ftps_peer_thumbprint(ftp_client)
+    finally:
+        try:
+            await ftp_client.quit()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # -- Public API ----------------------------------------------------------------
@@ -79,6 +130,7 @@ async def open_ftp_session(
     device_label: str = "",
     cloudshell_user: str = "",
     source_ip: str | None = None,
+    expected_ftps_thumbprint: str | None = None,
 ) -> str:
     """
     Open an FTP (or explicit-FTPS) connection and return a session_id.
@@ -111,6 +163,16 @@ async def open_ftp_session(
         # Explicit FTPS: send AUTH TLS over the plain connection, then upgrade.
         ssl_ctx = _make_ssl_context()
         await ftp_client.upgrade_to_tls(sslcontext=ssl_ctx)
+        presented_thumbprint = get_ftps_peer_thumbprint(ftp_client)
+        if expected_ftps_thumbprint and presented_thumbprint != expected_ftps_thumbprint:
+            try:
+                await ftp_client.quit()
+            except Exception:  # noqa: BLE001
+                pass
+            raise FTPSCertificateMismatchError(
+                expected=expected_ftps_thumbprint,
+                presented=presented_thumbprint,
+            )
 
     await ftp_client.login(username or "anonymous", password or "")
 
