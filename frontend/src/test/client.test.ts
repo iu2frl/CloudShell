@@ -36,7 +36,7 @@ function makeToken(exp: number): string {
 // -- getTokenExpiry ------------------------------------------------------------
 
 describe('getTokenExpiry', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
 
   it('returns null when no token is stored', () => {
     expect(getTokenExpiry()).toBeNull();
@@ -44,25 +44,25 @@ describe('getTokenExpiry', () => {
 
   it('returns a Date matching the exp claim', () => {
     const expSec = Math.floor(Date.now() / 1000) + 3600;
-    localStorage.setItem('token', makeToken(expSec));
+    const expMs = expSec * 1000;
+    sessionStorage.setItem('cloudshell_token_expiry', expMs.toString());
     const result = getTokenExpiry();
     expect(result).toBeInstanceOf(Date);
-    expect(result!.getTime()).toBe(expSec * 1000);
+    expect(result!.getTime()).toBe(expMs);
   });
 
-  it('returns null for a token with no dots (malformed)', () => {
-    localStorage.setItem('token', 'notavalidjwt');
+  it('returns null for a malformed expiry timestamp', () => {
+    sessionStorage.setItem('cloudshell_token_expiry', 'notanumber');
     expect(getTokenExpiry()).toBeNull();
   });
 
-  it('returns null for a token whose payload is not valid base64 JSON', () => {
-    localStorage.setItem('token', 'header.!!invalid!!.sig');
+  it('returns null for a non-numeric expiry', () => {
+    sessionStorage.setItem('cloudshell_token_expiry', '');
     expect(getTokenExpiry()).toBeNull();
   });
 
-  it('returns null when payload has no exp field', () => {
-    const payload = btoa(JSON.stringify({ sub: 'admin' })); // no exp
-    localStorage.setItem('token', `header.${payload}.sig`);
+  it('returns null when expiry key is missing', () => {
+    sessionStorage.clear();
     expect(getTokenExpiry()).toBeNull();
   });
 });
@@ -70,7 +70,7 @@ describe('getTokenExpiry', () => {
 // -- isLoggedIn ----------------------------------------------------------------
 
 describe('isLoggedIn', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
 
   it('returns false when no token is stored', () => {
     expect(isLoggedIn()).toBe(false);
@@ -78,13 +78,15 @@ describe('isLoggedIn', () => {
 
   it('returns false when the token is expired', () => {
     const expSec = Math.floor(Date.now() / 1000) - 60; // expired 1 min ago
-    localStorage.setItem('token', makeToken(expSec));
+    const expMs = expSec * 1000;
+    sessionStorage.setItem('cloudshell_token_expiry', expMs.toString());
     expect(isLoggedIn()).toBe(false);
   });
 
   it('returns true when the token is valid and not expired', () => {
     const expSec = Math.floor(Date.now() / 1000) + 3600; // expires in 1 hour
-    localStorage.setItem('token', makeToken(expSec));
+    const expMs = expSec * 1000;
+    sessionStorage.setItem('cloudshell_token_expiry', expMs.toString());
     expect(isLoggedIn()).toBe(true);
   });
 });
@@ -138,15 +140,18 @@ describe('request (via login helper)', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => vi.restoreAllMocks());
 
-  it('stores the access_token in localStorage on successful login', async () => {
+  it('stores the token expiry in sessionStorage on successful login', async () => {
     const { login } = await import('../api/client');
+    const futureDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ access_token: 'tok-abc' }),
+      json: async () => ({ access_token: 'tok-abc', expires_at: futureDate }),
     }));
     await login('admin', 'admin');
-    expect(localStorage.getItem('token')).toBe('tok-abc');
+    const stored = sessionStorage.getItem('cloudshell_token_expiry');
+    expect(stored).toBeTruthy();
+    expect(isLoggedIn()).toBe(true);
   });
 
   it('throws "Invalid credentials" on non-ok login response', async () => {
@@ -176,8 +181,8 @@ describe('request (via login helper)', () => {
 
   it('fires cloudshell:session-expired event on 401 from request()', async () => {
     const { listDevices } = await import('../api/client');
-    // Put a token so authHeaders() has something
-    localStorage.setItem('token', 'expired-token');
+    // Put an expiry so getTokenExpiry() has something
+    sessionStorage.setItem('cloudshell_token_expiry', Date.now().toString());
     const events: string[] = [];
     window.addEventListener('cloudshell:session-expired', () => events.push('fired'));
 
@@ -189,12 +194,12 @@ describe('request (via login helper)', () => {
 
     await expect(listDevices()).rejects.toThrow('Session expired');
     expect(events).toContain('fired');
-    expect(localStorage.getItem('token')).toBeNull();
+    expect(sessionStorage.getItem('cloudshell_token_expiry')).toBeNull();
   });
 
   it('throws the detail message from the error JSON body', async () => {
     const { listDevices } = await import('../api/client');
-    localStorage.setItem('token', 'tok');
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 3600000).toString());
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
       status: 422,
@@ -208,8 +213,8 @@ describe('request (via login helper)', () => {
 
 describe('SSH host trust challenge API functions', () => {
   beforeEach(() => {
-    localStorage.clear();
-    localStorage.setItem('token', 'test-token');
+    sessionStorage.clear();
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 3600000).toString());
     vi.restoreAllMocks();
   });
 
@@ -281,8 +286,8 @@ describe('SSH host trust challenge API functions', () => {
 
 describe('FTP API functions', () => {
   beforeEach(() => {
-    localStorage.clear();
-    localStorage.setItem('token', 'test-token');
+    sessionStorage.clear();
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 3600000).toString());
     vi.restoreAllMocks();
   });
 

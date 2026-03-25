@@ -1,4 +1,5 @@
 const BASE = "/api";
+const TOKEN_EXPIRY_KEY = "cloudshell_token_expiry";
 
 // -- Token helpers -------------------------------------------------------------
 
@@ -12,13 +13,27 @@ function _decodePayload(token: string): Record<string, unknown> | null {
   }
 }
 
+/** Store token expiry in sessionStorage for the countdown badge. */
+function _storeTokenExpiry(expiresAt: string): void {
+  try {
+    const expiryTime = new Date(expiresAt).getTime();
+    sessionStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 /** Return the UTC expiry Date for the stored token, or null. */
 export function getTokenExpiry(): Date | null {
-  const token = localStorage.getItem("token");
-  if (!token) return null;
-  const payload = _decodePayload(token);
-  if (!payload || typeof payload.exp !== "number") return null;
-  return new Date(payload.exp * 1000);
+  try {
+    const stored = sessionStorage.getItem(TOKEN_EXPIRY_KEY);
+    if (!stored) return null;
+    const timestamp = parseInt(stored, 10);
+    if (isNaN(timestamp)) return null;
+    return new Date(timestamp);
+  } catch {
+    return null;
+  }
 }
 
 /** True if a token exists AND has not expired yet. */
@@ -29,15 +44,16 @@ export function isLoggedIn(): boolean {
 }
 
 function authHeaders(): HeadersInit {
-  const token = localStorage.getItem("token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  // httpOnly cookie is sent automatically by the browser
+  // No need to manually add Authorization header
+  return {};
 }
 
 // -- Core fetch wrapper --------------------------------------------------------
 
 /** Called by the 401 interceptor — clears state and fires a global event. */
 function _forceLogout(): void {
-  localStorage.removeItem("token");
+  sessionStorage.removeItem(TOKEN_EXPIRY_KEY);
   window.dispatchEvent(new Event("cloudshell:session-expired"));
 }
 
@@ -96,7 +112,7 @@ export async function login(
   }
   
   const data = await res.json();
-  localStorage.setItem("token", data.access_token);
+  _storeTokenExpiry(data.expires_at);
 }
 
 export async function logout(): Promise<void> {
@@ -105,7 +121,7 @@ export async function logout(): Promise<void> {
   } catch {
     // ignore errors — we're logging out regardless
   } finally {
-    localStorage.removeItem("token");
+    sessionStorage.removeItem(TOKEN_EXPIRY_KEY);
   }
 }
 
@@ -119,7 +135,7 @@ export async function refreshToken(): Promise<void> {
     return;
   }
   const data = await res.json();
-  localStorage.setItem("token", data.access_token);
+  _storeTokenExpiry(data.expires_at);
 }
 
 export interface MeInfo {

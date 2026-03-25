@@ -45,6 +45,8 @@ ALGORITHM = "HS256"
 REMEMBER_DEVICE_DAYS = 30
 REMEMBER_DEVICE_MAX_AGE_SECONDS = REMEMBER_DEVICE_DAYS * 24 * 60 * 60
 REMEMBER_DEVICE_COOKIE_NAME = "cloudshell_trusted_device"
+AUTH_COOKIE_NAME = "cloudshell_auth"
+AUTH_COOKIE_MAX_AGE_SECONDS = 8 * 60 * 60  # Will be overridden by settings.token_ttl_hours
 
 
 def _get_boot_id() -> str:
@@ -179,6 +181,25 @@ async def _remember_trusted_device(
         value=raw_token,
         max_age=REMEMBER_DEVICE_MAX_AGE_SECONDS,
         expires=REMEMBER_DEVICE_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=(request.url.scheme == "https"),
+        samesite="lax",
+        path="/",
+    )
+
+
+def _set_auth_cookie(
+    response: Response,
+    token: str,
+    request: Request,
+    ttl_hours: int,
+) -> None:
+    """Set the auth token as a secure httpOnly cookie."""
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=ttl_hours * 60 * 60,
+        expires=ttl_hours * 60 * 60,
         httponly=True,
         secure=(request.url.scheme == "https"),
         samesite="lax",
@@ -367,6 +388,8 @@ async def login(
                 await _remember_trusted_device(form_data.username, response, request, db)
 
     encoded, expire, _ = _make_token(form_data.username)
+    settings = get_settings()
+    _set_auth_cookie(response, encoded, request, settings.token_ttl_hours)
     await write_audit(
         db, form_data.username, ACTION_LOGIN,
         detail="User logged in",
@@ -377,6 +400,8 @@ async def login(
 
 @router.post("/refresh", response_model=Token)
 async def refresh(
+    response: Response,
+    request: Request,
     payload: dict = Depends(_get_payload),
     db: AsyncSession = Depends(get_db),
 ):
@@ -395,17 +420,20 @@ async def refresh(
     # Housekeeping (fire-and-forget, don't block)
     await _prune_expired_tokens(db)
 
+    settings = get_settings()
     encoded, expire, _ = _make_token(username)
+    _set_auth_cookie(response, encoded, request, settings.token_ttl_hours)
     return Token(access_token=encoded, token_type="bearer", expires_at=expire)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
+    response: Response,
     request: Request,
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ):
-    """Revoke the current token immediately."""
+    """Revoke the current token immediately and clear the auth cookie."""
     settings = get_settings()
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
@@ -433,6 +461,12 @@ async def logout(
         db, username, ACTION_LOGOUT,
         detail="User logged out",
         source_ip=get_client_ip(request),
+    )
+    response.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        path="/",
+        secure=(request.url.scheme == "https"),
+        samesite="lax",
     )
 
 

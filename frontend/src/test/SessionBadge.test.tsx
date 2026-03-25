@@ -33,7 +33,9 @@ function makeToken(offsetMs: number): string {
 }
 
 function setToken(offsetMs: number) {
-  localStorage.setItem('token', makeToken(offsetMs));
+  // Store expiry in sessionStorage (milliseconds from epoch)
+  const expiryMs = FROZEN_NOW + offsetMs;
+  sessionStorage.setItem('cloudshell_token_expiry', expiryMs.toString());
 }
 
 /** Returns the session trigger button by its title attribute. */
@@ -48,7 +50,7 @@ const getTrigger = () => screen.getByTitle('Session info');
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(FROZEN_NOW);
-  localStorage.clear();
+  sessionStorage.clear();
 });
 
 // Convenience: open the popover synchronously via fireEvent (safe with fake timers)
@@ -58,7 +60,7 @@ function openPopover() {
 
 afterEach(() => {
   vi.useRealTimers();
-  localStorage.clear();
+  sessionStorage.clear();
 });
 
 // -- Rendering -----------------------------------------------------------------
