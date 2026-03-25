@@ -3,17 +3,18 @@ routers/auth.py — Authentication & session management
 
 Endpoints
 ---------
-POST /api/auth/token           Login → JWT
-POST /api/auth/refresh         Extend a valid (non-expired) session
-POST /api/auth/logout          Revoke the current token
-GET  /api/auth/me              Whoami + token expiry info
-POST /api/auth/change-password Change admin password (persisted in DB)
+POST /api/auth/token            Login → JWT
+POST /api/auth/refresh          Extend a valid (non-expired) session
+POST /api/auth/logout           Revoke the current token
+GET  /api/auth/me               Whoami + token expiry info
+POST /api/auth/change-password  Change admin password (persisted in DB)
 """
 import secrets
 import uuid
+import hashlib
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import bcrypt
 from jose import JWTError, jwt
@@ -23,20 +24,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.database import get_db
-from backend.models.auth import AdminCredential, RevokedToken
+from backend.models.auth import AdminCredential, RevokedToken, AdminTOTPSecret, AdminTrustedDevice
 from backend.services.audit import (
     ACTION_LOGIN,
     ACTION_LOGOUT,
     ACTION_PASSWORD_CHANGED,
+    ACTION_2FA_FAILED,
+    ACTION_BACKUP_CODE_USED,
+    ACTION_BACKUP_CODE_LOW,
     get_client_ip,
     write_audit,
 )
+from backend.services.rate_limit import get_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 ALGORITHM = "HS256"
+REMEMBER_DEVICE_DAYS = 30
+REMEMBER_DEVICE_MAX_AGE_SECONDS = REMEMBER_DEVICE_DAYS * 24 * 60 * 60
+REMEMBER_DEVICE_COOKIE_NAME = "cloudshell_trusted_device"
 
 
 def _get_boot_id() -> str:
@@ -51,6 +59,7 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     expires_at: datetime   # ISO-8601 UTC, for the frontend countdown
+    backup_codes_warning: str | None = None  # Warning if backup codes running low
 
 
 class MeOut(BaseModel):
@@ -102,6 +111,79 @@ async def _prune_expired_tokens(db: AsyncSession) -> None:
     now = datetime.now(timezone.utc)
     await db.execute(delete(RevokedToken).where(RevokedToken.expires_at < now))
     await db.commit()
+
+
+def _hash_trusted_device_token(raw_token: str) -> str:
+    """Return a stable hash for trusted-device token storage."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def _is_truthy_form_flag(value: str | None) -> bool:
+    """Parse common truthy values from form fields."""
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
+async def _prune_expired_trusted_devices(db: AsyncSession) -> None:
+    """Delete expired trusted-device rows."""
+    now = datetime.now(timezone.utc)
+    await db.execute(delete(AdminTrustedDevice).where(AdminTrustedDevice.expires_at < now))
+    await db.commit()
+
+
+async def _is_trusted_device(
+    username: str,
+    raw_token: str | None,
+    db: AsyncSession,
+) -> bool:
+    """Return True when the provided trusted-device cookie is valid."""
+    if not raw_token:
+        return False
+
+    token_hash = _hash_trusted_device_token(raw_token)
+    record = await db.get(AdminTrustedDevice, token_hash)
+    if not record:
+        return False
+
+    now = datetime.now(timezone.utc)
+    expiry = record.expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+
+    if record.username != username or expiry < now:
+        await db.delete(record)
+        await db.commit()
+        return False
+
+    return True
+
+
+async def _remember_trusted_device(
+    username: str,
+    response: Response,
+    request: Request,
+    db: AsyncSession,
+) -> None:
+    """Issue a new trusted-device cookie and persist its hashed token."""
+    raw_token = secrets.token_urlsafe(48)
+    token_hash = _hash_trusted_device_token(raw_token)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=REMEMBER_DEVICE_DAYS)
+
+    db.add(AdminTrustedDevice(token_hash=token_hash, username=username, expires_at=expires_at))
+    await db.commit()
+
+    response.set_cookie(
+        key=REMEMBER_DEVICE_COOKIE_NAME,
+        value=raw_token,
+        max_age=REMEMBER_DEVICE_MAX_AGE_SECONDS,
+        expires=REMEMBER_DEVICE_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=(request.url.scheme == "https"),
+        samesite="lax",
+        path="/",
+    )
 
 
 # -- Shared dependency ---------------------------------------------------------
@@ -179,22 +261,118 @@ async def _get_payload(
 @router.post("/token", response_model=Token)
 async def login(
     request: Request,
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
+    totp_code: str | None = Form(default=None),
+    remember_device: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ):
+    # Rate limit: max 10 login attempts per minute per account+IP
+    limiter = get_limiter()
+    limiter.check_limit(
+        request,
+        endpoint="/auth/token",
+        account=form_data.username,
+        requests_per_minute=10,
+    )
+    
     if not await _verify_credentials(form_data.username, form_data.password, db):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    totp_record = await db.get(AdminTOTPSecret, form_data.username)
+    backup_codes_warning = None
+    trusted_cookie = request.cookies.get(REMEMBER_DEVICE_COOKIE_NAME)
+    
+    if totp_record and totp_record.is_enabled:
+        await _prune_expired_trusted_devices(db)
+        is_trusted_device = await _is_trusted_device(form_data.username, trusted_cookie, db)
+
+        if is_trusted_device:
+            totp_code = None
+
+        from backend.services.totp import TOTPService, DeprecatedBackupCodeFormatError
+        if not totp_code and not is_trusted_device:
+            # We return a specific error that the frontend can intercept 
+            # to know that 2FA is required.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="2FA_REQUIRED",
+            )
+
+        if not is_trusted_device:
+            is_valid_totp = TOTPService.verify_token(totp_record.secret, totp_code)
+            backup_code_used = False
+
+            if not is_valid_totp:
+                # Check backup codes if TOTPs fail.
+                # Backup codes are stored hashed; on success we consume (remove) the used one.
+                try:
+                    ok, updated_json = TOTPService.verify_and_consume_backup_code(
+                        getattr(totp_record, "backup_codes", None),
+                        totp_code,
+                    )
+                except DeprecatedBackupCodeFormatError as exc:
+                    await write_audit(
+                        db, form_data.username, ACTION_2FA_FAILED,
+                        detail="Deprecated backup-code hash detected; regeneration required",
+                        source_ip=get_client_ip(request),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Backup codes must be regenerated",
+                    ) from exc
+
+                if ok:
+                    totp_record.backup_codes = updated_json
+                    await db.commit()
+                    is_valid_totp = True
+                    backup_code_used = True
+                    # Track remaining backup codes for audit and warnings
+                    remaining_codes = len(TOTPService.codes_from_json(updated_json))
+
+            if not is_valid_totp:
+                # Log failed 2FA attempt
+                await write_audit(
+                    db, form_data.username, ACTION_2FA_FAILED,
+                    detail="Invalid or expired 2FA code during login",
+                    source_ip=get_client_ip(request),
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid 2FA code",
+                )
+
+            # If backup code was used, log it with remaining count and warn if low
+            if backup_code_used:
+                await write_audit(
+                    db, form_data.username, ACTION_BACKUP_CODE_USED,
+                    detail=f"User authenticated using backup code ({remaining_codes} codes remaining)",
+                    source_ip=get_client_ip(request),
+                )
+
+                # Warn if backup codes running low (<3 remaining)
+                if remaining_codes < 3:
+                    backup_codes_warning = f"WARNING: Only {remaining_codes} backup code(s) remaining. Regenerate 2FA backup codes soon."
+                    await write_audit(
+                        db, form_data.username, ACTION_BACKUP_CODE_LOW,
+                        detail=f"Backup codes depleting: {remaining_codes} codes remaining after login",
+                        source_ip=get_client_ip(request),
+                    )
+
+            if _is_truthy_form_flag(remember_device):
+                await _remember_trusted_device(form_data.username, response, request, db)
+
     encoded, expire, _ = _make_token(form_data.username)
     await write_audit(
         db, form_data.username, ACTION_LOGIN,
         detail="User logged in",
         source_ip=get_client_ip(request),
     )
-    return Token(access_token=encoded, token_type="bearer", expires_at=expire)
+    return Token(access_token=encoded, token_type="bearer", expires_at=expire, backup_codes_warning=backup_codes_warning)
 
 
 @router.post("/refresh", response_model=Token)

@@ -1,0 +1,350 @@
+import { useEffect, useState } from "react";
+import { X, Key, AlertCircle, Check } from "lucide-react";
+import { get2FAStatus, setup2FA, enable2FA, disable2FA } from "../api/client";
+
+interface Props {
+  onClose: () => void;
+}
+
+type SetupStep = "idle" | "setup" | "verify" | "success";
+
+export function TwoFactorModal({ onClose }: Props) {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [setupStep, setSetupStep] = useState<SetupStep>("idle");
+  const [qrCode, setQrCode] = useState<string | null>(null);
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [verifyCode, setVerifyCode] = useState("");
+  const [disableCode, setDisableCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [backupCodesAcknowledged, setBackupCodesAcknowledged] = useState(false);
+
+  useEffect(() => {
+    fetchStatus();
+  }, []);
+
+  const fetchStatus = async () => {
+    try {
+      const response = await get2FAStatus();
+      setEnabled(response.enabled);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetupStart = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await setup2FA();
+      setQrCode(response.qr_code);
+      setBackupCodes(response.backup_codes);
+      setSetupStep("setup");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEnable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (verifyCode.length !== 6) {
+      setError("Please enter a 6-digit code");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await enable2FA(verifyCode);
+      setSetupStep("success");
+      setEnabled(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDisable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (disableCode.length !== 6) {
+      setError("Please enter a 6-digit code");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await disable2FA(disableCode);
+      setEnabled(false);
+      setDisableCode("");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDownloadBackupCodes = () => {
+    const text = backupCodes.join("\n");
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "cloudshell-backup-codes.txt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+        <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-sm shadow-2xl p-6">
+          <div className="text-center text-slate-400">Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-sm shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+          <div className="flex items-center gap-2 text-white font-semibold">
+            <Key size={16} className="text-blue-400" />
+            Two-Factor Authentication
+          </div>
+          <button
+            onClick={onClose}
+            disabled={setupStep === "success" && !backupCodesAcknowledged}
+            className={`transition-colors ${
+              setupStep === "success" && !backupCodesAcknowledged
+                ? "text-slate-600 cursor-not-allowed"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-5">
+          {enabled && setupStep !== "success" ? (
+            <div className="space-y-4">
+              {/* Status badge */}
+              <div className="bg-green-900/20 border border-green-700 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-2 text-green-300 text-sm font-medium">
+                  <Check size={16} />
+                  Two-factor authentication is enabled
+                </div>
+              </div>
+
+              {/* Disable section */}
+              <div className="border-t border-slate-700 pt-4 space-y-3">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wide block">
+                  Disable two-factor auth
+                </label>
+                <p className="text-xs text-slate-500">
+                  Enter a code from your authenticator to disable 2FA.
+                </p>
+                <form onSubmit={handleDisable} className="space-y-3">
+                  <input
+                    className="input text-center text-2xl tracking-widest"
+                    type="text"
+                    placeholder="000000"
+                    maxLength={6}
+                    value={disableCode}
+                    onChange={(e) =>
+                      setDisableCode(e.target.value.replace(/[^\d]/g, ""))
+                    }
+                  />
+                  {error && (
+                    <div className="bg-red-900/40 border border-red-700 text-red-300 rounded-lg px-3 py-2 text-xs">
+                      {error}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="btn-ghost flex-1"
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving || disableCode.length !== 6}
+                      className="btn-danger flex-1"
+                    >
+                      {saving ? "Disabling..." : "Disable 2FA"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          ) : setupStep === "success" ? (
+            <div className="text-center space-y-4">
+              <div className="text-green-400 text-sm font-medium flex items-center justify-center gap-2">
+                <Check size={16} />
+                2FA enabled successfully!
+              </div>
+              <p className="text-xs text-slate-400">
+                Your account is now protected with two-factor authentication.
+              </p>
+
+              {backupCodes.length > 0 && (
+                <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg px-4 py-4 space-y-3 mt-4 text-left">
+                  <p className="text-sm font-medium text-yellow-300 flex items-center gap-2">
+                    <AlertCircle size={16} />
+                    Save your backup codes
+                  </p>
+                  <p className="text-xs text-yellow-200/90 leading-relaxed">
+                    These are your emergency backup codes. You will only see these once.
+                    Save them securely. Each code can be used once if you lose access to your authenticator app.
+                  </p>
+
+                  <div className="bg-slate-900/50 p-3 rounded font-mono text-sm tracking-wider text-slate-300 columns-2 gap-4">
+                    {backupCodes.map((code, idx) => (
+                      <div key={idx} className="mb-1">{code}</div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      onClick={handleDownloadBackupCodes}
+                      className="btn-secondary text-xs flex-1 border-yellow-700/50 hover:bg-yellow-900/30"
+                    >
+                      Download as .txt
+                    </button>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(backupCodes.join("\n"))}
+                      className="btn-secondary text-xs flex-1 border-yellow-700/50 hover:bg-yellow-900/30"
+                    >
+                      Copy to Clipboard
+                    </button>
+                  </div>
+
+                  <label className="flex items-center gap-2 mt-4 cursor-pointer text-yellow-100 group">
+                    <input
+                      type="checkbox"
+                      checked={backupCodesAcknowledged}
+                      onChange={(e) => setBackupCodesAcknowledged(e.target.checked)}
+                      className="w-4 h-4 rounded border-yellow-700 bg-slate-900/50 text-yellow-600 focus:ring-yellow-600 focus:ring-offset-slate-900"
+                    />
+                    <span className="text-xs font-medium group-hover:text-yellow-50 transition-colors">
+                      I have securely saved these backup codes
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              <button 
+                onClick={onClose} 
+                disabled={!backupCodesAcknowledged}
+                className="btn-primary w-full mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Close
+              </button>
+            </div>
+          ) : setupStep === "setup" ? (
+            <div className="space-y-4">
+              <div className="bg-blue-900/20 border border-blue-700 rounded-lg px-4 py-3">
+                <p className="text-blue-300 text-sm font-medium">
+                  Scan this QR code with Google Authenticator or similar app
+                </p>
+              </div>
+
+              {qrCode && (
+                <div className="bg-white rounded-lg p-2 w-48 h-48 mx-auto flex items-center justify-center">
+                  <img src={qrCode} alt="2FA QR Code" className="w-full h-full" />
+                </div>
+              )}
+
+              <p className="text-xs text-slate-400 text-center">
+                If you cannot scan this QR code, restart setup to generate a new one.
+              </p>
+
+              <div className="border-t border-slate-700 pt-4 space-y-3">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wide block">
+                  Enter 6-digit code to verify
+                </label>
+                <form onSubmit={handleEnable} className="space-y-3">
+                  <input
+                    className="input text-center text-2xl tracking-widest"
+                    type="text"
+                    placeholder="000000"
+                    maxLength={6}
+                    value={verifyCode}
+                    onChange={(e) =>
+                      setVerifyCode(e.target.value.replace(/[^\d]/g, ""))
+                    }
+                    autoFocus
+                  />
+                  {error && (
+                    <div className="bg-red-900/40 border border-red-700 text-red-300 rounded-lg px-3 py-2 text-xs">
+                      {error}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSetupStep("idle")}
+                      className="btn-ghost flex-1"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving || verifyCode.length !== 6}
+                      className="btn-primary flex-1"
+                    >
+                      {saving ? "Verifying..." : "Enable 2FA"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-2 text-yellow-300 text-sm font-medium">
+                  <AlertCircle size={16} />
+                  Two-factor authentication is disabled
+                </div>
+              </div>
+              <p className="text-sm text-slate-400">
+                Protect your account with two-factor authentication. You will be asked for a code from your phone whenever you log in.
+              </p>
+              {error && (
+                <div className="bg-red-900/40 border border-red-700 text-red-300 rounded-lg px-3 py-2 text-xs">
+                  {error}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  className="btn-ghost flex-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSetupStart}
+                  disabled={loading}
+                  className="btn-primary flex-1"
+                >
+                  {loading ? "Loading..." : "Enable 2FA"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

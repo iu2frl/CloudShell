@@ -9,6 +9,8 @@ bcrypt==4.0.1
 python-multipart==0.0.22
 cryptography==46.0.5
 pydantic-settings==2.9.1
+pyotp==2.9.0
+qrcode==7.4.2
 
 # -- Test dependencies ---------------------------------------------------------
 pytest>=9.0

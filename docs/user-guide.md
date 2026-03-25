@@ -4,6 +4,52 @@
 
 Navigate to the CloudShell URL and log in with your `ADMIN_USER` / `ADMIN_PASSWORD` credentials. The session is valid for `TOKEN_TTL_HOURS` hours; the frontend silently refreshes the token 10 minutes before expiry. The remaining session time is shown in the top-left corner of the dashboard as **Session: Xh Ym**.
 
+## Two-factor authentication (2FA)
+
+CloudShell supports one-time verification codes from authenticator apps (such as Google Authenticator, Microsoft Authenticator, Authy, and similar apps).
+
+### Why enable 2FA
+
+2FA adds an extra verification step after your password, which helps protect your account if your password is exposed.
+
+### Enable 2FA
+
+1. Sign in to CloudShell.
+2. Click the lock icon in the top bar to open **Two-Factor Authentication**.
+3. Click the setup action to display a QR code.
+4. In your authenticator app, add a new account and scan the QR code.
+5. Enter the 6-digit code shown by your authenticator app.
+6. Save your backup codes in a safe place before closing the dialog.
+
+### Sign in with 2FA enabled
+
+After entering username and password, CloudShell asks for a verification code.
+
+- Enter the current 6-digit code from your authenticator app, or
+- Enter one backup code if you do not have access to your authenticator app.
+
+### Backup codes
+
+- Backup codes are for emergency access.
+- Each backup code works only once.
+- Store them in a secure location that is separate from your everyday devices.
+- Regenerate your backup codes by re-running 2FA setup if they are low or exhausted.
+
+### Disable 2FA
+
+1. Open **Two-Factor Authentication** from the lock icon.
+2. Enter a current authenticator code.
+3. Confirm disable.
+
+### If a code is not accepted
+
+Try the following:
+
+- Check your phone time settings and ensure date and time are set automatically.
+- Wait for a new code and try again.
+- Use a backup code.
+- If needed, disable and set up 2FA again from inside your account.
+
 ## Managing devices
 
 Click **Add device** in the left sidebar to register a new SSH target. Each device requires:

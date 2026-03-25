@@ -65,14 +65,36 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 // -- Auth ----------------------------------------------------------------------
 
-export async function login(username: string, password: string): Promise<void> {
+export async function login(
+  username: string,
+  password: string,
+  totpCode?: string,
+  rememberDevice?: boolean,
+): Promise<void> {
   const form = new URLSearchParams({ username, password });
+  if (totpCode) {
+    form.append("totp_code", totpCode);
+  }
+  if (rememberDevice) {
+    form.append("remember_device", "true");
+  }
   const res = await fetch(`${BASE}/auth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form,
   });
-  if (!res.ok) throw new Error("Invalid credentials");
+  
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    if (res.status === 403 && errorData.detail === "2FA_REQUIRED") {
+      throw new Error("2FA_REQUIRED");
+    }
+    if (res.status === 401 && errorData.detail === "Invalid 2FA code") {
+      throw new Error("Invalid 2FA code");
+    }
+    throw new Error("Invalid credentials");
+  }
+  
   const data = await res.json();
   localStorage.setItem("token", data.access_token);
 }
@@ -477,3 +499,31 @@ export async function importConfig(file: File): Promise<ImportResult> {
   }
   return res.json() as Promise<ImportResult>;
 }
+
+// -- Two-Factor Auth -----------------------------------------------------------
+
+export interface TOTPSetupResponse {
+  qr_code: string;
+  backup_codes: string[];
+}
+
+export interface TwoFAStatus {
+  enabled: boolean;
+}
+
+export const get2FAStatus = (): Promise<TwoFAStatus> => request("/auth/2fa/status");
+
+export const setup2FA = (): Promise<TOTPSetupResponse> =>
+  request("/auth/2fa/setup", { method: "POST" });
+
+export const enable2FA = (token: string): Promise<void> =>
+  request<void>("/auth/2fa/enable", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+
+export const disable2FA = (token: string): Promise<void> =>
+  request<void>("/auth/2fa/disable", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });

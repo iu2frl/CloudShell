@@ -31,6 +31,11 @@ Tests cover:
   - unauthenticated request returns 401
 """
 from datetime import datetime, timezone
+import hashlib
+
+import pyotp
+
+from backend.models.auth import AdminTOTPSecret
 
 
 # -- POST /api/auth/token ------------------------------------------------------
@@ -87,13 +92,190 @@ async def test_login_wrong_password(client):
 
 
 async def test_login_wrong_username(client):
-    """Non-existent username must return 401."""
+    """Wrong username must return 401."""
     resp = await client.post(
         "/api/auth/token",
-        data={"username": "nobody", "password": "admin"},
+        data={"username": "wrong", "password": "admin"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert resp.status_code == 401
+
+
+async def test_login_requires_2fa(client, monkeypatch):
+    from backend.routers import auth
+    # Mock verify
+    async def mock_verify_credentials(*args, **kwargs):
+        return True
+    monkeypatch.setattr(auth, "_verify_credentials", mock_verify_credentials)
+    
+    # Mock db
+    class MockTOTPRecord:
+        is_enabled = True
+
+    class MockDB:
+        async def get(self, model, ident):
+            return MockTOTPRecord()
+        async def execute(self, *args, **kwargs):
+            pass
+        async def commit(self):
+            pass
+
+    async def override_get_db():
+        yield MockDB()
+
+    from backend.main import app
+    app.dependency_overrides[auth.get_db] = override_get_db
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "password"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "2FA_REQUIRED"
+
+    app.dependency_overrides.clear()
+
+
+async def test_login_invalid_2fa(client, monkeypatch):
+    from backend.routers import auth
+    async def mock_verify_credentials(*args, **kwargs):
+        return True
+    monkeypatch.setattr(auth, "_verify_credentials", mock_verify_credentials)
+
+    class MockTOTPRecord:
+        is_enabled = True
+        secret = "SECRET"
+        
+        backup_codes = "[]"
+        
+    class MockDB:
+        async def get(self, model, ident):
+            return MockTOTPRecord()
+        async def execute(self, *args, **kwargs):
+            pass
+        async def commit(self):
+            pass
+        def add(self, *args, **kwargs):
+            pass
+
+    async def override_get_db():
+        yield MockDB()
+
+    from backend.main import app
+    app.dependency_overrides[auth.get_db] = override_get_db
+
+    from backend.services.totp import TOTPService
+    monkeypatch.setattr(TOTPService, "verify_token", lambda *args, **kwargs: False)
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "password", "totp_code": "000000"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid 2FA code"
+
+    app.dependency_overrides.clear()
+
+
+async def test_login_valid_2fa(client, monkeypatch):
+    from backend.routers import auth
+    async def mock_verify_credentials(*args, **kwargs):
+        return True
+    monkeypatch.setattr(auth, "_verify_credentials", mock_verify_credentials)
+
+    class MockTOTPRecord:
+        is_enabled = True
+        secret = "SECRET"
+        backup_codes = "[]"
+        
+    class MockDB:
+        async def get(self, model, ident):
+            return MockTOTPRecord()
+
+        async def execute(self, *args, **kwargs):
+            """Support `write_audit()` (SELECT) calls during login."""
+
+            class MockResult:
+                def scalar_one_or_none(self):
+                    return None
+
+            return MockResult()
+
+        def add(self, *args, **kwargs):
+            pass
+
+        async def commit(self):
+            pass
+            
+    async def override_get_db():
+        yield MockDB()
+
+    from backend.main import app
+    app.dependency_overrides[auth.get_db] = override_get_db
+
+    from backend.services.totp import TOTPService
+    monkeypatch.setattr(TOTPService, "verify_token", lambda *args, **kwargs: True)
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "password", "totp_code": "123456"},
+    )
+    assert response.status_code == 200
+    assert "access_token" in response.json()
+
+    app.dependency_overrides.clear()
+
+
+async def test_login_rejects_legacy_sha256_backup_codes(client, monkeypatch):
+    """Legacy SHA256 backup-code hashes should require regeneration."""
+    from backend.routers import auth
+
+    async def mock_verify_credentials(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(auth, "_verify_credentials", mock_verify_credentials)
+
+    class MockTOTPRecord:
+        is_enabled = True
+        secret = "SECRET"
+        backup_codes = '["' + hashlib.sha256("AAAA-BBBB".encode("utf-8")).hexdigest() + '"]'
+
+    class MockDB:
+        async def get(self, model, ident):
+            return MockTOTPRecord()
+
+        async def execute(self, *args, **kwargs):
+            class MockResult:
+                def scalar_one_or_none(self):
+                    return None
+
+            return MockResult()
+
+        def add(self, *args, **kwargs):
+            pass
+
+        async def commit(self):
+            pass
+
+    async def override_get_db():
+        yield MockDB()
+
+    from backend.main import app
+
+    app.dependency_overrides[auth.get_db] = override_get_db
+
+    from backend.services.totp import TOTPService
+
+    monkeypatch.setattr(TOTPService, "verify_token", lambda *args, **kwargs: False)
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "password", "totp_code": "AAAA-BBBB"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Backup codes must be regenerated"
+
+    app.dependency_overrides.clear()
 
 
 async def test_login_empty_credentials(client):
@@ -104,6 +286,95 @@ async def test_login_empty_credentials(client):
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert resp.status_code in (401, 422)
+
+
+async def test_login_remember_device_skips_future_2fa(client, db_session):
+    """A remembered device should bypass TOTP for 30 days."""
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    totp_code = pyotp.TOTP(record.secret).now()
+
+    enable_resp = await client.post(
+        "/api/auth/2fa/enable",
+        headers=auth_headers,
+        json={"token": totp_code},
+    )
+    assert enable_resp.status_code == 204
+
+    require_2fa_resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert require_2fa_resp.status_code == 403
+    assert require_2fa_resp.json()["detail"] == "2FA_REQUIRED"
+
+    remember_resp = await client.post(
+        "/api/auth/token",
+        data={
+            "username": "admin",
+            "password": "admin",
+            "totp_code": pyotp.TOTP(record.secret).now(),
+            "remember_device": "true",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert remember_resp.status_code == 200
+    assert "cloudshell_trusted_device=" in remember_resp.headers.get("set-cookie", "")
+    assert "Max-Age=2592000" in remember_resp.headers.get("set-cookie", "")
+
+    trusted_login_resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert trusted_login_resp.status_code == 200
+
+
+async def test_login_invalid_remembered_device_cookie_still_requires_2fa(client, db_session):
+    """An unknown remember-device cookie must not bypass TOTP."""
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    enable_resp = await client.post(
+        "/api/auth/2fa/enable",
+        headers=auth_headers,
+        json={"token": pyotp.TOTP(record.secret).now()},
+    )
+    assert enable_resp.status_code == 204
+
+    client.cookies.set("cloudshell_trusted_device", "not-a-valid-token")
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "2FA_REQUIRED"
 
 
 # -- POST /api/auth/refresh ----------------------------------------------------
@@ -323,3 +594,163 @@ async def test_change_password_requires_auth(client):
         json={"current_password": "admin", "new_password": "ShouldFail1!"},
     )
     assert resp.status_code == 401
+
+
+# -- Backup code depletion warnings -------------------------------------------
+
+async def test_login_backup_codes_warning_normal_login(client):
+    """Normal login without backup codes should have no warning."""
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # No backup codes used, so warning should be None
+    assert body.get("backup_codes_warning") is None
+
+
+async def test_login_backup_codes_warning_when_depleting(client, db_session):
+    """Login using last backup code should include warning."""
+    from backend.services.totp import TOTPService
+    from backend.models.auth import AdminTOTPSecret
+    
+    # Setup and login to get token
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token = resp.json()["access_token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    
+    # Setup 2FA
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+    
+    # Manually enable with only 1 backup code remaining
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    record.is_enabled = True
+    
+    # Set just 1 backup code (depleted state)
+    test_codes = ["AAAA-BBBB"]
+    record.backup_codes = TOTPService.codes_to_json(test_codes, hashed=True)
+    await db_session.commit()
+    
+    # Logout
+    await client.post("/api/auth/logout", headers=auth_headers)
+    
+    # Login with backup code (the only one)
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={
+            "username": "admin",
+            "password": "admin",
+            "totp_code": "AAAA-BBBB",  # Last backup code
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    body = login_resp.json()
+    
+    # Should have warning about depletion
+    assert body.get("backup_codes_warning") is not None
+    assert "0 backup code" in body["backup_codes_warning"]
+    assert "WARNING" in body["backup_codes_warning"]
+
+
+async def test_login_backup_codes_warning_at_threshold(client, db_session):
+    """Login using 3rd-to-last backup code should trigger warning."""
+    from backend.services.totp import TOTPService
+    from backend.models.auth import AdminTOTPSecret
+    
+    # Setup and login to get token
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token = resp.json()["access_token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    
+    # Setup 2FA
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+    
+    # Manually enable with exactly 3 backup codes
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    record.is_enabled = True
+    
+    test_codes = ["AAAA-BBBB", "CCCC-DDDD", "EEEE-FFFF"]
+    record.backup_codes = TOTPService.codes_to_json(test_codes, hashed=True)
+    await db_session.commit()
+    
+    # Logout
+    await client.post("/api/auth/logout", headers=auth_headers)
+    
+    # Login with last code (will leave 2 remaining, below threshold)
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={
+            "username": "admin",
+            "password": "admin",
+            "totp_code": "EEEE-FFFF",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    body = login_resp.json()
+    
+    # Should have warning (2 codes remaining, which is < 3)
+    assert body.get("backup_codes_warning") is not None
+    assert "2 backup code" in body["backup_codes_warning"]
+
+
+async def test_login_backup_codes_no_warning_above_threshold(client, db_session):
+    """Login with >3 backup codes remaining should have no warning."""
+    from backend.services.totp import TOTPService
+    from backend.models.auth import AdminTOTPSecret
+    
+    # Setup and login to get token
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token = resp.json()["access_token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    
+    # Setup 2FA
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+    
+    # Manually enable with 5 backup codes
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    record.is_enabled = True
+    
+    test_codes = ["AAAA-BBBB", "CCCC-DDDD", "EEEE-FFFF", "GGGG-HHHH", "IIII-JJJJ"]
+    record.backup_codes = TOTPService.codes_to_json(test_codes, hashed=True)
+    await db_session.commit()
+    
+    # Logout
+    await client.post("/api/auth/logout", headers=auth_headers)
+    
+    # Login with one code (will leave 4 remaining, above threshold)
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={
+            "username": "admin",
+            "password": "admin",
+            "totp_code": "IIII-JJJJ",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    body = login_resp.json()
+    
+    # Should have no warning (4 codes remaining, which is >= 3)
+    assert body.get("backup_codes_warning") is None

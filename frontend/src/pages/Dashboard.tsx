@@ -7,6 +7,8 @@ import { FileManager } from "../components/FileManager";
 import { FtpFileManager } from "../components/FtpFileManager";
 import { SessionBadge } from "../components/SessionBadge";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
+import { TwoFactorModal } from "../components/TwoFactorModal";
+import { TwoFactorButton } from "../components/TwoFactorButton";
 import { AuditLogModal } from "../components/AuditLogModal";
 import { ConfigTransferModal } from "../components/ConfigTransferModal";
 import { useToast } from "../components/Toast";
@@ -32,6 +34,7 @@ export function Dashboard({ onLogout }: Props) {
   const [showForm, setShowForm]     = useState(false);
   const [editDevice, setEditDevice] = useState<Device | undefined>();
   const [showChangePw, setShowChangePw] = useState(false);
+  const [showTwoFA, setShowTwoFA] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [showConfigTransfer, setShowConfigTransfer] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -255,6 +258,7 @@ export function Dashboard({ onLogout }: Props) {
           >
             <KeyRound size={16} />
           </button>
+          <TwoFactorButton onClick={() => setShowTwoFA(true)} />
           <button
             onClick={handleLogout}
             className="icon-btn text-slate-400 hover:text-red-400"
@@ -393,6 +397,11 @@ export function Dashboard({ onLogout }: Props) {
       {/* Change password modal */}
       {showChangePw && (
         <ChangePasswordModal onClose={() => setShowChangePw(false)} />
+      )}
+
+      {/* Two-factor authentication modal */}
+      {showTwoFA && (
+        <TwoFactorModal onClose={() => setShowTwoFA(false)} />
       )}
 
       {/* Audit log modal */}

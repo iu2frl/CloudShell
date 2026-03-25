@@ -9,6 +9,9 @@ interface Props {
 export function Login({ onLogin }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [rememberDevice, setRememberDevice] = useState(false);
+  const [requires2FA, setRequires2FA] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
@@ -25,10 +28,19 @@ export function Login({ onLogin }: Props) {
     setLoading(true);
     setError(null);
     try {
-      await login(username, password);
+      await login(
+        username,
+        password,
+        requires2FA ? totpCode : undefined,
+        requires2FA ? rememberDevice : false,
+      );
       onLogin();
-    } catch {
-      setError("Invalid username or password");
+    } catch (err: any) {
+      if (err.message === "2FA_REQUIRED") {
+        setRequires2FA(true);
+      } else {
+        setError(err.message || "Invalid username or password");
+      }
     } finally {
       setLoading(false);
     }
@@ -56,39 +68,83 @@ export function Login({ onLogin }: Props) {
             </div>
           )}
           <form onSubmit={submit} className="space-y-5">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Username
-              </label>
-              <input
-                className="input"
-                required
-                autoFocus
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Password
-              </label>
-              <input
-                className="input"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-              />
-            </div>
+            {!requires2FA ? (
+              <>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                    Username
+                  </label>
+                  <input
+                    className="input"
+                    required
+                    autoFocus
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="admin"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                    Password
+                  </label>
+                  <input
+                    className="input"
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                  Two-Factor Authentication
+                </label>
+                <input
+                  className="input tracking-widest"
+                  required
+                  autoFocus
+                  placeholder="000000"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/[^\d-a-zA-Z]/g, ""))}
+                />
+                <p className="text-xs text-slate-500 mt-2">
+                  Enter the 6-digit code from your authenticator app, or a backup code.
+                </p>
+                <label className="flex items-center gap-2 mt-3 text-xs text-slate-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rememberDevice}
+                    onChange={(e) => setRememberDevice(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  Remember this device for 30 days
+                </label>
+              </div>
+            )}
             <button
               type="submit"
               disabled={loading}
               className="btn-primary w-full mt-2"
             >
-              {loading ? "Signing in…" : "Sign in"}
+              {loading ? "Signing in…" : requires2FA ? "Verify Code" : "Sign in"}
             </button>
+            {requires2FA && (
+              <button
+                type="button"
+                onClick={() => {
+                  setRequires2FA(false);
+                  setTotpCode("");
+                  setRememberDevice(false);
+                  setError(null);
+                }}
+                className="btn-ghost w-full mt-2"
+              >
+                Back to login
+              </button>
+            )}
           </form>
         </div>
 
