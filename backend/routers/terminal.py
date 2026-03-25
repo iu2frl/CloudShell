@@ -71,7 +71,13 @@ async def open_session(
     device_label = f"{device.name} ({device.hostname}:{device.port})"
 
     try:
-        presented_fingerprint = await probe_ssh_host_fingerprint(device.hostname, device.port)
+        presented_fingerprint = await probe_ssh_host_fingerprint(
+            device.hostname,
+            device.port,
+            username=device.username,
+            password=password,
+            private_key_path=key_path,
+        )
     except SSHHostFingerprintUnavailableError as exc:
         raise HTTPException(status_code=502, detail=f"SSH host fingerprint unavailable: {exc}") from exc
 

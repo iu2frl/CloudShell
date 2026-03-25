@@ -146,7 +146,13 @@ def _make_pinned_fingerprint_client(expected: str, captured: dict[str, str]) -> 
     return _PinnedFingerprintClient
 
 
-async def probe_ssh_host_fingerprint(hostname: str, port: int) -> str:
+async def probe_ssh_host_fingerprint(
+    hostname: str,
+    port: int,
+    username: str,
+    password: str | None = None,
+    private_key_path: str | None = None,
+) -> str:
     """Return the presented SSH host-key fingerprint without trusting it."""
     captured: dict[str, str] = {}
 
@@ -162,19 +168,31 @@ async def probe_ssh_host_fingerprint(hostname: str, port: int) -> str:
         ) -> bool:
             _ = host, addr, peer_port
             captured["presented"] = _format_ssh_host_fingerprint(key)
-            return False
+            return True
+
+    connect_kwargs: dict[str, Any] = {
+        "host": hostname,
+        "port": port,
+        "username": username,
+        "known_hosts": None,
+        "client_factory": _ProbeClient,
+    }
+    if password is not None:
+        connect_kwargs["password"] = password
+    if private_key_path is not None:
+        connect_kwargs["client_keys"] = [private_key_path]
 
     try:
-        await asyncssh.connect(
-            host=hostname,
-            port=port,
-            username="probe",
-            password="probe",
-            known_hosts=None,
-            client_factory=_ProbeClient,
-        )
+        conn = await asyncssh.connect(**connect_kwargs)
+        conn.close()
+        await conn.wait_closed()
     except asyncssh.HostKeyNotVerifiable:
         pass
+    except asyncssh.PermissionDenied as exc:
+        if "presented" not in captured:
+            raise SSHHostFingerprintUnavailableError(
+                f"Unable to retrieve SSH host fingerprint: {exc}"
+            ) from exc
     except (OSError, asyncssh.Error) as exc:
         if "presented" not in captured:
             raise SSHHostFingerprintUnavailableError(

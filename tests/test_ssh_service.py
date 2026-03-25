@@ -18,8 +18,10 @@ import pytest
 from backend.services import ssh as ssh_module
 from backend.services.ssh import (
     _ws_error,
+    SSHHostFingerprintUnavailableError,
     close_session,
     get_session_meta,
+    probe_ssh_host_fingerprint,
 )
 
 
@@ -226,3 +228,47 @@ async def test_ws_error_does_not_raise_on_send_failure():
 
     # Must not raise
     await _ws_error(ws, "some error")
+
+
+# -- probe_ssh_host_fingerprint ------------------------------------------------
+
+class _FakeKey:
+    """Tiny key stub returning deterministic public-key bytes."""
+
+    def export_public_key(self) -> bytes:
+        return b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey"
+
+
+async def test_probe_fingerprint_returns_presented_value_on_permission_denied():
+    """Probe should still succeed when auth fails after host-key presentation."""
+
+    async def _fake_connect(**kwargs):
+        client = kwargs["client_factory"]()
+        client.validate_host_public_key("host", "1.2.3.4", 22, _FakeKey())
+        raise asyncssh.PermissionDenied(reason="Bad credentials")
+
+    with patch("asyncssh.connect", new=AsyncMock(side_effect=_fake_connect)):
+        fingerprint = await probe_ssh_host_fingerprint(
+            hostname="127.0.0.1",
+            port=22,
+            username="alice",
+            password="secret",
+        )
+
+    assert isinstance(fingerprint, str)
+    assert len(fingerprint) > 0
+
+
+async def test_probe_fingerprint_raises_if_auth_denied_before_host_key_capture():
+    """Probe must raise unavailable when no host key was presented."""
+    with patch(
+        "asyncssh.connect",
+        new=AsyncMock(side_effect=asyncssh.PermissionDenied(reason="Bad credentials")),
+    ):
+        with pytest.raises(SSHHostFingerprintUnavailableError):
+            await probe_ssh_host_fingerprint(
+                hostname="127.0.0.1",
+                port=22,
+                username="alice",
+                password="secret",
+            )
