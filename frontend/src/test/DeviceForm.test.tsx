@@ -210,7 +210,7 @@ describe('DeviceForm — error display', () => {
 });
 
 describe('DeviceForm — trusted fingerprint management', () => {
-  it('sends null fingerprints when clear toggles are selected', async () => {
+  it('deletes fingerprints immediately when trash icons are clicked', async () => {
     const { updateDevice } = await import('../api/client');
     setup({
       device: makeDevice({
@@ -223,18 +223,25 @@ describe('DeviceForm — trusted fingerprint management', () => {
     expect(screen.getByText('SHA256:abc123')).toBeInTheDocument();
     expect(screen.getByText('AA:BB:CC:DD')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByLabelText('Clear saved SSH host fingerprint on save'));
-    await userEvent.click(screen.getByLabelText('Clear saved FTPS certificate thumbprint on save'));
-    await userEvent.click(screen.getByRole('button', { name: /save/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete SSH fingerprint' }));
 
     await waitFor(() => {
       expect(updateDevice).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({
-          ssh_host_fingerprint: null,
-          ftps_cert_thumbprint: null,
-        }),
+        expect.objectContaining({ ssh_host_fingerprint: null }),
       );
     });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete FTPS fingerprint' }));
+
+    await waitFor(() => {
+      expect(updateDevice).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ ftps_cert_thumbprint: null }),
+      );
+    });
+
+    expect(screen.queryByText('SHA256:abc123')).not.toBeInTheDocument();
+    expect(screen.queryByText('AA:BB:CC:DD')).not.toBeInTheDocument();
   });
 });

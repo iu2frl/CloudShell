@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Device, DeviceCreate, DeviceUpdate, createDevice, updateDevice } from "../api/client";
-import { X, KeyRound, Copy, Check, Loader, Upload } from "lucide-react";
+import { X, KeyRound, Copy, Check, Loader, Upload, Trash2 } from "lucide-react";
 
 interface Props {
   device?: Device;
@@ -45,8 +45,9 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
   const [generating, setGenerating] = useState(false);
   const [publicKey, setPublicKey]   = useState<string | null>(null);
   const [copied, setCopied]         = useState(false);
-  const [clearSshFingerprint, setClearSshFingerprint] = useState(false);
-  const [clearFtpsThumbprint, setClearFtpsThumbprint] = useState(false);
+  const [sshFingerprint, setSshFingerprint] = useState<string | null>(device?.ssh_host_fingerprint ?? null);
+  const [ftpsThumbprint, setFtpsThumbprint] = useState<string | null>(device?.ftps_cert_thumbprint ?? null);
+  const [deletingFingerprint, setDeletingFingerprint] = useState<"ssh" | "ftps" | null>(null);
   const fileInputRef                = useRef<HTMLInputElement>(null);
 
   const set = (key: keyof DeviceCreate, value: string | number) =>
@@ -79,14 +80,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
     try {
       let saved: Device;
       if (device) {
-        const updatePayload: DeviceUpdate = { ...form };
-        if (clearSshFingerprint) {
-          updatePayload.ssh_host_fingerprint = null;
-        }
-        if (clearFtpsThumbprint) {
-          updatePayload.ftps_cert_thumbprint = null;
-        }
-        saved = await updateDevice(device.id, updatePayload);
+        saved = await updateDevice(device.id, { ...form });
       } else {
         saved = await createDevice(form);
       }
@@ -123,6 +117,29 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
     navigator.clipboard.writeText(publicKey);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const deleteFingerprint = async (kind: "ssh" | "ftps") => {
+    if (!device || deletingFingerprint) return;
+
+    setDeletingFingerprint(kind);
+    setError(null);
+    try {
+      const payload: DeviceUpdate =
+        kind === "ssh"
+          ? { ssh_host_fingerprint: null }
+          : { ftps_cert_thumbprint: null };
+      await updateDevice(device.id, payload);
+      if (kind === "ssh") {
+        setSshFingerprint(null);
+      } else {
+        setFtpsThumbprint(null);
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDeletingFingerprint(null);
+    }
   };
 
   return (
@@ -294,47 +311,53 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
             </div>
           )}
 
-          {device && (device.ssh_host_fingerprint || device.ftps_cert_thumbprint) && (
+          {device && (sshFingerprint || ftpsThumbprint) && (
             <div className="space-y-3 rounded-lg border border-slate-700 bg-slate-800/40 p-3">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
                 Trusted Fingerprints
               </p>
 
-              {device.ssh_host_fingerprint && (
+              {sshFingerprint && (
                 <div className="space-y-2">
-                  <p className="text-xs text-slate-300">
-                    SSH host fingerprint
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-slate-300">SSH host fingerprint</p>
+                    <button
+                      type="button"
+                      onClick={() => deleteFingerprint("ssh")}
+                      disabled={deletingFingerprint !== null}
+                      className="icon-btn text-red-400 hover:text-red-300 disabled:opacity-50"
+                      aria-label="Delete SSH fingerprint"
+                    >
+                      {deletingFingerprint === "ssh"
+                        ? <Loader size={12} className="animate-spin" />
+                        : <Trash2 size={12} />}
+                    </button>
+                  </div>
                   <p className="break-all rounded bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300">
-                    {device.ssh_host_fingerprint}
+                    {sshFingerprint}
                   </p>
-                  <label className="flex items-center gap-2 text-xs text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={clearSshFingerprint}
-                      onChange={(event) => setClearSshFingerprint(event.target.checked)}
-                    />
-                    Clear saved SSH host fingerprint on save
-                  </label>
                 </div>
               )}
 
-              {device.ftps_cert_thumbprint && (
+              {ftpsThumbprint && (
                 <div className="space-y-2">
-                  <p className="text-xs text-slate-300">
-                    FTPS certificate thumbprint
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-slate-300">FTPS certificate thumbprint</p>
+                    <button
+                      type="button"
+                      onClick={() => deleteFingerprint("ftps")}
+                      disabled={deletingFingerprint !== null}
+                      className="icon-btn text-red-400 hover:text-red-300 disabled:opacity-50"
+                      aria-label="Delete FTPS fingerprint"
+                    >
+                      {deletingFingerprint === "ftps"
+                        ? <Loader size={12} className="animate-spin" />
+                        : <Trash2 size={12} />}
+                    </button>
+                  </div>
                   <p className="break-all rounded bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300">
-                    {device.ftps_cert_thumbprint}
+                    {ftpsThumbprint}
                   </p>
-                  <label className="flex items-center gap-2 text-xs text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={clearFtpsThumbprint}
-                      onChange={(event) => setClearFtpsThumbprint(event.target.checked)}
-                    />
-                    Clear saved FTPS certificate thumbprint on save
-                  </label>
                 </div>
               )}
             </div>
