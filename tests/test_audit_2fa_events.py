@@ -9,7 +9,10 @@ from sqlalchemy import select, delete
 from backend.models.audit import AuditLog
 from backend.services.audit import (
     ACTION_2FA_FAILED,
+    ACTION_2FA_SETUP_INITIATED,
+    ACTION_2FA_VERIFICATION_FAILED,
     ACTION_BACKUP_CODE_USED,
+    ACTION_2FA_ENABLED,
 )
 
 
@@ -149,6 +152,167 @@ class TestAudit2FAEvents:
         final_entries = result.scalars().all()
         final_count = len(final_entries)
         assert final_count == initial_count, "No 2FA_FAILED events should be created on successful login"
+
+    async def test_2fa_setup_initiation_logged(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Should log 2FA setup initiation."""
+        headers = await _get_auth_headers(client)
+
+        # Clear audit logs
+        await db_session.execute(delete(AuditLog))
+        await db_session.commit()
+
+        # Call setup endpoint
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+        # Check audit log for setup initiation
+        query = select(AuditLog).where(AuditLog.action == ACTION_2FA_SETUP_INITIATED)
+        result = await db_session.execute(query)
+        audit_entries = result.scalars().all()
+        assert len(audit_entries) > 0, "2FA setup initiation should be logged"
+        
+        # Verify detail message
+        assert "secret generated" in audit_entries[0].detail.lower()
+        assert audit_entries[0].source_ip is not None
+
+    async def test_2fa_enable_verification_failure_logged(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Should log failed token verification during 2FA enable."""
+        from backend.models.auth import AdminTOTPSecret
+
+        headers = await _get_auth_headers(client)
+
+        # Setup 2FA
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+        # Clear audit logs
+        await db_session.execute(delete(AuditLog))
+        await db_session.commit()
+
+        # Try to enable with invalid token
+        response = await client.post(
+            "/api/auth/2fa/enable",
+            headers=headers,
+            json={"token": "000000"},  # Invalid token
+        )
+        assert response.status_code == 401
+
+        # Check audit log for verification failure
+        query = select(AuditLog).where(AuditLog.action == ACTION_2FA_VERIFICATION_FAILED)
+        result = await db_session.execute(query)
+        audit_entries = result.scalars().all()
+        assert len(audit_entries) > 0, "2FA verification failure should be logged"
+        
+        # Verify detail mentions enable/setup
+        assert "setup verification" in audit_entries[0].detail.lower()
+
+    async def test_2fa_disable_verification_failure_logged(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Should log failed token verification during 2FA disable."""
+        from backend.services.totp import TOTPService
+        from backend.models.auth import AdminTOTPSecret
+        from datetime import datetime, timezone, timedelta
+
+        headers = await _get_auth_headers(client)
+
+        # Setup 2FA
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        setup_data = response.json()
+        backup_codes = setup_data["backup_codes"]
+
+        # Manually enable 2FA with old timestamp to bypass age check
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        record.is_enabled = True
+        record.created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await db_session.commit()
+
+        # Clear audit logs
+        await db_session.execute(delete(AuditLog))
+        await db_session.commit()
+
+        # Try to disable with invalid token
+        response = await client.post(
+            "/api/auth/2fa/disable",
+            headers=headers,
+            json={"token": "000000"},  # Invalid token
+        )
+        assert response.status_code == 401
+
+        # Check audit log for verification failure
+        query = select(AuditLog).where(AuditLog.action == ACTION_2FA_VERIFICATION_FAILED)
+        result = await db_session.execute(query)
+        audit_entries = result.scalars().all()
+        assert len(audit_entries) > 0, "2FA verification failure should be logged"
+        
+        # Verify detail mentions disable
+        assert "disable" in audit_entries[0].detail.lower()
+
+    async def test_backup_code_consumption_includes_remaining_count(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Should log remaining backup code count after consumption."""
+        from backend.services.totp import TOTPService
+        from backend.models.auth import AdminTOTPSecret
+
+        headers = await _get_auth_headers(client)
+
+        # Setup 2FA
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+        # Manually enable 2FA and set specific backup codes
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        record.is_enabled = True
+
+        test_codes = ["AAAA-BBBB", "CCCC-DDDD", "EEEE-FFFF"]
+        record.backup_codes = TOTPService.codes_to_json(test_codes, hashed=True)
+        await db_session.commit()
+
+        # Clear audit logs
+        await db_session.execute(delete(AuditLog))
+        await db_session.commit()
+
+        # Logout and login with backup code
+        await client.post("/api/auth/logout", headers=headers)
+
+        login_response = await client.post(
+            "/api/auth/token",
+            data={
+                "username": "admin",
+                "password": "admin",
+                "totp_code": "AAAA-BBBB",  # Backup code
+            },
+        )
+        assert login_response.status_code == 200
+
+        # Check audit log includes remaining count
+        query = select(AuditLog).where(AuditLog.action == ACTION_BACKUP_CODE_USED)
+        result = await db_session.execute(query)
+        audit_entries = result.scalars().all()
+        assert len(audit_entries) > 0, "Backup code usage should be logged"
+        
+        # Verify detail includes remaining count (should be 2 after using 1)
+        assert "2 codes remaining" in audit_entries[0].detail
 
 
 async def _get_auth_headers(client: AsyncClient) -> dict:
