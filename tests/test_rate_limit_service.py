@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 from backend.config import get_settings
 from backend.services.rate_limit import RateLimiter
+import backend.services.rate_limit as rate_limit_module
 
 
 class TestRateLimiter:
@@ -135,6 +136,55 @@ class TestRateLimiter:
         assert exc_info.value.status_code == 429
 
         get_settings.cache_clear()
+
+    def test_rate_limiter_trusts_x_real_ip_from_trusted_proxy(self, monkeypatch):
+        """Trusted proxy should use x-real-ip when x-forwarded-for is absent."""
+        get_settings.cache_clear()
+        monkeypatch.setenv("TRUSTED_PROXIES", "192.168.1.10")
+
+        limiter = RateLimiter()
+        request = MagicMock()
+        request.client = MagicMock(host="192.168.1.10")
+        request.headers = {"x-real-ip": "10.123.45.67"}
+
+        limiter.check_limit(request, "/test", requests_per_minute=5)
+        key = "/test:anonymous:10.123.45.67"
+        assert key in limiter._requests
+
+        get_settings.cache_clear()
+
+    def test_rate_limiter_increments_same_timestamp_bucket(self, monkeypatch):
+        """Requests at identical timestamps should increment existing bucket."""
+        fixed_now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        class _FixedDateTime:
+            @staticmethod
+            def now(tz=None):
+                return fixed_now
+
+        monkeypatch.setattr(rate_limit_module, "datetime", _FixedDateTime)
+
+        limiter = RateLimiter()
+        request = MagicMock()
+        request.client = MagicMock(host="192.168.1.1")
+        request.headers = {}
+
+        limiter.check_limit(request, "/test", requests_per_minute=5)
+        limiter.check_limit(request, "/test", requests_per_minute=5)
+
+        key = "/test:anonymous:192.168.1.1"
+        assert len(limiter._requests[key]) == 1
+        assert limiter._requests[key][0][1] == 2
+
+    def test_rate_limiter_handles_missing_request_client(self):
+        """When request.client is missing, limiter should bucket under 'unknown'."""
+        limiter = RateLimiter()
+        request = MagicMock()
+        request.client = None
+        request.headers = {}
+
+        limiter.check_limit(request, "/test", requests_per_minute=5)
+        assert "/test:anonymous:unknown" in limiter._requests
 
     def test_rate_limiter_isolates_accounts_on_same_ip(self):
         """Account-aware keying should isolate users behind one IP."""

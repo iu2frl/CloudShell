@@ -43,3 +43,15 @@ def test_non_dev_environment_accepts_custom_secret_key(monkeypatch):
     assert settings.secret_key == custom_secret
 
     get_settings.cache_clear()
+
+
+def test_empty_secret_key_is_rejected(monkeypatch):
+    """Any environment must reject empty SECRET_KEY."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("SECRET_KEY", "")
+
+    with pytest.raises(ValueError, match="SECRET_KEY must be non-empty"):
+        get_settings()
+
+    get_settings.cache_clear()

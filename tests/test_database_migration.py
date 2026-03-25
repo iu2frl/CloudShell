@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.database import _run_migrations, _MIGRATIONS, _encrypt_legacy_totp_secrets
-from backend.services.crypto import decrypt_versioned, encrypt
+from backend.services.crypto import decrypt_versioned, encrypt, encrypt_versioned
 
 
 # -- Helpers -------------------------------------------------------------------
@@ -225,5 +225,67 @@ async def test_migration_wraps_legacy_unversioned_ciphertext():
         plaintext, version = decrypt_versioned(normalized_secret)
         assert plaintext == "ABCDEFGHIJKLMNOPQRSTUVWX12345678"
         assert version == "v1"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_migration_skips_non_string_or_empty_totp_secret():
+    """Rows with empty/non-string secrets should be ignored during normalization."""
+    engine = await _make_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE admin_totp_secrets ("
+            "  username VARCHAR(128) PRIMARY KEY,"
+            "  secret VARCHAR(512),"
+            "  is_enabled BOOLEAN NOT NULL DEFAULT 0,"
+            "  backup_codes VARCHAR(512),"
+            "  created_at DATETIME"
+            ")"
+        ))
+        await conn.execute(text(
+            "INSERT INTO admin_totp_secrets (username, secret, is_enabled) "
+            "VALUES ('admin', '', 1)"
+        ))
+
+        await _encrypt_legacy_totp_secrets(conn)
+
+        after = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        assert after.scalar_one() == ""
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_migration_skips_already_current_versioned_secret():
+    """Rows already encrypted with current version should remain unchanged."""
+    engine = await _make_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE admin_totp_secrets ("
+            "  username VARCHAR(128) PRIMARY KEY,"
+            "  secret VARCHAR(512) NOT NULL,"
+            "  is_enabled BOOLEAN NOT NULL DEFAULT 0,"
+            "  backup_codes VARCHAR(512),"
+            "  created_at DATETIME"
+            ")"
+        ))
+        already_current = encrypt_versioned("ABCDEFGHIJKLMNOPQRSTUVWX12345678", version="v1")
+        await conn.execute(
+            text(
+                "INSERT INTO admin_totp_secrets (username, secret, is_enabled) "
+                "VALUES ('admin', :secret, 1)"
+            ),
+            {"secret": already_current},
+        )
+
+        await _encrypt_legacy_totp_secrets(conn)
+
+        after = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        assert after.scalar_one() == already_current
 
     await engine.dispose()

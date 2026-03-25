@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from backend.services.crypto import (
     decrypt,
+    decrypt_versioned,
     delete_key_file,
     encrypt,
     generate_key_pair,
@@ -77,6 +78,12 @@ def test_encrypt_unicode_string():
     """Encrypting a Unicode string and decrypting must preserve the content."""
     plaintext = "password: P@ssw0rd! \u00e9\u00e0\u00fc"
     assert decrypt(encrypt(plaintext)) == plaintext
+
+
+def test_decrypt_versioned_rejects_empty_token():
+    """decrypt_versioned must reject empty token payloads."""
+    with pytest.raises(ValueError, match="non-empty string"):
+        decrypt_versioned("")
 
 
 # -- save / load / delete key file ---------------------------------------------

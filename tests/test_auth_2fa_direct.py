@@ -246,3 +246,28 @@ async def test_disable_2fa_direct_handles_naive_created_at(db_session):
 
     updated = await db_session.get(AdminTOTPSecret, "admin")
     assert updated is None
+
+
+async def test_disable_2fa_direct_temporarily_blocked_when_too_new(db_session):
+    """Disable should return 403 shortly after setup to enforce cooldown."""
+    mock_request = AsyncMock()
+    mock_request.headers = {}
+    mock_request.client.host = "127.0.0.1"
+
+    db_session.add(AdminTOTPSecret(username="admin", secret="ABCD", is_enabled=True))
+    await db_session.commit()
+
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    record.created_at = datetime.now(timezone.utc)
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await disable_2fa(
+            request=mock_request,
+            body=TOTPVerifyIn(token="123456"),
+            current_user="admin",
+            db=db_session,
+        )
+    assert exc.value.status_code == 403
+    assert "temporarily blocked" in exc.value.detail
