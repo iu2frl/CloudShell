@@ -28,6 +28,8 @@ from backend.services.audit import (
     ACTION_LOGIN,
     ACTION_LOGOUT,
     ACTION_PASSWORD_CHANGED,
+    ACTION_2FA_FAILED,
+    ACTION_BACKUP_CODE_USED,
     get_client_ip,
     write_audit,
 )
@@ -207,6 +209,7 @@ async def login(
             )
         
         is_valid_totp = TOTPService.verify_token(totp_record.secret, totp_code)
+        backup_code_used = False
         
         if not is_valid_totp:
             # Check backup codes if TOTPs fail.
@@ -219,11 +222,26 @@ async def login(
                 totp_record.backup_codes = updated_json
                 await db.commit()
                 is_valid_totp = True
+                backup_code_used = True
                 
         if not is_valid_totp:
+            # Log failed 2FA attempt
+            await write_audit(
+                db, form_data.username, ACTION_2FA_FAILED,
+                detail="Invalid or expired 2FA code",
+                source_ip=get_client_ip(request),
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid 2FA code",
+            )
+        
+        # If backup code was used, log it
+        if backup_code_used:
+            await write_audit(
+                db, form_data.username, ACTION_BACKUP_CODE_USED,
+                detail="User authenticated using backup code",
+                source_ip=get_client_ip(request),
             )
 
     encoded, expire, _ = _make_token(form_data.username)

@@ -150,6 +150,8 @@ async def test_login_invalid_2fa(client, monkeypatch):
             pass
         async def commit(self):
             pass
+        def add(self, *args, **kwargs):
+            pass
 
     async def override_get_db():
         yield MockDB()
