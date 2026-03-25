@@ -379,7 +379,7 @@ async def test_resolve_credentials_password_device_no_encrypted():
 async def test_open_session_direct_device_not_found():
     """open_session raises 404 when device is missing."""
     with pytest.raises(HTTPException) as exc_info:
-        await open_session(9999, _FakeRequest(), _FakeDB(device=None), "admin")
+        await open_session(9999, _FakeRequest(), trust_host=False, db=_FakeDB(device=None), current_user="admin")
     assert exc_info.value.status_code == 404
 
 
@@ -387,13 +387,15 @@ async def test_open_session_direct_password_device_success():
     """Password device success: session_id returned, audit written."""
     fake_id = str(uuid.uuid4())
     device = _password_device(encrypted=True)
+    device.ssh_host_fingerprint = "SHA256:TEST"
 
     with (
         patch("backend.routers.sftp.decrypt", return_value="cleartext"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(return_value=fake_id)),
         patch("backend.routers.sftp.write_audit", new=AsyncMock()) as mock_audit,
     ):
-        result = await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+        result = await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
 
     assert result == {"session_id": fake_id}
     mock_audit.assert_called_once()
@@ -404,15 +406,17 @@ async def test_open_session_direct_key_device_success_and_temp_file_deleted():
     """Key device success: temp file written then deleted."""
     fake_id = str(uuid.uuid4())
     device = _key_device(has_key=True)
+    device.ssh_host_fingerprint = "SHA256:TEST"
     deleted: list[str] = []
 
     with (
         patch("backend.routers.sftp.load_decrypted_key", return_value="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(return_value=fake_id)),
         patch("backend.routers.sftp.write_audit", new=AsyncMock()),
         patch("backend.routers.sftp.os.unlink", side_effect=lambda p: deleted.append(p)),
     ):
-        result = await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+        result = await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
 
     assert result["session_id"] == fake_id
     assert len(deleted) == 1
@@ -426,7 +430,7 @@ async def test_open_session_direct_permission_denied_returns_502():
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=asyncssh.PermissionDenied(reason="bad"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
     assert exc_info.value.status_code == 502
 
 
@@ -438,7 +442,7 @@ async def test_open_session_direct_connection_lost_returns_504():
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=asyncssh.ConnectionLost(reason="lost"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
     assert exc_info.value.status_code == 504
 
 
@@ -450,7 +454,7 @@ async def test_open_session_direct_host_key_not_verifiable_returns_502():
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=asyncssh.HostKeyNotVerifiable(reason="mismatch"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
     assert exc_info.value.status_code == 502
     assert "Host key not verifiable" in exc_info.value.detail
 
@@ -463,7 +467,7 @@ async def test_open_session_direct_oserror_returns_502():
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=OSError("refused"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
     assert exc_info.value.status_code == 502
 
 
@@ -475,7 +479,7 @@ async def test_open_session_direct_asyncssh_error_returns_502():
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=asyncssh.Error(code=0, reason="err"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
     assert exc_info.value.status_code == 502
 
 
@@ -490,7 +494,7 @@ async def test_open_session_direct_key_device_temp_file_cleaned_on_error():
         patch("backend.routers.sftp.os.unlink", side_effect=lambda p: deleted.append(p)),
     ):
         with pytest.raises(HTTPException):
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
 
     assert len(deleted) == 1
 

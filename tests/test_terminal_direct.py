@@ -100,7 +100,7 @@ def _key_device(has_key: bool = True) -> Device:
 async def test_open_session_direct_device_not_found():
     """open_session raises 404 when the device does not exist in the DB."""
     with pytest.raises(HTTPException) as exc_info:
-        await open_session(99999, _FakeRequest(), _FakeDB(device=None), "admin")
+        await open_session(99999, _FakeRequest(), False, _FakeDB(device=None), "admin")
     assert exc_info.value.status_code == 404
 
 
@@ -117,7 +117,7 @@ async def test_open_session_direct_password_device_success():
         ),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()) as mock_audit,
     ):
-        result = await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+        result = await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
 
     assert result == {"session_id": fake_id}
     mock_audit.assert_called_once()
@@ -137,7 +137,7 @@ async def test_open_session_direct_password_device_no_password():
         ) as mock_create,
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
     ):
-        result = await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+        result = await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
 
     assert result["session_id"] == fake_id
     _, kwargs = mock_create.call_args
@@ -156,7 +156,7 @@ async def test_open_session_direct_key_device_no_key_filename():
         ) as mock_create,
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
     ):
-        result = await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+        result = await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
 
     assert result["session_id"] == fake_id
     _, kwargs = mock_create.call_args
@@ -184,7 +184,7 @@ async def test_open_session_direct_key_device_writes_temp_file():
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
         patch("backend.routers.terminal.os.unlink", side_effect=_capture_unlink),
     ):
-        result = await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+        result = await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
 
     assert result["session_id"] == fake_id
     assert len(captured_paths) == 1
@@ -212,7 +212,7 @@ async def test_open_session_direct_key_device_temp_file_cleaned_on_error():
         patch("backend.routers.terminal.os.unlink", side_effect=_capture_unlink),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
 
     assert exc_info.value.status_code == 502
     assert len(captured_paths) == 1
@@ -234,7 +234,7 @@ async def test_open_session_direct_unlink_oserror_is_swallowed():
         patch("backend.routers.terminal.os.unlink", side_effect=OSError("busy")),
     ):
         # Must not raise — the OSError from unlink must be swallowed
-        result = await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+        result = await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
 
     assert result["session_id"] == fake_id
 
@@ -250,7 +250,7 @@ async def test_open_session_direct_permission_denied_returns_502():
         ),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
     assert exc_info.value.status_code == 502
 
 
@@ -265,7 +265,7 @@ async def test_open_session_direct_connection_lost_returns_504():
         ),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
     assert exc_info.value.status_code == 504
 
 
@@ -282,7 +282,7 @@ async def test_open_session_direct_host_key_not_verifiable_returns_502():
         ),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
     assert exc_info.value.status_code == 502
     assert "Host key not verifiable" in exc_info.value.detail
 
@@ -298,7 +298,7 @@ async def test_open_session_direct_oserror_returns_502():
         ),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
     assert exc_info.value.status_code == 502
 
 
@@ -315,7 +315,7 @@ async def test_open_session_direct_asyncssh_error_returns_502():
         ),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
     assert exc_info.value.status_code == 502
 
 
@@ -340,10 +340,12 @@ def _valid_token() -> str:
     """Generate a valid JWT using test settings."""
     from backend.config import get_settings
     from jose import jwt as jose_jwt
+    import uuid
+    from backend.main import BOOT_ID
 
     settings = get_settings()
     return jose_jwt.encode(
-        {"sub": "admin", "boot_id": "test"},
+        {"sub": "admin", "jti": str(uuid.uuid4()), "bid": BOOT_ID},
         settings.secret_key,
         algorithm="HS256",
     )

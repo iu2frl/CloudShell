@@ -112,7 +112,11 @@ async def test_open_session_success_ftps():
     dev = _make_device(connection_type=ConnectionType.ftps)
     db = _FakeDB(device=dev)
 
+    settings = MagicMock()
+    settings.ftps_allow_insecure = True
+
     with patch("backend.routers.ftp.decrypt", return_value="plain-pw"), \
+         patch("backend.routers.ftp.get_settings", return_value=settings), \
          patch("backend.routers.ftp.open_ftp_session", new_callable=AsyncMock, return_value="sess-2") as mock_open, \
          patch("backend.routers.ftp.write_audit", new_callable=AsyncMock):
         result = await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
@@ -214,7 +218,11 @@ async def test_open_session_writes_ftps_audit_label():
     dev = _make_device(connection_type=ConnectionType.ftps)
     db = _FakeDB(device=dev)
 
+    settings = MagicMock()
+    settings.ftps_allow_insecure = True
+
     with patch("backend.routers.ftp.decrypt", return_value="pw"), \
+         patch("backend.routers.ftp.get_settings", return_value=settings), \
          patch("backend.routers.ftp.open_ftp_session", new_callable=AsyncMock, return_value="s"), \
          patch("backend.routers.ftp.write_audit", new_callable=AsyncMock) as mock_audit:
         await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")

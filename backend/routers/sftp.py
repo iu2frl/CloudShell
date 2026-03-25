@@ -118,7 +118,11 @@ async def open_session(
             password=password,
             private_key_path=key_path,
         )
+    except asyncssh.ConnectionLost as exc:
+        raise HTTPException(status_code=504, detail="SSH connection lost") from exc
     except SSHHostFingerprintUnavailableError as exc:
+        if isinstance(exc.__cause__, asyncssh.ConnectionLost):
+            raise HTTPException(status_code=504, detail="SSH connection lost") from exc
         raise HTTPException(status_code=502, detail=f"SSH host fingerprint unavailable: {exc}") from exc
 
     pinned_fingerprint = device.ssh_host_fingerprint

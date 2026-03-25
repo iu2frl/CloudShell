@@ -145,11 +145,12 @@ async def test_migrations_table_covers_all_entries():
     Every entry in _MIGRATIONS references a real column name and a non-empty
     default — a basic sanity guard against typos.
     """
-    for table, column, col_type, default in _MIGRATIONS:
+    for table, column, col_type, default, nullable in _MIGRATIONS:
         assert table, "table name must not be empty"
         assert column, "column name must not be empty"
         assert col_type, "col_type must not be empty"
         assert default, "default must not be empty"
+        assert isinstance(nullable, bool), "nullable must be a boolean"
 
 
 @pytest.mark.asyncio
