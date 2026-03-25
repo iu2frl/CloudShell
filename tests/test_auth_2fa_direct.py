@@ -220,3 +220,30 @@ async def test_disable_2fa_direct(db_session):
 
     record = await db_session.get(AdminTOTPSecret, "admin")
     assert record.is_enabled is False
+
+
+async def test_disable_2fa_direct_handles_naive_created_at(db_session):
+    """Disable flow should tolerate naive timestamps loaded from SQLite."""
+    mock_request = AsyncMock()
+    mock_request.headers = {}
+    mock_request.client.host = "127.0.0.1"
+
+    db_session.add(AdminTOTPSecret(username="admin", secret="ABCD", is_enabled=True))
+    await db_session.commit()
+
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    record.created_at = datetime(2000, 1, 1, 0, 0, 0)
+    await db_session.commit()
+
+    with patch("backend.routers.auth_2fa.TOTPService.verify_token", return_value=True):
+        await disable_2fa(
+            request=mock_request,
+            body=TOTPVerifyIn(token="123456"),
+            current_user="admin",
+            db=db_session,
+        )
+
+    updated = await db_session.get(AdminTOTPSecret, "admin")
+    assert updated is not None
+    assert updated.is_enabled is False

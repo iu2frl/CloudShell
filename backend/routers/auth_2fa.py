@@ -270,7 +270,11 @@ async def disable_2fa(
         )
 
     now = datetime.now(timezone.utc)
-    if (now - totp_record.created_at) < _MIN_2FA_DISABLE_AGE:
+    created_at = totp_record.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+
+    if (now - created_at) < _MIN_2FA_DISABLE_AGE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="2FA disable is temporarily blocked after setup",
