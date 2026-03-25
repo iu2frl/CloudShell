@@ -4,6 +4,8 @@ tests/test_auth_rate_limit.py — Integration tests for auth endpoint rate limit
 import pytest
 from httpx import AsyncClient
 
+from backend.config import get_settings
+
 
 @pytest.mark.asyncio
 class TestAuthRateLimit:
@@ -100,8 +102,11 @@ class TestAuthRateLimit:
         )
         assert response.status_code == 429
 
-    async def test_rate_limit_per_ip(self, client: AsyncClient):
-        """Rate limits should be per IP address."""
+    async def test_rate_limit_per_ip_from_trusted_proxy(self, client: AsyncClient, monkeypatch):
+        """Rate limits should honor forwarded IP when peer is trusted."""
+        monkeypatch.setenv("TRUSTED_PROXIES", "127.0.0.1,testclient")
+        get_settings.cache_clear()
+
         # First client at default IP
         response1 = await client.post(
             "/api/auth/token",
@@ -118,6 +123,31 @@ class TestAuthRateLimit:
         )
         # Different IP should have its own limit
         assert response2.status_code != 429
+
+        get_settings.cache_clear()
+
+    async def test_login_rate_limit_isolated_per_account(self, client: AsyncClient):
+        """Rate limits should be scoped to account+IP for login attempts."""
+        for _ in range(10):
+            response = await client.post(
+                "/api/auth/token",
+                data={"username": "admin", "password": "wrong"},
+            )
+            assert response.status_code != 429
+
+        # admin is now limited
+        blocked = await client.post(
+            "/api/auth/token",
+            data={"username": "admin", "password": "wrong"},
+        )
+        assert blocked.status_code == 429
+
+        # Different account on same IP gets a separate bucket
+        other_user = await client.post(
+            "/api/auth/token",
+            data={"username": "operator", "password": "wrong"},
+        )
+        assert other_user.status_code != 429
 
 
 async def _get_auth_headers(client: AsyncClient) -> dict:

@@ -1,8 +1,11 @@
 """
 services/rate_limit.py — Rate limiting utilities
 
-Provides in-memory rate limiting for API endpoints using client IP address
+Provides in-memory rate limiting for API endpoints using account + client IP
 as the key. Requests exceeding the limit are rejected with HTTP 429.
+
+Forwarded IP headers are trusted only when the direct peer is listed in
+`TRUSTED_PROXIES`.
 
 Example:
     @router.post("/endpoint")
@@ -13,21 +16,61 @@ Example:
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+
 from fastapi import HTTPException, Request, status
+
+from backend.config import get_settings
 
 
 logger = logging.getLogger(__name__)
 
 
+def _parse_trusted_proxies() -> set[str]:
+    """Return trusted reverse proxy IPs configured via `TRUSTED_PROXIES`."""
+    settings = get_settings()
+    raw = settings.trusted_proxies.strip()
+    if not raw:
+        return set()
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP from request headers or connection."""
-    if request.headers.get("x-forwarded-for"):
-        return request.headers["x-forwarded-for"].split(",")[0].strip()
-    if request.headers.get("x-real-ip"):
-        return request.headers["x-real-ip"]
+    """Extract client IP, trusting forwarded headers only from trusted proxies."""
+    trusted_proxies = _parse_trusted_proxies()
+    peer_ip = request.client.host if request.client else "unknown"
+
+    if peer_ip in trusted_proxies:
+        x_forwarded_for = request.headers.get("x-forwarded-for", "")
+        if x_forwarded_for:
+            first_hop = x_forwarded_for.split(",")[0].strip()
+            if first_hop:
+                return first_hop
+
+        x_real_ip = request.headers.get("x-real-ip", "").strip()
+        if x_real_ip:
+            return x_real_ip
+
     if request.client:
         return request.client.host
     return "unknown"
+
+
+def _normalize_account(account: str | None) -> str:
+    """Normalize optional account identifiers for stable rate-limit keys."""
+    if not account:
+        return "anonymous"
+    normalized = account.strip().lower()
+    return normalized or "anonymous"
+
+
+def _build_rate_limit_key(endpoint: str, account: str | None, client_ip: str) -> str:
+    """Build the canonical rate-limit key for request tracking."""
+    return f"{endpoint}:{_normalize_account(account)}:{client_ip}"
+
+
+def _display_account(account: str | None) -> str:
+    """Return a safe account label for operational logs."""
+    return _normalize_account(account)
 
 
 class RateLimiter:
@@ -42,6 +85,7 @@ class RateLimiter:
         self,
         request: Request,
         endpoint: str,
+        account: str | None = None,
         requests_per_minute: int = 60,
     ) -> None:
         """
@@ -50,13 +94,14 @@ class RateLimiter:
         Args:
             request: FastAPI Request object
             endpoint: Endpoint identifier (e.g., "/auth/token")
+            account: Optional account identifier for per-account bucketing
             requests_per_minute: Max requests allowed per minute
 
         Raises:
             HTTPException: 429 Too Many Requests if limit exceeded
         """
         client_ip = _get_client_ip(request)
-        key = f"{endpoint}:{client_ip}"
+        key = _build_rate_limit_key(endpoint, account, client_ip)
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(minutes=1)
 
@@ -70,8 +115,9 @@ class RateLimiter:
 
         if request_count >= requests_per_minute:
             logger.warning(
-                "Rate limit exceeded for %s from %s: %d requests in last minute",
+                "Rate limit exceeded for %s (account=%s) from %s: %d requests in last minute",
                 endpoint,
+                _display_account(account),
                 client_ip,
                 request_count,
             )

@@ -82,9 +82,14 @@ async def setup_2fa(
     User should scan the QR code with Google Authenticator, then call
     /2fa/enable with the 6-digit code.
     """
-    # Rate limit: max 6 setup requests per minute from a single IP
+    # Rate limit: max 6 setup requests per minute per account+IP
     limiter = get_limiter()
-    limiter.check_limit(request, endpoint="/auth/2fa/setup", requests_per_minute=6)
+    limiter.check_limit(
+        request,
+        endpoint="/auth/2fa/setup",
+        account=current_user,
+        requests_per_minute=6,
+    )
     
     # Check if already enabled or setup already pending
     existing = await db.get(AdminTOTPSecret, current_user)
@@ -148,7 +153,12 @@ async def reset_2fa_setup(
     Enabled 2FA must be disabled via /2fa/disable.
     """
     limiter = get_limiter()
-    limiter.check_limit(request, endpoint="/auth/2fa/reset", requests_per_minute=10)
+    limiter.check_limit(
+        request,
+        endpoint="/auth/2fa/reset",
+        account=current_user,
+        requests_per_minute=10,
+    )
 
     totp_record = await db.get(AdminTOTPSecret, current_user)
     if not totp_record:
@@ -185,9 +195,14 @@ async def enable_2fa(
 
     Must call /2fa/setup first to generate a secret.
     """
-    # Rate limit: max 30 enable attempts per minute from a single IP
+    # Rate limit: max 30 enable attempts per minute per account+IP
     limiter = get_limiter()
-    limiter.check_limit(request, endpoint="/auth/2fa/enable", requests_per_minute=30)
+    limiter.check_limit(
+        request,
+        endpoint="/auth/2fa/enable",
+        account=current_user,
+        requests_per_minute=30,
+    )
     
     totp_record = await db.get(AdminTOTPSecret, current_user)
     if not totp_record:
@@ -238,9 +253,14 @@ async def disable_2fa(
 
     Requires a valid TOTP token for security.
     """
-    # Rate limit: max 30 disable attempts per minute from a single IP
+    # Rate limit: max 30 disable attempts per minute per account+IP
     limiter = get_limiter()
-    limiter.check_limit(request, endpoint="/auth/2fa/disable", requests_per_minute=30)
+    limiter.check_limit(
+        request,
+        endpoint="/auth/2fa/disable",
+        account=current_user,
+        requests_per_minute=30,
+    )
     
     totp_record = await db.get(AdminTOTPSecret, current_user)
     if not totp_record or not totp_record.is_enabled:

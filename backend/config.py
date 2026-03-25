@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     token_ttl_hours: int = int(os.getenv("TOKEN_TTL_HOURS", "8"))
     audit_retention_days: int = int(os.getenv("AUDIT_RETENTION_DAYS", "7"))
     data_dir: str = os.getenv("DATA_DIR", "/data")
+    trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "")
     db_path: str = ""
     keys_dir: str = ""
 

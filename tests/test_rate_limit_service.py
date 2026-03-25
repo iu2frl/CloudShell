@@ -4,6 +4,8 @@ tests/test_rate_limit_service.py — Unit tests for rate limiting service.
 import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
+
+from backend.config import get_settings
 from backend.services.rate_limit import RateLimiter
 
 
@@ -42,8 +44,6 @@ class TestRateLimiter:
 
     def test_rate_limiter_resets_after_minute(self):
         """Should reset counter after old entries are cleaned up."""
-        from datetime import datetime, timezone, timedelta
-        
         limiter = RateLimiter()
         request = MagicMock()
         request.client = MagicMock(host="192.168.1.1")
@@ -54,7 +54,7 @@ class TestRateLimiter:
             limiter.check_limit(request, "/test", requests_per_minute=5)
 
         # Manually add an old request that is >1 minute old
-        key = "/test:192.168.1.1"
+        key = "/test:anonymous:192.168.1.1"
         now = datetime.now(timezone.utc)
         old_time = now - timedelta(minutes=2)
         limiter._requests[key].append((old_time, 1))
@@ -86,10 +86,11 @@ class TestRateLimiter:
         # IP 2 should still be allowed
         limiter.check_limit(request2, "/test", requests_per_minute=3)
 
-    def test_rate_limiter_extracts_x_forwarded_for(self):
-        """Should extract IP from x-forwarded-for header."""
+    def test_rate_limiter_ignores_forwarded_headers_when_proxy_untrusted(self):
+        """Forwarded headers should be ignored unless peer is trusted."""
         from fastapi import HTTPException
-        
+
+        get_settings.cache_clear()
         limiter = RateLimiter()
 
         request1 = MagicMock()
@@ -100,7 +101,7 @@ class TestRateLimiter:
         request2.client = MagicMock(host="192.168.1.2")
         request2.headers = {}
 
-        # Fill up the forwarded IP
+        # Fill up the peer-IP bucket; spoofed headers should not change keying
         for i in range(2):
             limiter.check_limit(request1, "/test", requests_per_minute=2)
 
@@ -109,8 +110,50 @@ class TestRateLimiter:
             limiter.check_limit(request1, "/test", requests_per_minute=2)
         assert exc_info.value.status_code == 429
 
-        # But different IP should succeed
+        # Different peer IP should still succeed
         limiter.check_limit(request2, "/test", requests_per_minute=2)
+
+        get_settings.cache_clear()
+
+    def test_rate_limiter_trusts_forwarded_headers_from_trusted_proxy(self, monkeypatch):
+        """Trusted proxy peers should allow x-forwarded-for based bucketing."""
+        from fastapi import HTTPException
+
+        get_settings.cache_clear()
+        monkeypatch.setenv("TRUSTED_PROXIES", "192.168.1.1")
+        limiter = RateLimiter()
+
+        request = MagicMock()
+        request.client = MagicMock(host="192.168.1.1")
+        request.headers = {"x-forwarded-for": "10.0.0.1, 10.0.0.2"}
+
+        for i in range(2):
+            limiter.check_limit(request, "/test", requests_per_minute=2)
+
+        with pytest.raises(HTTPException) as exc_info:
+            limiter.check_limit(request, "/test", requests_per_minute=2)
+        assert exc_info.value.status_code == 429
+
+        get_settings.cache_clear()
+
+    def test_rate_limiter_isolates_accounts_on_same_ip(self):
+        """Account-aware keying should isolate users behind one IP."""
+        from fastapi import HTTPException
+
+        limiter = RateLimiter()
+        request = MagicMock()
+        request.client = MagicMock(host="192.168.1.1")
+        request.headers = {}
+
+        for i in range(2):
+            limiter.check_limit(request, "/auth/token", account="admin", requests_per_minute=2)
+
+        # Different account should not inherit admin's bucket
+        limiter.check_limit(request, "/auth/token", account="operator", requests_per_minute=2)
+
+        with pytest.raises(HTTPException) as exc_info:
+            limiter.check_limit(request, "/auth/token", account="admin", requests_per_minute=2)
+        assert exc_info.value.status_code == 429
 
     def test_rate_limiter_different_endpoints_isolated(self):
         """Should isolate rate limits between different endpoints."""

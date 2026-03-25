@@ -188,9 +188,14 @@ async def login(
     totp_code: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    # Rate limit: max 10 login attempts per minute from a single IP
+    # Rate limit: max 10 login attempts per minute per account+IP
     limiter = get_limiter()
-    limiter.check_limit(request, endpoint="/auth/token", requests_per_minute=10)
+    limiter.check_limit(
+        request,
+        endpoint="/auth/token",
+        account=form_data.username,
+        requests_per_minute=10,
+    )
     
     if not await _verify_credentials(form_data.username, form_data.password, db):
         raise HTTPException(

@@ -11,6 +11,7 @@ All configuration is via environment variables (or a `.env` file):
 | `AUDIT_RETENTION_DAYS` | `7` | Number of days to retain audit log entries. Entries older than this are pruned automatically on startup. |
 | `DATA_DIR` | `/data` | Directory where the SQLite database, SSH key files, and known_hosts are stored. Mount this as a Docker volume. |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated list of allowed CORS origins. Leave unset when running behind Nginx (same-origin). Set to your frontend URL (e.g. `https://cloudshell.example.com`) when running the backend standalone. |
+| `TRUSTED_PROXIES` | *(unset)* | Comma-separated list of reverse-proxy peer IPs allowed to supply `X-Forwarded-For` / `X-Real-IP`. If unset, forwarded headers are ignored for rate limiting. |
 
 ## Secret key generation
 
