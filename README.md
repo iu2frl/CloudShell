@@ -35,7 +35,7 @@ Supports connections audit:
 - **Built-in key generator**: generate RSA-4096 key pairs directly from the UI; copy the public key to paste into `authorized_keys`
 - **Key file upload**: load an existing private key from a local `.pem` / `id_rsa` file instead of copy-pasting
 - **JWT session auth**: login page, configurable session TTL, silent token refresh, and token revocation on logout
-- **Two-factor authentication (2FA)**: optional TOTP-based sign-in protection with backup codes for account recovery
+- **Two-factor authentication (2FA)**: optional TOTP-based sign-in protection with backup codes for account recovery, plus optional trusted-device remember mode for 30 days
 - **Change password**: update the admin password at runtime without restarting
 - **Audit log**: tamper-evident activity log (login, logout, SSH session start/stop, password changes) with configurable retention policy and a dedicated viewer in the UI
 - **Session expiry badge**: live countdown in the header turns yellow/red as the session approaches expiry

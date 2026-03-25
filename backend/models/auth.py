@@ -88,3 +88,22 @@ class AdminTOTPSecret(Base):
     def secret(self, value: str) -> None:
         """Encrypt TOTP secret before storing it in the database."""
         self._secret_encrypted = encrypt_versioned(value)
+
+
+class AdminTrustedDevice(Base):
+    """Stores hashed remember-device tokens for optional 2FA bypass.
+
+    Each row maps a single random token hash to one username and expiration time.
+    Raw tokens are never persisted and are only sent to the client as HttpOnly
+    cookies.
+    """
+
+    __tablename__ = "admin_trusted_devices"
+
+    token_hash: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )

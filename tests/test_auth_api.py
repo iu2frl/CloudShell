@@ -33,6 +33,10 @@ Tests cover:
 from datetime import datetime, timezone
 import hashlib
 
+import pyotp
+
+from backend.models.auth import AdminTOTPSecret
+
 
 # -- POST /api/auth/token ------------------------------------------------------
 
@@ -282,6 +286,95 @@ async def test_login_empty_credentials(client):
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert resp.status_code in (401, 422)
+
+
+async def test_login_remember_device_skips_future_2fa(client, db_session):
+    """A remembered device should bypass TOTP for 30 days."""
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    totp_code = pyotp.TOTP(record.secret).now()
+
+    enable_resp = await client.post(
+        "/api/auth/2fa/enable",
+        headers=auth_headers,
+        json={"token": totp_code},
+    )
+    assert enable_resp.status_code == 204
+
+    require_2fa_resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert require_2fa_resp.status_code == 403
+    assert require_2fa_resp.json()["detail"] == "2FA_REQUIRED"
+
+    remember_resp = await client.post(
+        "/api/auth/token",
+        data={
+            "username": "admin",
+            "password": "admin",
+            "totp_code": pyotp.TOTP(record.secret).now(),
+            "remember_device": "true",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert remember_resp.status_code == 200
+    assert "cloudshell_trusted_device=" in remember_resp.headers.get("set-cookie", "")
+    assert "Max-Age=2592000" in remember_resp.headers.get("set-cookie", "")
+
+    trusted_login_resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert trusted_login_resp.status_code == 200
+
+
+async def test_login_invalid_remembered_device_cookie_still_requires_2fa(client, db_session):
+    """An unknown remember-device cookie must not bypass TOTP."""
+    login_resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    setup_resp = await client.post("/api/auth/2fa/setup", headers=auth_headers)
+    assert setup_resp.status_code == 200
+
+    record = await db_session.get(AdminTOTPSecret, "admin")
+    assert record is not None
+    enable_resp = await client.post(
+        "/api/auth/2fa/enable",
+        headers=auth_headers,
+        json={"token": pyotp.TOTP(record.secret).now()},
+    )
+    assert enable_resp.status_code == 204
+
+    client.cookies.set("cloudshell_trusted_device", "not-a-valid-token")
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "2FA_REQUIRED"
 
 
 # -- POST /api/auth/refresh ----------------------------------------------------
