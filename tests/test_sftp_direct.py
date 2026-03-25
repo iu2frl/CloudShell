@@ -437,8 +437,10 @@ async def test_open_session_direct_permission_denied_returns_502():
 async def test_open_session_direct_connection_lost_returns_504():
     """asyncssh.ConnectionLost maps to 504."""
     device = _password_device()
+    device.ssh_host_fingerprint = "SHA256:TEST"
     with (
         patch("backend.routers.sftp.decrypt", return_value="pw"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=asyncssh.ConnectionLost(reason="lost"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -449,8 +451,10 @@ async def test_open_session_direct_connection_lost_returns_504():
 async def test_open_session_direct_host_key_not_verifiable_returns_502():
     """asyncssh.HostKeyNotVerifiable maps to 502."""
     device = _password_device()
+    device.ssh_host_fingerprint = "SHA256:TEST"
     with (
         patch("backend.routers.sftp.decrypt", return_value="pw"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=asyncssh.HostKeyNotVerifiable(reason="mismatch"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -486,10 +490,12 @@ async def test_open_session_direct_asyncssh_error_returns_502():
 async def test_open_session_direct_key_device_temp_file_cleaned_on_error():
     """Temp file is deleted even when open_sftp_session raises."""
     device = _key_device(has_key=True)
+    device.ssh_host_fingerprint = "SHA256:TEST"
     deleted: list[str] = []
 
     with (
         patch("backend.routers.sftp.load_decrypted_key", return_value="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=OSError("refused"))),
         patch("backend.routers.sftp.os.unlink", side_effect=lambda p: deleted.append(p)),
     ):
@@ -503,14 +509,16 @@ async def test_open_session_direct_unlink_oserror_is_swallowed():
     """OSError from os.unlink in finally must be suppressed."""
     fake_id = str(uuid.uuid4())
     device = _key_device(has_key=True)
+    device.ssh_host_fingerprint = "SHA256:TEST"
 
     with (
         patch("backend.routers.sftp.load_decrypted_key", return_value="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(return_value=fake_id)),
         patch("backend.routers.sftp.write_audit", new=AsyncMock()),
         patch("backend.routers.sftp.os.unlink", side_effect=OSError("busy")),
     ):
-        result = await open_session(1, _FakeRequest(), _FakeDB(device), "admin")
+        result = await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
 
     assert result["session_id"] == fake_id
 
