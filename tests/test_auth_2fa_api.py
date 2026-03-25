@@ -3,32 +3,48 @@ tests/test_auth_2fa_api.py — Integration tests for 2FA endpoints.
 """
 import json
 
-import pytest
 from httpx import AsyncClient
 
 from backend.models.auth import AdminTOTPSecret
-from backend.services.totp import TOTPService
 
 
-@pytest.mark.asyncio
+def _get_token_from_response(response) -> str:
+    """Extract access_token from login response."""
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
+
+
+async def _get_auth_headers(client: AsyncClient) -> dict:
+    """Get auth headers with valid token."""
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token = _get_token_from_response(resp)
+    return {"Authorization": f"Bearer {token}"}
+
+
 class TestTwoFactorAuthAPI:
     """Test 2FA API endpoints."""
 
-    async def test_get_2fa_status_disabled(self, client: AsyncClient, token: str):
+    async def test_get_2fa_status_disabled(self, client: AsyncClient):
         """Should return enabled=false when 2FA not set up."""
+        headers = await _get_auth_headers(client)
         response = await client.get(
             "/api/auth/2fa/status",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 200
         data = response.json()
         assert data["enabled"] is False
 
-    async def test_setup_2fa_generates_qr_code(self, client: AsyncClient, token: str):
+    async def test_setup_2fa_generates_qr_code(self, client: AsyncClient):
         """Setup endpoint should return QR code, secret, and backup codes."""
+        headers = await _get_auth_headers(client)
         response = await client.post(
             "/api/auth/2fa/setup",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 200
         data = response.json()
@@ -45,15 +61,17 @@ class TestTwoFactorAuthAPI:
             assert code[4] == "-"
 
     async def test_setup_2fa_fails_if_already_enabled(
-        self, client: AsyncClient, token: str, db
+        self, client: AsyncClient, db_session
     ):
         """Should reject setup if 2FA already enabled."""
         import pyotp
         
+        headers = await _get_auth_headers(client)
+        
         # Setup 2FA first
         response = await client.post(
             "/api/auth/2fa/setup",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 200
         secret = response.json()["secret"]
@@ -64,26 +82,28 @@ class TestTwoFactorAuthAPI:
         response = await client.post(
             "/api/auth/2fa/enable",
             json={"token": totp_code},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 204
         
         # Try to setup again
         response = await client.post(
             "/api/auth/2fa/setup",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 409
         assert "already enabled" in response.json()["detail"]
 
     async def test_enable_2fa_requires_valid_token(
-        self, client: AsyncClient, token: str
+        self, client: AsyncClient
     ):
         """Should reject invalid TOTP tokens."""
+        headers = await _get_auth_headers(client)
+        
         # Setup first
         response = await client.post(
             "/api/auth/2fa/setup",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 200
         
@@ -91,21 +111,23 @@ class TestTwoFactorAuthAPI:
         response = await client.post(
             "/api/auth/2fa/enable",
             json={"token": "000000"},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 401
         assert "Invalid or expired token" in response.json()["detail"]
 
     async def test_enable_2fa_with_valid_token(
-        self, client: AsyncClient, token: str
+        self, client: AsyncClient
     ):
         """Should enable 2FA with valid TOTP token."""
         import pyotp
         
+        headers = await _get_auth_headers(client)
+        
         # Setup
         response = await client.post(
             "/api/auth/2fa/setup",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 200
         secret = response.json()["secret"]
@@ -118,28 +140,30 @@ class TestTwoFactorAuthAPI:
         response = await client.post(
             "/api/auth/2fa/enable",
             json={"token": code},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 204
         
         # Verify it's enabled
         response = await client.get(
             "/api/auth/2fa/status",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 200
         assert response.json()["enabled"] is True
 
     async def test_disable_2fa_requires_valid_token(
-        self, client: AsyncClient, token: str
+        self, client: AsyncClient
     ):
         """Should reject invalid TOTP when disabling."""
         import pyotp
         
+        headers = await _get_auth_headers(client)
+        
         # Setup and enable first
         response = await client.post(
             "/api/auth/2fa/setup",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         secret = response.json()["secret"]
         totp = pyotp.TOTP(secret)
@@ -147,7 +171,7 @@ class TestTwoFactorAuthAPI:
         response = await client.post(
             "/api/auth/2fa/enable",
             json={"token": totp.now()},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 204
         
@@ -155,21 +179,23 @@ class TestTwoFactorAuthAPI:
         response = await client.post(
             "/api/auth/2fa/disable",
             json={"token": "000000"},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 401
         assert "Invalid or expired token" in response.json()["detail"]
 
     async def test_disable_2fa_with_valid_token(
-        self, client: AsyncClient, token: str
+        self, client: AsyncClient
     ):
         """Should disable 2FA with valid TOTP token."""
         import pyotp
         
+        headers = await _get_auth_headers(client)
+        
         # Setup and enable
         response = await client.post(
             "/api/auth/2fa/setup",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         secret = response.json()["secret"]
         totp = pyotp.TOTP(secret)
@@ -177,14 +203,14 @@ class TestTwoFactorAuthAPI:
         response = await client.post(
             "/api/auth/2fa/enable",
             json={"token": totp.now()},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 204
         
         # Verify enabled
         response = await client.get(
             "/api/auth/2fa/status",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.json()["enabled"] is True
         
@@ -192,44 +218,46 @@ class TestTwoFactorAuthAPI:
         response = await client.post(
             "/api/auth/2fa/disable",
             json={"token": totp.now()},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.status_code == 204
         
         # Verify disabled
         response = await client.get(
             "/api/auth/2fa/status",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert response.json()["enabled"] is False
 
     async def test_2fa_endpoints_require_auth(self, client: AsyncClient):
         """2FA endpoints should require authentication."""
-        # No token
+        # No token — OAuth2 returns 401, not 403
         response = await client.get("/api/auth/2fa/status")
-        assert response.status_code == 403
+        assert response.status_code == 401
         
         response = await client.post("/api/auth/2fa/setup")
-        assert response.status_code == 403
+        assert response.status_code == 401
         
         response = await client.post("/api/auth/2fa/enable", json={"token": "000000"})
-        assert response.status_code == 403
+        assert response.status_code == 401
         
         response = await client.post("/api/auth/2fa/disable", json={"token": "000000"})
-        assert response.status_code == 403
+        assert response.status_code == 401
 
     async def test_backup_codes_stored_on_setup(
-        self, client: AsyncClient, token: str, db
+        self, client: AsyncClient, db_session
     ):
         """Backup codes should be stored in database."""
+        headers = await _get_auth_headers(client)
+        
         response = await client.post(
             "/api/auth/2fa/setup",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         backup_codes = response.json()["backup_codes"]
         
         # Check database
-        record = await db.get(AdminTOTPSecret, "admin")
+        record = await db_session.get(AdminTOTPSecret, "admin")
         assert record is not None
         assert record.is_enabled is False
         

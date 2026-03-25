@@ -84,7 +84,7 @@ async def write_audit(
             "Audit: user=%s action=%s ip=%s detail=%s",
             username, action, source_ip, detail,
         )
-    except (OSError, ValueError):  # pylint: disable=broad-except
+    except (OSError, ValueError, RuntimeError):  # pylint: disable=broad-except
         log.exception("Failed to write audit log entry (user=%s, action=%s)", username, action)
 
 
