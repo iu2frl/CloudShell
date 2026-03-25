@@ -22,6 +22,8 @@ ACTION_LOGOUT = "LOGOUT"
 ACTION_PASSWORD_CHANGED = "PASSWORD_CHANGED"
 ACTION_SESSION_STARTED = "SESSION_STARTED"
 ACTION_SESSION_ENDED = "SESSION_ENDED"
+ACTION_2FA_ENABLED = "2FA_ENABLED"
+ACTION_2FA_DISABLED = "2FA_DISABLED"
 
 
 # -- IP extraction -------------------------------------------------------------
@@ -82,7 +84,7 @@ async def write_audit(
             "Audit: user=%s action=%s ip=%s detail=%s",
             username, action, source_ip, detail,
         )
-    except Exception:  # noqa: BLE001
+    except (OSError, ValueError):  # pylint: disable=broad-except
         log.exception("Failed to write audit log entry (user=%s, action=%s)", username, action)
 
 
