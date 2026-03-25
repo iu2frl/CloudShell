@@ -8,6 +8,8 @@ POST /api/auth/2fa/setup        Generate TOTP secret and QR code
 POST /api/auth/2fa/enable       Verify and enable 2FA
 POST /api/auth/2fa/disable      Disable 2FA (requires verification)
 """
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,8 @@ from backend.services.totp import TOTPService
 from backend.routers.auth import get_current_user
 
 router = APIRouter(prefix="/auth/2fa", tags=["auth"])
+
+_MIN_2FA_DISABLE_AGE = timedelta(minutes=2)
 
 # -- Pydantic schemas ----------------------------------------------------------
 
@@ -77,12 +81,17 @@ async def setup_2fa(
     limiter = get_limiter()
     limiter.check_limit(request, endpoint="/auth/2fa/setup", requests_per_minute=6)
     
-    # Check if already enabled
+    # Check if already enabled or setup already pending
     existing = await db.get(AdminTOTPSecret, current_user)
     if existing and existing.is_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="2FA is already enabled for this user",
+        )
+    if existing and not existing.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="2FA setup already in progress. Complete setup or reset it.",
         )
 
     # Generate new secret and backup codes
@@ -100,9 +109,6 @@ async def setup_2fa(
         is_enabled=False,
     backup_codes=TOTPService.codes_to_json(backup_codes, hashed=True),
     )
-    # Upsert: delete old setup if exists and create new one
-    if existing:
-        await db.delete(existing)
     db.add(totp_record)
     await db.commit()
 
@@ -184,6 +190,13 @@ async def disable_2fa(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="2FA is not enabled",
+        )
+
+    now = datetime.now(timezone.utc)
+    if (now - totp_record.created_at) < _MIN_2FA_DISABLE_AGE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="2FA disable is temporarily blocked after setup",
         )
 
     # Verify the token

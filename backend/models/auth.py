@@ -13,7 +13,7 @@ from sqlalchemy import DateTime, String, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
-from backend.services.crypto import encrypt, decrypt
+from backend.services.crypto import encrypt_versioned, decrypt_versioned
 
 
 log = logging.getLogger(__name__)
@@ -78,7 +78,8 @@ class AdminTOTPSecret(Base):
     def secret(self) -> str:
         """Return decrypted TOTP secret with legacy plaintext fallback."""
         try:
-            return decrypt(self._secret_encrypted)
+            plaintext, _ = decrypt_versioned(self._secret_encrypted)
+            return plaintext
         except (ValueError, TypeError, binascii.Error, InvalidTag):
             log.warning("Legacy plaintext TOTP secret loaded from database")
             return self._secret_encrypted
@@ -86,4 +87,4 @@ class AdminTOTPSecret(Base):
     @secret.setter
     def secret(self, value: str) -> None:
         """Encrypt TOTP secret before storing it in the database."""
-        self._secret_encrypted = encrypt(value)
+        self._secret_encrypted = encrypt_versioned(value)

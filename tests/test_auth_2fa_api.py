@@ -1,6 +1,7 @@
 """
 tests/test_auth_2fa_api.py — Integration tests for 2FA endpoints.
 """
+from datetime import datetime, timedelta, timezone
 import json
 
 from httpx import AsyncClient
@@ -71,6 +72,25 @@ class TestTwoFactorAuthAPI:
         assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert response.headers["Pragma"] == "no-cache"
         assert response.headers["Expires"] == "0"
+
+    async def test_setup_2fa_fails_if_setup_in_progress(
+        self, client: AsyncClient
+    ):
+        """Should reject setup when a pending setup already exists."""
+        headers = await _get_auth_headers(client)
+
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 409
+        assert "already in progress" in response.json()["detail"]
 
     async def test_setup_2fa_fails_if_already_enabled(
         self, client: AsyncClient, db_session
@@ -193,7 +213,12 @@ class TestTwoFactorAuthAPI:
             headers=headers,
         )
         assert response.status_code == 204
-        
+
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        record.created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await db_session.commit()
+
         # Try to disable with wrong code
         response = await client.post(
             "/api/auth/2fa/disable",
@@ -235,7 +260,12 @@ class TestTwoFactorAuthAPI:
             headers=headers,
         )
         assert response.json()["enabled"] is True
-        
+
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        record.created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await db_session.commit()
+
         # Disable with valid code
         response = await client.post(
             "/api/auth/2fa/disable",
@@ -309,3 +339,4 @@ class TestTwoFactorAuthAPI:
         record = await db_session.get(AdminTOTPSecret, "admin")
         assert record is not None
         assert raw_secret != record.secret
+        assert raw_secret.startswith("v1:")

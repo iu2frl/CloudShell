@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import get_settings
-from backend.services.crypto import decrypt, encrypt
+from backend.services.crypto import decrypt_versioned, encrypt_versioned, current_secret_version
 
 log = logging.getLogger(__name__)
 
@@ -61,32 +61,36 @@ async def _run_migrations(conn) -> None:
 
 
 async def _encrypt_legacy_totp_secrets(conn) -> None:
-    """Encrypt any legacy plaintext 2FA secrets stored in admin_totp_secrets."""
+    """Normalize TOTP secrets to current versioned encrypted format."""
     result = await conn.execute(text("SELECT username, secret FROM admin_totp_secrets"))
     rows = result.fetchall()
     migrated_count = 0
+    target_version = current_secret_version()
 
     for username, secret in rows:
         if not isinstance(secret, str) or not secret:
             continue
 
         try:
-            decrypt(secret)
-            continue
+            plaintext, version = decrypt_versioned(secret)
+            if version == target_version:
+                continue
+            normalized_secret = encrypt_versioned(plaintext, version=target_version)
         except (ValueError, TypeError, binascii.Error, InvalidTag):
-            encrypted_secret = encrypt(secret)
-            await conn.execute(
-                text(
-                    "UPDATE admin_totp_secrets "
-                    "SET secret = :secret "
-                    "WHERE username = :username"
-                ),
-                {"secret": encrypted_secret, "username": username},
-            )
-            migrated_count += 1
+            normalized_secret = encrypt_versioned(secret, version=target_version)
+
+        await conn.execute(
+            text(
+                "UPDATE admin_totp_secrets "
+                "SET secret = :secret "
+                "WHERE username = :username"
+            ),
+            {"secret": normalized_secret, "username": username},
+        )
+        migrated_count += 1
 
     if migrated_count:
-        log.info("Migration: encrypted %s legacy TOTP secrets", migrated_count)
+        log.info("Migration: normalized %s TOTP secrets to versioned encryption", migrated_count)
 
 
 async def init_db():

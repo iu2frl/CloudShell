@@ -5,6 +5,7 @@ By calling the router functions directly rather than routing through the test cl
 and ASGITransport, we get 100% accurate coverage tracking from coverage.py because
 the execution happens purely in the main test thread.
 """
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -46,10 +47,6 @@ async def test_get_2fa_status_direct(db_session):
 async def test_setup_2fa_direct(db_session):
     """Directly test 2FA setup generation."""
     from unittest.mock import MagicMock
-    
-    # Add a disabled record to test the 'delete existing' path
-    db_session.add(AdminTOTPSecret(username="admin", secret="OLD_SECRET", is_enabled=False))
-    await db_session.commit()
 
     # Mock request for rate limiting
     request = MagicMock()
@@ -65,6 +62,16 @@ async def test_setup_2fa_direct(db_session):
 
     assert resp.qr_code.startswith("data:image/")
     assert len(resp.backup_codes) == 10
+
+    # Pending setup should now conflict
+    with pytest.raises(HTTPException) as exc:
+        await setup_2fa(
+            request=request,
+            response=Response(),
+            current_user="admin",
+            db=db_session,
+        )
+    assert exc.value.status_code == 409
 
     # Test conflict when already enabled
     record = await db_session.get(AdminTOTPSecret, "admin")
@@ -135,9 +142,10 @@ async def test_disable_2fa_direct(db_session):
         await disable_2fa(request=mock_request, body=TOTPVerifyIn(token="123456"), current_user="admin", db=db_session)
     assert exc.value.status_code == 404
 
-    # Enable record
+    # Enable record and make it old enough for disable policy
     record = await db_session.get(AdminTOTPSecret, "admin")
     record.is_enabled = True
+    record.created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     await db_session.commit()
 
     # Test invalid token

@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.database import _run_migrations, _MIGRATIONS, _encrypt_legacy_totp_secrets
-from backend.services.crypto import decrypt
+from backend.services.crypto import decrypt_versioned, encrypt
 
 
 # -- Helpers -------------------------------------------------------------------
@@ -184,6 +184,46 @@ async def test_migration_encrypts_plaintext_totp_secret():
         encrypted_value = after.scalar_one()
 
         assert encrypted_value != plaintext
-        assert decrypt(encrypted_value) == plaintext
+        normalized, version = decrypt_versioned(encrypted_value)
+        assert normalized == plaintext
+        assert version == "v1"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_migration_wraps_legacy_unversioned_ciphertext():
+    """Legacy encrypted but unversioned secrets should be rewritten with a version tag."""
+    engine = await _make_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE admin_totp_secrets ("
+            "  username VARCHAR(128) PRIMARY KEY,"
+            "  secret VARCHAR(512) NOT NULL,"
+            "  is_enabled BOOLEAN NOT NULL DEFAULT 0,"
+            "  backup_codes VARCHAR(512),"
+            "  created_at DATETIME"
+            ")"
+        ))
+        legacy_cipher = encrypt("ABCDEFGHIJKLMNOPQRSTUVWX12345678")
+        await conn.execute(
+            text(
+                "INSERT INTO admin_totp_secrets (username, secret, is_enabled) "
+                "VALUES ('admin', :secret, 1)"
+            ),
+            {"secret": legacy_cipher},
+        )
+
+        await _encrypt_legacy_totp_secrets(conn)
+
+        after = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        normalized_secret = after.scalar_one()
+
+        assert normalized_secret.startswith("v1:")
+        plaintext, version = decrypt_versioned(normalized_secret)
+        assert plaintext == "ABCDEFGHIJKLMNOPQRSTUVWX12345678"
+        assert version == "v1"
 
     await engine.dispose()
