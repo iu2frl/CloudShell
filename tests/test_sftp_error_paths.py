@@ -62,10 +62,17 @@ async def _open_session(auth_client, sftp, conn) -> str:
     device_id = resp.json()["id"]
 
     with (
+        patch(
+            "backend.routers.sftp.probe_ssh_host_fingerprint",
+            new=AsyncMock(return_value="SHA256:TEST"),
+        ),
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        r = await auth_client.post(
+            f"/api/sftp/session/{device_id}",
+            params={"trust_host": "true"},
+        )
 
     assert r.status_code == 200
     return r.json()["session_id"]
