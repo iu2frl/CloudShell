@@ -65,14 +65,28 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 // -- Auth ----------------------------------------------------------------------
 
-export async function login(username: string, password: string): Promise<void> {
+export async function login(username: string, password: string, totpCode?: string): Promise<void> {
   const form = new URLSearchParams({ username, password });
+  if (totpCode) {
+    form.append("totp_code", totpCode);
+  }
   const res = await fetch(`${BASE}/auth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form,
   });
-  if (!res.ok) throw new Error("Invalid credentials");
+  
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    if (res.status === 403 && errorData.detail === "2FA_REQUIRED") {
+      throw new Error("2FA_REQUIRED");
+    }
+    if (res.status === 401 && errorData.detail === "Invalid 2FA code") {
+      throw new Error("Invalid 2FA code");
+    }
+    throw new Error("Invalid credentials");
+  }
+  
   const data = await res.json();
   localStorage.setItem("token", data.access_token);
 }

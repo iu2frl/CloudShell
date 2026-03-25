@@ -13,7 +13,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import bcrypt
 from jose import JWTError, jwt
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.database import get_db
-from backend.models.auth import AdminCredential, RevokedToken
+from backend.models.auth import AdminCredential, RevokedToken, AdminTOTPSecret
 from backend.services.audit import (
     ACTION_LOGIN,
     ACTION_LOGOUT,
@@ -180,6 +180,7 @@ async def _get_payload(
 async def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
+    totp_code: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     if not await _verify_credentials(form_data.username, form_data.password, db):
@@ -188,6 +189,37 @@ async def login(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    totp_record = await db.get(AdminTOTPSecret, form_data.username)
+    if totp_record and totp_record.is_enabled:
+        from backend.services.totp import TOTPService
+        if not totp_code:
+            # We return a specific error that the frontend can intercept 
+            # to know that 2FA is required.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="2FA_REQUIRED",
+            )
+        
+        is_valid_totp = TOTPService.verify_token(totp_record.secret, totp_code)
+        
+        if not is_valid_totp:
+            # Check backup codes if totally invalid
+            # TODO: implement backup code using json deserialization in a loop
+            codes = TOTPService.codes_from_json(totp_record.backup_codes)
+            if totp_code in codes:
+                # Remove used backup code
+                codes.remove(totp_code)
+                totp_record.backup_codes = TOTPService.codes_to_json(codes)
+                await db.commit()
+                is_valid_totp = True
+                
+        if not is_valid_totp:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid 2FA code",
+            )
+
     encoded, expire, _ = _make_token(form_data.username)
     await write_audit(
         db, form_data.username, ACTION_LOGIN,
