@@ -220,3 +220,36 @@ class TestTOTPService:
 
         with pytest.raises(ValueError, match="deprecated"):
             TOTPService.verify_and_consume_backup_code(stored, "AAAA-BBBB")
+
+    def test_is_sha256_hex_digest_returns_false_for_non_string_or_bad_hex(self):
+        """SHA256 digest helper should reject non-string and non-hex values."""
+        assert TOTPService._is_sha256_hex_digest(123) is False
+        assert TOTPService._is_sha256_hex_digest("z" * 64) is False
+
+    def test_verify_and_consume_backup_code_skips_invalid_entries(self):
+        """Invalid non-string/empty entries should be ignored while preserving valid ones."""
+        stored = TOTPService.codes_to_json([None, "", "KEEP-ME"], hashed=False)
+        ok, updated = TOTPService.verify_and_consume_backup_code(stored, "NOPE-0000")
+        assert ok is False
+        assert TOTPService.codes_from_json(updated) == ["KEEP-ME"]
+
+    def test_verify_and_consume_backup_code_keeps_corrupted_bcrypt_hash(self):
+        """Corrupted bcrypt entries should be retained when checkpw raises."""
+        corrupted_hash = "$2b$invalid"
+        stored = TOTPService.codes_to_json([corrupted_hash], hashed=False)
+        ok, updated = TOTPService.verify_and_consume_backup_code(stored, "AAAA-BBBB")
+        assert ok is False
+        assert TOTPService.codes_from_json(updated) == [corrupted_hash]
+
+    def test_verify_and_consume_backup_code_keeps_unknown_format_entry(self):
+        """Unknown non-bcrypt/non-sha256 entries should be kept best-effort."""
+        stored = TOTPService.codes_to_json(["not-a-bcrypt-or-sha256-value"], hashed=False)
+        ok, updated = TOTPService.verify_and_consume_backup_code(stored, "AAAA-BBBB")
+        assert ok is False
+        assert TOTPService.codes_from_json(updated) == ["not-a-bcrypt-or-sha256-value"]
+
+    def test_verify_and_consume_backup_code_empty_storage_returns_empty_json(self):
+        """Empty storage should return a stable empty JSON payload and no match."""
+        ok, updated = TOTPService.verify_and_consume_backup_code(None, "AAAA-BBBB")
+        assert ok is False
+        assert updated == "[]"
