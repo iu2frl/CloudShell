@@ -14,7 +14,7 @@ Tests cover:
   - closes with code 4001 when an invalid token is provided
   - closes with code 4004 when session_id is not found
 """
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import asyncssh
 import pytest
@@ -55,7 +55,7 @@ def _mock_probe_fingerprint():
 
 # -- POST /api/terminal/session/{device_id} ------------------------------------
 
-async def test_open_session_requires_auth(client, db_session):
+async def test_open_session_requires_auth(client):
     """POST /api/terminal/session/{id} without a token must return 401."""
     # Create a device first (must be done while authenticated)
     login_resp = await client.post(

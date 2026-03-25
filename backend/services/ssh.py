@@ -132,9 +132,10 @@ def _make_pinned_fingerprint_client(expected: str, captured: dict[str, str]) -> 
             self,
             host: str,
             addr: str,
-            port: int,
+            peer_port: int,
             key: asyncssh.SSHKey,
         ) -> bool:
+            _ = addr, peer_port
             presented = _format_ssh_host_fingerprint(key)
             captured["presented"] = presented
             if presented == expected:

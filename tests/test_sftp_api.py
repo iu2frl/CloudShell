@@ -163,7 +163,7 @@ async def test_device_update_connection_type(auth_client):
 # -- POST /api/sftp/session/{device_id} ---------------------------------------
 
 @pytest.mark.asyncio
-async def test_open_sftp_session_requires_auth(client, db_session):
+async def test_open_sftp_session_requires_auth(client):
     """POST /api/sftp/session/{id} without a token returns 401."""
     login = await client.post(
         "/api/auth/token",
