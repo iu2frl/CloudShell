@@ -159,6 +159,16 @@ async def probe_ssh_host_fingerprint(
     class _ProbeClient(asyncssh.SSHClient):
         """Capture host fingerprint and reject connection intentionally."""
 
+        def connection_made(self, conn: asyncssh.SSHClientConnection) -> None:
+            """Capture presented host key as soon as connection is established."""
+            super().connection_made(conn)
+            try:
+                key = conn.get_server_host_key()
+            except Exception:  # noqa: BLE001
+                key = None
+            if key is not None:
+                captured["presented"] = _format_ssh_host_fingerprint(key)
+
         def validate_host_public_key(
             self,
             host: str,
@@ -184,6 +194,13 @@ async def probe_ssh_host_fingerprint(
 
     try:
         conn = await asyncssh.connect(**connect_kwargs)
+        if "presented" not in captured:
+            try:
+                key = conn.get_server_host_key()
+            except Exception:  # noqa: BLE001
+                key = None
+            if key is not None:
+                captured["presented"] = _format_ssh_host_fingerprint(key)
         conn.close()
         await conn.wait_closed()
     except asyncssh.HostKeyNotVerifiable:
@@ -238,11 +255,6 @@ async def create_session(
     }
 
     if expected_ssh_host_fingerprint:
-        captured: dict[str, str] = {}
-        connect_kwargs["client_factory"] = _make_pinned_fingerprint_client(
-            expected_ssh_host_fingerprint,
-            captured,
-        )
         connect_kwargs["known_hosts"] = None
     elif known_hosts == "auto":
         kh_path = _known_hosts_path()
@@ -266,13 +278,17 @@ async def create_session(
     # and send a proper error frame to the WebSocket client.
     try:
         conn = await asyncssh.connect(**connect_kwargs)
+        if expected_ssh_host_fingerprint:
+            key = conn.get_server_host_key()
+            presented = _format_ssh_host_fingerprint(key)
+            if presented != expected_ssh_host_fingerprint:
+                conn.close()
+                await conn.wait_closed()
+                raise SSHHostFingerprintMismatchError(
+                    expected=expected_ssh_host_fingerprint,
+                    presented=presented,
+                )
     except asyncssh.HostKeyNotVerifiable as exc:
-        presented = locals().get("captured", {}).get("presented")
-        if expected_ssh_host_fingerprint and presented:
-            raise SSHHostFingerprintMismatchError(
-                expected=expected_ssh_host_fingerprint,
-                presented=presented,
-            ) from exc
         raise
     _sessions[session_id] = _Session(
         conn=conn,

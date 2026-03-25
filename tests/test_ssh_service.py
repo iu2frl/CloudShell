@@ -239,6 +239,18 @@ class _FakeKey:
         return b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey"
 
 
+class _FakeConnWithServerKey:
+    """Connection stub exposing a server host key and close methods."""
+
+    def __init__(self, key: object):
+        self._key = key
+        self.close = MagicMock()
+        self.wait_closed = AsyncMock()
+
+    def get_server_host_key(self) -> object:
+        return self._key
+
+
 async def test_probe_fingerprint_returns_presented_value_on_permission_denied():
     """Probe should still succeed when auth fails after host-key presentation."""
 
@@ -272,3 +284,34 @@ async def test_probe_fingerprint_raises_if_auth_denied_before_host_key_capture()
                 username="alice",
                 password="secret",
             )
+
+
+async def test_probe_fingerprint_reads_server_key_from_connection_when_callback_not_used():
+    """Probe should read host fingerprint directly from the connected session object."""
+    conn = _FakeConnWithServerKey(_FakeKey())
+    with patch("asyncssh.connect", new=AsyncMock(return_value=conn)):
+        fingerprint = await probe_ssh_host_fingerprint(
+            hostname="127.0.0.1",
+            port=22,
+            username="alice",
+            password="secret",
+        )
+
+    assert isinstance(fingerprint, str)
+    assert len(fingerprint) > 0
+
+
+async def test_create_session_expected_fingerprint_mismatch_raises():
+    """create_session must reject connection when presented fingerprint differs."""
+    conn = _FakeConnWithServerKey(_FakeKey())
+    with patch("asyncssh.connect", new=AsyncMock(return_value=conn)):
+        with pytest.raises(ssh_module.SSHHostFingerprintMismatchError):
+            await ssh_module.create_session(
+                hostname="127.0.0.1",
+                port=22,
+                username="user",
+                password="pass",
+                known_hosts=None,
+                expected_ssh_host_fingerprint="00:11:22",
+            )
+    conn.close.assert_called_once()
