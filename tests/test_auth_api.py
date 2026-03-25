@@ -87,13 +87,134 @@ async def test_login_wrong_password(client):
 
 
 async def test_login_wrong_username(client):
-    """Non-existent username must return 401."""
+    """Wrong username must return 401."""
     resp = await client.post(
         "/api/auth/token",
-        data={"username": "nobody", "password": "admin"},
+        data={"username": "wrong", "password": "admin"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert resp.status_code == 401
+
+
+async def test_login_requires_2fa(client, monkeypatch):
+    from backend.routers import auth
+    # Mock verify
+    async def mock_verify_credentials(*args, **kwargs):
+        return True
+    monkeypatch.setattr(auth, "_verify_credentials", mock_verify_credentials)
+    
+    # Mock db
+    class MockTOTPRecord:
+        is_enabled = True
+
+    class MockDB:
+        async def get(self, model, ident):
+            return MockTOTPRecord()
+        async def execute(self, *args, **kwargs):
+            pass
+        async def commit(self):
+            pass
+
+    async def override_get_db():
+        yield MockDB()
+
+    from backend.main import app
+    app.dependency_overrides[auth.get_db] = override_get_db
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "password"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "2FA_REQUIRED"
+
+    app.dependency_overrides.clear()
+
+
+async def test_login_invalid_2fa(client, monkeypatch):
+    from backend.routers import auth
+    async def mock_verify_credentials(*args, **kwargs):
+        return True
+    monkeypatch.setattr(auth, "_verify_credentials", mock_verify_credentials)
+
+    class MockTOTPRecord:
+        is_enabled = True
+        secret = "SECRET"
+        backup_codes = "[]"
+        
+    class MockDB:
+        async def get(self, model, ident):
+            return MockTOTPRecord()
+        async def execute(self, *args, **kwargs):
+            pass
+        async def commit(self):
+            pass
+
+    async def override_get_db():
+        yield MockDB()
+
+    from backend.main import app
+    app.dependency_overrides[auth.get_db] = override_get_db
+
+    from backend.services.totp import TOTPService
+    monkeypatch.setattr(TOTPService, "verify_token", lambda *args, **kwargs: False)
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "password", "totp_code": "000000"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid 2FA code"
+
+    app.dependency_overrides.clear()
+
+
+async def test_login_valid_2fa(client, monkeypatch):
+    from backend.routers import auth
+    async def mock_verify_credentials(*args, **kwargs):
+        return True
+    monkeypatch.setattr(auth, "_verify_credentials", mock_verify_credentials)
+
+    class MockTOTPRecord:
+        is_enabled = True
+        secret = "SECRET"
+        
+    class MockDB:
+        async def get(self, model, ident):
+            return MockTOTPRecord()
+
+        async def execute(self, *args, **kwargs):
+            """Support `write_audit()` (SELECT) calls during login."""
+
+            class MockResult:
+                def scalar_one_or_none(self):
+                    return None
+
+            return MockResult()
+
+        def add(self, *args, **kwargs):
+            pass
+
+        async def commit(self):
+            pass
+            
+    async def override_get_db():
+        yield MockDB()
+
+    from backend.main import app
+    app.dependency_overrides[auth.get_db] = override_get_db
+
+    from backend.services.totp import TOTPService
+    monkeypatch.setattr(TOTPService, "verify_token", lambda *args, **kwargs: True)
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "password", "totp_code": "123456"},
+    )
+    assert response.status_code == 200
+    assert "access_token" in response.json()
+
+    app.dependency_overrides.clear()
 
 
 async def test_login_empty_credentials(client):
