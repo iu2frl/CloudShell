@@ -65,6 +65,20 @@ class TestTOTPService:
         token = totp.now()
         assert TOTPService.verify_token(secret2, token) is False
 
+    def test_verify_token_edge_cases(self):
+        """Verify edge cases like empty, invalid length, and non-numeric tokens."""
+        secret = TOTPService.generate_secret()
+
+        assert TOTPService.verify_token(secret, "") is False
+        assert TOTPService.verify_token(secret, "12345") is False   # Too short
+        assert TOTPService.verify_token(secret, "1234567") is False # Too long
+        assert TOTPService.verify_token(secret, "abcdef") is False  # Letters
+
+    def test_verify_token_exceptions(self):
+        """Verify that exceptions (e.g. from bad secrets) are handled gracefully."""
+        # A malformed secret that pyotp might crash on
+        assert TOTPService.verify_token("NOT_BASE32_#", "123456") is False
+
     def test_generate_backup_codes(self):
         """Should generate requested number of backup codes."""
         codes = TOTPService.generate_backup_codes(10)
