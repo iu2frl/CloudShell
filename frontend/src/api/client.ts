@@ -477,3 +477,32 @@ export async function importConfig(file: File): Promise<ImportResult> {
   }
   return res.json() as Promise<ImportResult>;
 }
+
+// -- Two-Factor Auth -----------------------------------------------------------
+
+export interface TOTPSetupResponse {
+  qr_code: string;
+  secret: string;
+  backup_codes: string[];
+}
+
+export interface TwoFAStatus {
+  enabled: boolean;
+}
+
+export const get2FAStatus = (): Promise<TwoFAStatus> => request("/auth/2fa/status");
+
+export const setup2FA = (): Promise<TOTPSetupResponse> =>
+  request("/auth/2fa/setup", { method: "POST" });
+
+export const enable2FA = (token: string): Promise<void> =>
+  request<void>("/auth/2fa/enable", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+
+export const disable2FA = (token: string): Promise<void> =>
+  request<void>("/auth/2fa/disable", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
