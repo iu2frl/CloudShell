@@ -135,9 +135,9 @@ async def open_session(
             expected_ftps_thumbprint=expected_thumbprint,
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=502, detail=f"FTP authentication failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"FTP authentication failed: {exc}") from exc
     except ConnectionRefusedError as exc:
-        raise HTTPException(status_code=502, detail=f"FTP connection refused: {exc}")
+        raise HTTPException(status_code=502, detail=f"FTP connection refused: {exc}") from exc
     except FTPSCertificateMismatchError as exc:
         raise HTTPException(
             status_code=409,
@@ -148,7 +148,7 @@ async def open_session(
             },
         ) from exc
     except (OSError, Exception) as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"FTP connection failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"FTP connection failed: {exc}") from exc
 
     await write_audit(
         db,
