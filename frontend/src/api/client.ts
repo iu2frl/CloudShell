@@ -154,7 +154,9 @@ export interface Device {
   username: string;
   auth_type: "password" | "key";
   connection_type: ConnectionType;
+  ssh_host_fingerprint?: string | null;
   key_filename?: string | null;
+  ftps_cert_thumbprint?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -170,12 +172,17 @@ export interface DeviceCreate {
   private_key?: string;
 }
 
+export interface DeviceUpdate extends Partial<DeviceCreate> {
+  ssh_host_fingerprint?: string | null;
+  ftps_cert_thumbprint?: string | null;
+}
+
 export const listDevices = (): Promise<Device[]> => request("/devices/");
 
 export const createDevice = (d: DeviceCreate): Promise<Device> =>
   request("/devices/", { method: "POST", body: JSON.stringify(d) });
 
-export const updateDevice = (id: number, d: Partial<DeviceCreate>): Promise<Device> =>
+export const updateDevice = (id: number, d: DeviceUpdate): Promise<Device> =>
   request(`/devices/${id}`, { method: "PUT", body: JSON.stringify(d) });
 
 export const deleteDevice = (id: number): Promise<void> =>

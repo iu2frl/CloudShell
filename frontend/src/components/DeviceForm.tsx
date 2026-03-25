@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Device, DeviceCreate, createDevice, updateDevice } from "../api/client";
+import { Device, DeviceCreate, DeviceUpdate, createDevice, updateDevice } from "../api/client";
 import { X, KeyRound, Copy, Check, Loader, Upload } from "lucide-react";
 
 interface Props {
@@ -45,6 +45,8 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
   const [generating, setGenerating] = useState(false);
   const [publicKey, setPublicKey]   = useState<string | null>(null);
   const [copied, setCopied]         = useState(false);
+  const [clearSshFingerprint, setClearSshFingerprint] = useState(false);
+  const [clearFtpsThumbprint, setClearFtpsThumbprint] = useState(false);
   const fileInputRef                = useRef<HTMLInputElement>(null);
 
   const set = (key: keyof DeviceCreate, value: string | number) =>
@@ -75,9 +77,19 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const saved = device
-        ? await updateDevice(device.id, form)
-        : await createDevice(form);
+      let saved: Device;
+      if (device) {
+        const updatePayload: DeviceUpdate = { ...form };
+        if (clearSshFingerprint) {
+          updatePayload.ssh_host_fingerprint = null;
+        }
+        if (clearFtpsThumbprint) {
+          updatePayload.ftps_cert_thumbprint = null;
+        }
+        saved = await updateDevice(device.id, updatePayload);
+      } else {
+        saved = await createDevice(form);
+      }
       onSave(saved);
     } catch (err) {
       setError(String(err));
@@ -277,6 +289,52 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
                   <pre className="text-[10px] text-green-300 break-all whitespace-pre-wrap font-mono leading-relaxed">
                     {publicKey}
                   </pre>
+                </div>
+              )}
+            </div>
+          )}
+
+          {device && (device.ssh_host_fingerprint || device.ftps_cert_thumbprint) && (
+            <div className="space-y-3 rounded-lg border border-slate-700 bg-slate-800/40 p-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                Trusted Fingerprints
+              </p>
+
+              {device.ssh_host_fingerprint && (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-300">
+                    SSH host fingerprint
+                  </p>
+                  <p className="break-all rounded bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300">
+                    {device.ssh_host_fingerprint}
+                  </p>
+                  <label className="flex items-center gap-2 text-xs text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={clearSshFingerprint}
+                      onChange={(event) => setClearSshFingerprint(event.target.checked)}
+                    />
+                    Clear saved SSH host fingerprint on save
+                  </label>
+                </div>
+              )}
+
+              {device.ftps_cert_thumbprint && (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-300">
+                    FTPS certificate thumbprint
+                  </p>
+                  <p className="break-all rounded bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300">
+                    {device.ftps_cert_thumbprint}
+                  </p>
+                  <label className="flex items-center gap-2 text-xs text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={clearFtpsThumbprint}
+                      onChange={(event) => setClearFtpsThumbprint(event.target.checked)}
+                    />
+                    Clear saved FTPS certificate thumbprint on save
+                  </label>
                 </div>
               )}
             </div>

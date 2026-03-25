@@ -140,6 +140,8 @@ async def update_device(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
+    provided_fields = payload.model_fields_set
+
     for field in (
         "name",
         "hostname",
@@ -151,6 +153,11 @@ async def update_device(
         "ftps_cert_thumbprint",
     ):
         val = getattr(payload, field)
+        if field in {"ssh_host_fingerprint", "ftps_cert_thumbprint"}:
+            if field in provided_fields:
+                normalized_val = val.strip() if isinstance(val, str) else val
+                setattr(device, field, normalized_val or None)
+            continue
         if val is not None:
             setattr(device, field, val)
 
