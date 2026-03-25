@@ -6,9 +6,9 @@ and ASGITransport, we get 100% accurate coverage tracking from coverage.py becau
 the execution happens purely in the main test thread.
 """
 from unittest.mock import AsyncMock, patch
-import json
 
 import pytest
+from fastapi import Response
 from fastapi import HTTPException
 
 from backend.routers.auth_2fa import (
@@ -56,10 +56,14 @@ async def test_setup_2fa_direct(db_session):
     request.client = MagicMock(host="127.0.0.1")
     request.headers = {}
 
-    resp = await setup_2fa(request=request, current_user="admin", db=db_session)
+    resp = await setup_2fa(
+        request=request,
+        response=Response(),
+        current_user="admin",
+        db=db_session,
+    )
 
     assert resp.qr_code.startswith("data:image/")
-    assert len(resp.secret) == 32
     assert len(resp.backup_codes) == 10
 
     # Test conflict when already enabled
@@ -68,7 +72,12 @@ async def test_setup_2fa_direct(db_session):
     await db_session.commit()
 
     with pytest.raises(HTTPException) as exc:
-        await setup_2fa(request=request, current_user="admin", db=db_session)
+        await setup_2fa(
+            request=request,
+            response=Response(),
+            current_user="admin",
+            db=db_session,
+        )
     assert exc.value.status_code == 409
 
 

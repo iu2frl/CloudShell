@@ -13,7 +13,6 @@ export function TwoFactorModal({ onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [setupStep, setSetupStep] = useState<SetupStep>("idle");
   const [qrCode, setQrCode] = useState<string | null>(null);
-  const [secret, setSecret] = useState<string | null>(null);
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [verifyCode, setVerifyCode] = useState("");
   const [disableCode, setDisableCode] = useState("");
@@ -42,7 +41,6 @@ export function TwoFactorModal({ onClose }: Props) {
     try {
       const response = await setup2FA();
       setQrCode(response.qr_code);
-      setSecret(response.secret);
       setBackupCodes(response.backup_codes);
       setSetupStep("setup");
     } catch (err) {
@@ -268,16 +266,9 @@ export function TwoFactorModal({ onClose }: Props) {
                 </div>
               )}
 
-              <div className="space-y-2">
-                <p className="text-xs text-slate-400 text-center">
-                  Can't scan? Enter this key manually in your authenticator:
-                </p>
-                {secret && (
-                  <div className="bg-slate-800 rounded px-3 py-2 font-mono text-xs text-slate-300 break-all text-center">
-                    {secret}
-                  </div>
-                )}
-              </div>
+              <p className="text-xs text-slate-400 text-center">
+                If you cannot scan this QR code, restart setup to generate a new one.
+              </p>
 
               <div className="border-t border-slate-700 pt-4 space-y-3">
                 <label className="text-xs font-medium text-slate-400 uppercase tracking-wide block">

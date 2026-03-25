@@ -8,7 +8,7 @@ POST /api/auth/2fa/setup        Generate TOTP secret and QR code
 POST /api/auth/2fa/enable       Verify and enable 2FA
 POST /api/auth/2fa/disable      Disable 2FA (requires verification)
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,9 +29,8 @@ router = APIRouter(prefix="/auth/2fa", tags=["auth"])
 # -- Pydantic schemas ----------------------------------------------------------
 
 class TOTPSetupResponse(BaseModel):
-    """Response with QR code, secret, and backup codes."""
+    """Response with QR code and one-time backup codes."""
     qr_code: str
-    secret: str
     backup_codes: list[str]
 
 
@@ -64,6 +63,7 @@ async def get_2fa_status(
 @router.post("/setup", response_model=TOTPSetupResponse)
 async def setup_2fa(
     request: Request,
+    response: Response,
     current_user: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -106,9 +106,12 @@ async def setup_2fa(
     db.add(totp_record)
     await db.commit()
 
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
     return TOTPSetupResponse(
         qr_code=qr_code_base64,
-        secret=secret,
         backup_codes=backup_codes,
     )
 

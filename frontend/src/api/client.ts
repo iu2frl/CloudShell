@@ -496,7 +496,6 @@ export async function importConfig(file: File): Promise<ImportResult> {
 
 export interface TOTPSetupResponse {
   qr_code: string;
-  secret: string;
   backup_codes: string[];
 }
 

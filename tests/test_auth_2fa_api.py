@@ -41,7 +41,7 @@ class TestTwoFactorAuthAPI:
         assert data["enabled"] is False
 
     async def test_setup_2fa_generates_qr_code(self, client: AsyncClient):
-        """Setup endpoint should return QR code, secret, and backup codes."""
+        """Setup endpoint should return QR code and backup codes only."""
         headers = await _get_auth_headers(client)
         response = await client.post(
             "/api/auth/2fa/setup",
@@ -52,8 +52,7 @@ class TestTwoFactorAuthAPI:
         
         assert "qr_code" in data
         assert data["qr_code"].startswith("data:image/png;base64,")
-        assert "secret" in data
-        assert len(data["secret"]) == 32
+        assert "secret" not in data
         assert "backup_codes" in data
         assert len(data["backup_codes"]) == 10
         # Codes should be in format XXXX-XXXX
@@ -61,8 +60,20 @@ class TestTwoFactorAuthAPI:
             assert len(code) == 9
             assert code[4] == "-"
 
+    async def test_setup_2fa_sets_no_store_headers(self, client: AsyncClient):
+        """Setup response should disable HTTP caching for sensitive payloads."""
+        headers = await _get_auth_headers(client)
+        response = await client.post(
+            "/api/auth/2fa/setup",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, max-age=0"
+        assert response.headers["Pragma"] == "no-cache"
+        assert response.headers["Expires"] == "0"
+
     async def test_setup_2fa_fails_if_already_enabled(
-        self, client: AsyncClient
+        self, client: AsyncClient, db_session
     ):
         """Should reject setup if 2FA already enabled."""
         import pyotp
@@ -75,7 +86,9 @@ class TestTwoFactorAuthAPI:
             headers=headers,
         )
         assert response.status_code == 200
-        secret = response.json()["secret"]
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        secret = record.secret
         
         # Enable it
         totp = pyotp.TOTP(secret)
@@ -118,7 +131,7 @@ class TestTwoFactorAuthAPI:
         assert "Invalid or expired token" in response.json()["detail"]
 
     async def test_enable_2fa_with_valid_token(
-        self, client: AsyncClient
+        self, client: AsyncClient, db_session
     ):
         """Should enable 2FA with valid TOTP token."""
         import pyotp
@@ -131,7 +144,9 @@ class TestTwoFactorAuthAPI:
             headers=headers,
         )
         assert response.status_code == 200
-        secret = response.json()["secret"]
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        secret = record.secret
         
         # Generate valid code
         totp = pyotp.TOTP(secret)
@@ -154,7 +169,7 @@ class TestTwoFactorAuthAPI:
         assert response.json()["enabled"] is True
 
     async def test_disable_2fa_requires_valid_token(
-        self, client: AsyncClient
+        self, client: AsyncClient, db_session
     ):
         """Should reject invalid TOTP when disabling."""
         import pyotp
@@ -166,7 +181,10 @@ class TestTwoFactorAuthAPI:
             "/api/auth/2fa/setup",
             headers=headers,
         )
-        secret = response.json()["secret"]
+        assert response.status_code == 200
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        secret = record.secret
         totp = pyotp.TOTP(secret)
         
         response = await client.post(
@@ -186,7 +204,7 @@ class TestTwoFactorAuthAPI:
         assert "Invalid or expired token" in response.json()["detail"]
 
     async def test_disable_2fa_with_valid_token(
-        self, client: AsyncClient
+        self, client: AsyncClient, db_session
     ):
         """Should disable 2FA with valid TOTP token."""
         import pyotp
@@ -198,7 +216,10 @@ class TestTwoFactorAuthAPI:
             "/api/auth/2fa/setup",
             headers=headers,
         )
-        secret = response.json()["secret"]
+        assert response.status_code == 200
+        record = await db_session.get(AdminTOTPSecret, "admin")
+        assert record is not None
+        secret = record.secret
         totp = pyotp.TOTP(secret)
         
         response = await client.post(
@@ -279,14 +300,12 @@ class TestTwoFactorAuthAPI:
             headers=headers,
         )
         assert response.status_code == 200
-        setup_secret = response.json()["secret"]
 
         query = await db_session.execute(
             text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
         )
         raw_secret = query.scalar_one()
-        assert raw_secret != setup_secret
 
         record = await db_session.get(AdminTOTPSecret, "admin")
         assert record is not None
-        assert record.secret == setup_secret
+        assert raw_secret != record.secret
