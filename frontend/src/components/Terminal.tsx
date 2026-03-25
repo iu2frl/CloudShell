@@ -3,7 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { Device, SshHostChallengeDetail, SshHostChallengeError, openSession, terminalWsUrl } from "../api/client";
+import { Device, SshHostChallengeDetail, SshHostChallengeError, createTerminalWsTicket, openSession, terminalWsUrl } from "../api/client";
 import { RefreshCw, Wifi, WifiOff, Loader, Copy } from "lucide-react";
 import { useToast } from "./Toast";
 import { FingerprintTrustModal } from "./FingerprintTrustModal";
@@ -143,7 +143,26 @@ export function Terminal({ device }: TerminalProps) {
       return;
     }
 
-    const url = terminalWsUrl(sessionId);
+    let wsTicket: string;
+    try {
+      const ticketResponse = await createTerminalWsTicket(sessionId);
+      wsTicket = ticketResponse.ticket;
+    } catch (err) {
+      retriesRef.current += 1;
+      const msg = String(err);
+      term.writeln(`\r\n\x1b[31m[websocket ticket failed: ${msg}]\x1b[0m`);
+      if (retriesRef.current >= MAX_RETRIES) {
+        term.writeln(`\r\n\x1b[31m[max retries (${MAX_RETRIES}) reached — click reconnect to try again]\x1b[0m`);
+        setConnState("failed");
+      } else {
+        setConnState("error");
+      }
+      toastRef.current.error(`${device.name}: ${msg}`);
+      connectingRef.current = false;
+      return;
+    }
+
+    const url = terminalWsUrl(sessionId, wsTicket);
     const ws  = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;

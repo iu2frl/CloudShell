@@ -1,6 +1,9 @@
 import logging
 import tempfile
 import os
+import secrets
+import asyncio
+from datetime import datetime, timedelta, timezone
 
 import asyncssh
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -30,6 +33,49 @@ from backend.services.ssh import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/terminal", tags=["terminal"])
+
+_WS_TICKET_TTL_SECONDS = 30
+_ws_tickets: dict[str, tuple[str, str, datetime]] = {}
+_ws_tickets_lock = asyncio.Lock()
+
+
+async def _issue_ws_ticket(session_id: str, username: str) -> str:
+    ticket = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=_WS_TICKET_TTL_SECONDS)
+    async with _ws_tickets_lock:
+        _ws_tickets[ticket] = (session_id, username, expires_at)
+    return ticket
+
+
+async def _consume_ws_ticket(ticket: str, session_id: str) -> str | None:
+    now = datetime.now(timezone.utc)
+    async with _ws_tickets_lock:
+        for key, (_, _, expiry) in list(_ws_tickets.items()):
+            if expiry <= now:
+                _ws_tickets.pop(key, None)
+
+        payload = _ws_tickets.pop(ticket, None)
+        if not payload:
+            return None
+        ticket_session_id, username, expiry = payload
+        if expiry <= now or ticket_session_id != session_id:
+            return None
+        return username
+
+
+@router.post("/ws-ticket/{session_id}")
+async def create_ws_ticket(
+    session_id: str,
+    _: Request,
+    current_user: str = Depends(get_current_user),
+):
+    """Issue a short-lived, single-use ticket for terminal WebSocket auth."""
+    _, audit_user, _ = get_session_meta(session_id)
+    if not audit_user or audit_user != current_user:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    ticket = await _issue_ws_ticket(session_id, current_user)
+    return {"ticket": ticket, "expires_in": _WS_TICKET_TTL_SECONDS}
 
 
 @router.post("/session/{device_id}")
@@ -160,35 +206,45 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
     from jose import JWTError, jwt as jose_jwt
     from backend.routers.auth import ALGORITHM, _get_boot_id, _is_revoked
 
+    ticket = websocket.query_params.get("ticket")
     token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001)
-        return
 
     username = "unknown"
     source_ip: str | None = None
-    try:
-        settings = get_settings()
-        payload = jose_jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        jti = payload.get("jti")
-        if not jti:
+
+    if ticket:
+        consumed_username = await _consume_ws_ticket(ticket, session_id)
+        if not consumed_username:
             await websocket.close(code=4001)
             return
-        if payload.get("bid") != _get_boot_id():
+        username = consumed_username
+        source_ip = get_client_ip(websocket)  # type: ignore[arg-type]
+    else:
+        if not token:
             await websocket.close(code=4001)
             return
 
-        async with AsyncSessionLocal() as db:
-            if await _is_revoked(jti, db):
+        try:
+            settings = get_settings()
+            payload = jose_jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+            jti = payload.get("jti")
+            if not jti:
+                await websocket.close(code=4001)
+                return
+            if payload.get("bid") != _get_boot_id():
                 await websocket.close(code=4001)
                 return
 
-        username = payload.get("sub", "unknown")
-        # Reuse the same trusted-proxy logic as audit/rate-limit helpers
-        source_ip = get_client_ip(websocket)  # type: ignore[arg-type]
-    except (JWTError, ValueError, RuntimeError):
-        await websocket.close(code=4001)
-        return
+            async with AsyncSessionLocal() as db:
+                if await _is_revoked(jti, db):
+                    await websocket.close(code=4001)
+                    return
+
+            username = payload.get("sub", "unknown")
+            source_ip = get_client_ip(websocket)  # type: ignore[arg-type]
+        except (JWTError, ValueError, RuntimeError):
+            await websocket.close(code=4001)
+            return
 
     await websocket.accept()
     try:

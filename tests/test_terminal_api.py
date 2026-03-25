@@ -236,3 +236,40 @@ async def test_ws_invalid_token_closes_4001(client):
             f"/api/terminal/ws/{fake_session_id}?token=this.is.garbage"
         ) as ws:
             await ws.receive_json()
+
+
+# -- POST /api/terminal/ws-ticket/{session_id} --------------------------------
+
+async def test_create_ws_ticket_requires_auth(client):
+    """Issuing a websocket ticket without auth must return 401."""
+    resp = await client.post(f"/api/terminal/ws-ticket/{_make_fake_session_id()}")
+    assert resp.status_code == 401
+
+
+async def test_create_ws_ticket_returns_ticket_for_owned_session(auth_client):
+    """Authenticated user can mint a short-lived websocket ticket for own session."""
+    fake_session_id = _make_fake_session_id()
+
+    with patch(
+        "backend.routers.terminal.get_session_meta",
+        return_value=("Box", "admin", "127.0.0.1"),
+    ):
+        resp = await auth_client.post(f"/api/terminal/ws-ticket/{fake_session_id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body.get("ticket"), str)
+    assert body.get("expires_in") == 30
+
+
+async def test_create_ws_ticket_rejects_foreign_session(auth_client):
+    """Authenticated user cannot mint websocket ticket for another user's session."""
+    fake_session_id = _make_fake_session_id()
+
+    with patch(
+        "backend.routers.terminal.get_session_meta",
+        return_value=("Box", "other-user", "127.0.0.1"),
+    ):
+        resp = await auth_client.post(f"/api/terminal/ws-ticket/{fake_session_id}")
+
+    assert resp.status_code == 404

@@ -188,6 +188,41 @@ async def test_ws_stream_exception_sends_error_frame(auth_client):
     assert b"boom" in sent_data
 
 
+async def test_ws_ticket_auth_accepted_without_token():
+    """A valid short-lived websocket ticket should authenticate without JWT query token."""
+    from fastapi import WebSocket
+    from backend.routers.terminal import _issue_ws_ticket, terminal_ws
+
+    fake_session_id = str(uuid.uuid4())
+    ticket = await _issue_ws_ticket(fake_session_id, "admin")
+
+    mock_ws = MagicMock(spec=WebSocket)
+    mock_ws.query_params = {"ticket": ticket}
+    mock_ws.headers = {}
+    mock_ws.client = MagicMock()
+    mock_ws.client.host = "127.0.0.1"
+    mock_ws.accept = AsyncMock()
+    mock_ws.close = AsyncMock()
+    mock_ws.send_bytes = AsyncMock()
+
+    with (
+        patch("backend.routers.terminal.stream_session", new=AsyncMock(return_value=None)) as mock_stream,
+        patch("backend.routers.terminal.get_session_meta", return_value=("", "admin", "127.0.0.1")),
+        patch("backend.routers.terminal.close_session", new=AsyncMock()),
+        patch("backend.routers.terminal.write_audit", new=AsyncMock()),
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
+    ):
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_sl.return_value = mock_ctx
+
+        await terminal_ws(fake_session_id, mock_ws)
+
+    mock_ws.accept.assert_called_once()
+    mock_stream.assert_called_once_with(fake_session_id, mock_ws)
+
+
 # -- WebSocket: X-Forwarded-For / X-Real-IP header parsing --------------------
 
 async def test_ws_x_real_ip_extracted(auth_client):

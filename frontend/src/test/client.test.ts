@@ -10,7 +10,7 @@
  * - isLoggedIn: true when token is valid and not yet expired
  * - terminalWsUrl: uses ws:// on http:
  * - terminalWsUrl: uses wss:// on https:
- * - terminalWsUrl: embeds session id and token in the URL
+ * - terminalWsUrl: embeds session id and short-lived ticket in the URL
  * - request: throws "Session expired" on 401 and fires cloudshell:session-expired
  * - request: throws parsed detail message on non-ok response
  * - request: returns undefined on 204
@@ -108,28 +108,27 @@ describe('terminalWsUrl', () => {
 
   it('uses ws:// when the page is served over http', () => {
     mockProtocol('http:');
-    expect(terminalWsUrl('sess-1')).toMatch(/^ws:\/\//);
+    expect(terminalWsUrl('sess-1', 'ticket')).toMatch(/^ws:\/\//);
   });
 
   it('uses wss:// when the page is served over https', () => {
     mockProtocol('https:');
-    expect(terminalWsUrl('sess-1')).toMatch(/^wss:\/\//);
+    expect(terminalWsUrl('sess-1', 'ticket')).toMatch(/^wss:\/\//);
   });
 
   it('embeds the session id in the URL path', () => {
     mockProtocol('http:');
-    expect(terminalWsUrl('my-session-id')).toContain('/my-session-id');
+    expect(terminalWsUrl('my-session-id', 'ticket-123')).toContain('/my-session-id');
   });
 
-  it('appends the stored token as a query parameter', () => {
+  it('appends the provided ticket as a query parameter', () => {
     mockProtocol('http:');
-    localStorage.setItem('token', 'testtoken123');
-    expect(terminalWsUrl('s')).toContain('token=testtoken123');
+    expect(terminalWsUrl('s', 'ticket-abc')).toContain('ticket=ticket-abc');
   });
 
-  it('uses an empty token when none is stored', () => {
+  it('URL-encodes the ticket query parameter', () => {
     mockProtocol('http:');
-    expect(terminalWsUrl('s')).toContain('token=');
+    expect(terminalWsUrl('s', 'a b/c?d')).toContain('ticket=a%20b%2Fc%3Fd');
   });
 });
 
@@ -240,6 +239,19 @@ describe('SSH host trust challenge API functions', () => {
     const id = await openSftpSession(9, { trustHost: true });
     expect(id).toBe('sftp-sess-1');
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/sftp/session/9?trust_host=true');
+  });
+
+  it('createTerminalWsTicket returns ticket payload', async () => {
+    const { createTerminalWsTicket } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ticket: 'ws-ticket-1', expires_in: 30 }),
+    }));
+
+    const data = await createTerminalWsTicket('sess-123');
+    expect(data.ticket).toBe('ws-ticket-1');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/terminal/ws-ticket/sess-123');
   });
 
   it('openSession throws SshHostChallengeError on 409 challenge', async () => {

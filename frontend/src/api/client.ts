@@ -243,10 +243,21 @@ export async function openSession(
   return (data as { session_id: string }).session_id;
 }
 
-export function terminalWsUrl(sessionId: string): string {
-  const token = localStorage.getItem("token") ?? "";
+export interface TerminalWsTicket {
+  ticket: string;
+  expires_in: number;
+}
+
+export async function createTerminalWsTicket(sessionId: string): Promise<TerminalWsTicket> {
+  return request<TerminalWsTicket>(`/terminal/ws-ticket/${sessionId}`, {
+    method: "POST",
+  });
+}
+
+export function terminalWsUrl(sessionId: string, ticket: string): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.host}/api/terminal/ws/${sessionId}?token=${token}`;
+  const encodedTicket = encodeURIComponent(ticket);
+  return `${proto}://${window.location.host}/api/terminal/ws/${sessionId}?ticket=${encodedTicket}`;
 }
 
 // -- Audit ---------------------------------------------------------------------
