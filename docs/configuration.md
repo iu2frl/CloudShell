@@ -18,6 +18,10 @@ All configuration is via environment variables (or a `.env` file):
 openssl rand -hex 32
 ```
 
+If `ENVIRONMENT` is set to a non-development value, CloudShell refuses startup when
+`SECRET_KEY` is still the default (`changeme-please-set-in-env`). This is a hard
+startup guard to prevent insecure deployments.
+
 ## Security notes
 
 CloudShell is designed with defense-in-depth for the sensitive data it handles:
