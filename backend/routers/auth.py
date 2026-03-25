@@ -199,7 +199,7 @@ async def login(
 
     totp_record = await db.get(AdminTOTPSecret, form_data.username)
     if totp_record and totp_record.is_enabled:
-        from backend.services.totp import TOTPService
+        from backend.services.totp import TOTPService, DeprecatedBackupCodeFormatError
         if not totp_code:
             # We return a specific error that the frontend can intercept 
             # to know that 2FA is required.
@@ -214,10 +214,22 @@ async def login(
         if not is_valid_totp:
             # Check backup codes if TOTPs fail.
             # Backup codes are stored hashed; on success we consume (remove) the used one.
-            ok, updated_json = TOTPService.verify_and_consume_backup_code(
-                getattr(totp_record, "backup_codes", None),
-                totp_code,
-            )
+            try:
+                ok, updated_json = TOTPService.verify_and_consume_backup_code(
+                    getattr(totp_record, "backup_codes", None),
+                    totp_code,
+                )
+            except DeprecatedBackupCodeFormatError as exc:
+                await write_audit(
+                    db, form_data.username, ACTION_2FA_FAILED,
+                    detail="Deprecated backup-code hash detected; regeneration required",
+                    source_ip=get_client_ip(request),
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Backup codes must be regenerated",
+                ) from exc
+
             if ok:
                 totp_record.backup_codes = updated_json
                 await db.commit()

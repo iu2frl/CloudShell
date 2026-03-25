@@ -23,6 +23,10 @@ import base64
 log = logging.getLogger(__name__)
 
 
+class DeprecatedBackupCodeFormatError(ValueError):
+    """Raised when legacy SHA256 backup-code hashes are encountered."""
+
+
 class TOTPService:
     """Service for managing TOTP-based two-factor authentication."""
 
@@ -199,7 +203,6 @@ class TOTPService:
 
         matched = False
         remaining: list[str] = []
-        upgraded_any = False
 
         for entry in stored:
             if matched:
@@ -223,35 +226,14 @@ class TOTPService:
                 remaining.append(entry)
                 continue
 
-            # Legacy sha256 hex entries: verify and opportunistically upgrade
+            # Legacy sha256 entries are no longer accepted.
             if TOTPService._is_sha256_hex_digest(entry):
-                import hashlib  # local import to keep module deps tidy
-
-                digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-                if secrets.compare_digest(entry, digest):
-                    matched = True
-                    upgraded_any = True
-                    continue
-
-                remaining.append(entry)
-                continue
+                raise DeprecatedBackupCodeFormatError(
+                    "Legacy SHA256 backup codes are deprecated and must be regenerated"
+                )
 
             # Unknown format: keep it (best-effort)
             remaining.append(entry)
-
-        # If we matched a legacy sha256 entry, we can upgrade the remaining legacy
-        # entries to bcrypt in-place. This happens as a side-effect of a successful
-        # recovery login.
-        if upgraded_any and remaining:
-            upgraded: list[str] = []
-            for entry in remaining:
-                if isinstance(entry, str) and TOTPService._is_sha256_hex_digest(entry):
-                    # Can't reverse sha256 digests to recover the original code,
-                    # so we cannot upgrade these entries safely.
-                    upgraded.append(entry)
-                else:
-                    upgraded.append(entry)
-            remaining = upgraded
 
         return matched, json.dumps(remaining)
 

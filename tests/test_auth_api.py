@@ -31,6 +31,7 @@ Tests cover:
   - unauthenticated request returns 401
 """
 from datetime import datetime, timezone
+import hashlib
 
 
 # -- POST /api/auth/token ------------------------------------------------------
@@ -217,6 +218,58 @@ async def test_login_valid_2fa(client, monkeypatch):
     )
     assert response.status_code == 200
     assert "access_token" in response.json()
+
+    app.dependency_overrides.clear()
+
+
+async def test_login_rejects_legacy_sha256_backup_codes(client, monkeypatch):
+    """Legacy SHA256 backup-code hashes should require regeneration."""
+    from backend.routers import auth
+
+    async def mock_verify_credentials(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(auth, "_verify_credentials", mock_verify_credentials)
+
+    class MockTOTPRecord:
+        is_enabled = True
+        secret = "SECRET"
+        backup_codes = '["' + hashlib.sha256("AAAA-BBBB".encode("utf-8")).hexdigest() + '"]'
+
+    class MockDB:
+        async def get(self, model, ident):
+            return MockTOTPRecord()
+
+        async def execute(self, *args, **kwargs):
+            class MockResult:
+                def scalar_one_or_none(self):
+                    return None
+
+            return MockResult()
+
+        def add(self, *args, **kwargs):
+            pass
+
+        async def commit(self):
+            pass
+
+    async def override_get_db():
+        yield MockDB()
+
+    from backend.main import app
+
+    app.dependency_overrides[auth.get_db] = override_get_db
+
+    from backend.services.totp import TOTPService
+
+    monkeypatch.setattr(TOTPService, "verify_token", lambda *args, **kwargs: False)
+
+    response = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "password", "totp_code": "AAAA-BBBB"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Backup codes must be regenerated"
 
     app.dependency_overrides.clear()
 

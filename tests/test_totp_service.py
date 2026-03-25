@@ -1,6 +1,10 @@
 """
 tests/test_totp_service.py — Unit tests for TOTP service.
 """
+import hashlib
+
+import pytest
+
 from backend.services.totp import TOTPService
 
 
@@ -162,3 +166,11 @@ class TestTOTPService:
         ok, updated = TOTPService.verify_and_consume_backup_code(stored, "EEEE-FFFF")
         assert ok is False
         assert TOTPService.codes_from_json(updated) == TOTPService.codes_from_json(stored)
+
+    def test_verify_and_consume_backup_code_rejects_legacy_sha256(self):
+        """Legacy SHA256 backup-code hashes should be rejected."""
+        digest = hashlib.sha256("AAAA-BBBB".encode("utf-8")).hexdigest()
+        stored = TOTPService.codes_to_json([digest], hashed=False)
+
+        with pytest.raises(ValueError, match="deprecated"):
+            TOTPService.verify_and_consume_backup_code(stored, "AAAA-BBBB")
