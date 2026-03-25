@@ -19,6 +19,7 @@ export function TwoFactorModal({ onClose }: Props) {
   const [disableCode, setDisableCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [backupCodesAcknowledged, setBackupCodesAcknowledged] = useState(false);
 
   useEffect(() => {
     fetchStatus();
@@ -123,7 +124,12 @@ export function TwoFactorModal({ onClose }: Props) {
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white transition-colors"
+            disabled={setupStep === "success" && !backupCodesAcknowledged}
+            className={`transition-colors ${
+              setupStep === "success" && !backupCodesAcknowledged
+                ? "text-slate-600 cursor-not-allowed"
+                : "text-slate-400 hover:text-white"
+            }`}
           >
             <X size={20} />
           </button>
@@ -225,10 +231,26 @@ export function TwoFactorModal({ onClose }: Props) {
                       Copy to Clipboard
                     </button>
                   </div>
+
+                  <label className="flex items-center gap-2 mt-4 cursor-pointer text-yellow-100 group">
+                    <input
+                      type="checkbox"
+                      checked={backupCodesAcknowledged}
+                      onChange={(e) => setBackupCodesAcknowledged(e.target.checked)}
+                      className="w-4 h-4 rounded border-yellow-700 bg-slate-900/50 text-yellow-600 focus:ring-yellow-600 focus:ring-offset-slate-900"
+                    />
+                    <span className="text-xs font-medium group-hover:text-yellow-50 transition-colors">
+                      I have securely saved these backup codes
+                    </span>
+                  </label>
                 </div>
               )}
 
-              <button onClick={onClose} className="btn-primary w-full mt-4">
+              <button 
+                onClick={onClose} 
+                disabled={!backupCodesAcknowledged}
+                className="btn-primary w-full mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 Close
               </button>
             </div>
