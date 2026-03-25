@@ -11,9 +11,9 @@ Provides utilities for:
 import json
 import secrets
 import logging
-import hmac
-import hashlib
 from typing import Optional
+
+import bcrypt
 
 import pyotp
 import qrcode
@@ -131,25 +131,31 @@ class TOTPService:
         return codes
 
     @staticmethod
+    def _normalize_backup_code(code: str) -> str:
+        """Normalize user input so verification is consistent."""
+        return (code or "").strip().upper()
+
+    @staticmethod
     def hash_backup_code(code: str) -> str:
-        """Hash a single backup code for storage.
+        """Hash a single backup code for storage using bcrypt.
 
-        Notes:
-            - We purposely use a one-way hash so a DB read doesn't reveal usable
-              backup codes.
-            - This is an online-checked secret (like a password). A slow KDF
-              would be stronger, but sha256 is a pragmatic baseline with no new
-              dependencies.
-
-        Args:
-            code: Backup code in the format produced by generate_backup_codes()
-
-        Returns:
-            Hex-encoded sha256 digest.
+        We store the bcrypt hash as a UTF-8 string.
         """
-        normalized = (code or "").strip().upper()
-        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-        return digest
+        normalized = TOTPService._normalize_backup_code(code)
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(normalized.encode("utf-8"), salt)
+        return hashed.decode("utf-8")
+
+    @staticmethod
+    def _is_sha256_hex_digest(value: str) -> bool:
+        """Best-effort detection of legacy sha256 hex digests (64 hex chars)."""
+        if not isinstance(value, str) or len(value) != 64:
+            return False
+        try:
+            int(value, 16)
+            return True
+        except ValueError:
+            return False
 
     @staticmethod
     def hash_backup_codes(codes: list[str]) -> list[str]:
@@ -189,16 +195,63 @@ class TOTPService:
         if not stored:
             return False, TOTPService.codes_to_json([], hashed=False)
 
-        provided_hash = TOTPService.hash_backup_code(provided_code)
+        normalized = TOTPService._normalize_backup_code(provided_code)
 
-        # Constant-time compare each entry, keep all non-matching entries.
         matched = False
         remaining: list[str] = []
+        upgraded_any = False
+
         for entry in stored:
-            if hmac.compare_digest(entry, provided_hash) and not matched:
-                matched = True
+            if matched:
+                remaining.append(entry)
                 continue
+
+            if not isinstance(entry, str) or not entry:
+                continue
+
+            # bcrypt hash entries
+            if entry.startswith("$2"):
+                try:
+                    if bcrypt.checkpw(normalized.encode("utf-8"), entry.encode("utf-8")):
+                        matched = True
+                        continue
+                except (ValueError, TypeError):
+                    # Corrupted hash: ignore.
+                    remaining.append(entry)
+                    continue
+
+                remaining.append(entry)
+                continue
+
+            # Legacy sha256 hex entries: verify and opportunistically upgrade
+            if TOTPService._is_sha256_hex_digest(entry):
+                import hashlib  # local import to keep module deps tidy
+
+                digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+                if secrets.compare_digest(entry, digest):
+                    matched = True
+                    upgraded_any = True
+                    continue
+
+                remaining.append(entry)
+                continue
+
+            # Unknown format: keep it (best-effort)
             remaining.append(entry)
+
+        # If we matched a legacy sha256 entry, we can upgrade the remaining legacy
+        # entries to bcrypt in-place. This happens as a side-effect of a successful
+        # recovery login.
+        if upgraded_any and remaining:
+            upgraded: list[str] = []
+            for entry in remaining:
+                if isinstance(entry, str) and TOTPService._is_sha256_hex_digest(entry):
+                    # Can't reverse sha256 digests to recover the original code,
+                    # so we cannot upgrade these entries safely.
+                    upgraded.append(entry)
+                else:
+                    upgraded.append(entry)
+            remaining = upgraded
 
         return matched, json.dumps(remaining)
 

@@ -265,4 +265,4 @@ class TestTwoFactorAuthAPI:
         assert stored_codes != backup_codes
         assert len(stored_codes) == len(backup_codes)
         assert all(isinstance(x, str) for x in stored_codes)
-        assert all(len(x) == 64 for x in stored_codes)  # sha256 hex digests
+        assert all(x.startswith("$2") for x in stored_codes)  # bcrypt hashes

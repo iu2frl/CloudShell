@@ -119,7 +119,7 @@ class TestTOTPService:
         recovered = TOTPService.codes_from_json(json_str)
         assert len(recovered) == 2
         assert all(isinstance(x, str) for x in recovered)
-        assert all(len(x) == 64 for x in recovered)  # sha256 hex
+        assert all(x.startswith("$2") for x in recovered)  # bcrypt
 
     def test_codes_from_json(self):
         """Should deserialize codes from JSON."""
