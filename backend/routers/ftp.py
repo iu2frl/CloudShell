@@ -21,7 +21,6 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config import get_settings
 from backend.database import get_db
 from backend.models.device import ConnectionType, Device
 from backend.routers.auth import get_current_user
@@ -83,44 +82,37 @@ async def open_session(
     expected_thumbprint: str | None = None
 
     if use_tls:
-        settings = get_settings()
-        if settings.ftps_allow_insecure:
-            log.warning(
-                "FTPS certificate validation bypassed for device %s because FTPS_ALLOW_INSECURE is enabled",
-                device.id,
-            )
-        else:
-            try:
-                presented_thumbprint = await probe_ftps_thumbprint(device.hostname, device.port)
-            except FTPSCertificateUnavailableError as exc:
-                raise HTTPException(status_code=502, detail=f"FTPS certificate unavailable: {exc}") from exc
+        try:
+            presented_thumbprint = await probe_ftps_thumbprint(device.hostname, device.port)
+        except FTPSCertificateUnavailableError as exc:
+            raise HTTPException(status_code=502, detail=f"FTPS certificate unavailable: {exc}") from exc
 
-            pinned_thumbprint = device.ftps_cert_thumbprint
-            if pinned_thumbprint is None:
-                if not trust_cert:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "code": "FTPS_CERT_UNTRUSTED",
-                            "thumbprint": presented_thumbprint,
-                        },
-                    )
-                device.ftps_cert_thumbprint = presented_thumbprint
-                await db.commit()
-            elif pinned_thumbprint != presented_thumbprint:
-                if not trust_cert:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "code": "FTPS_CERT_CHANGED",
-                            "thumbprint": presented_thumbprint,
-                            "previous_thumbprint": pinned_thumbprint,
-                        },
-                    )
-                device.ftps_cert_thumbprint = presented_thumbprint
-                await db.commit()
+        pinned_thumbprint = device.ftps_cert_thumbprint
+        if pinned_thumbprint is None:
+            if not trust_cert:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "FTPS_CERT_UNTRUSTED",
+                        "thumbprint": presented_thumbprint,
+                    },
+                )
+            device.ftps_cert_thumbprint = presented_thumbprint
+            await db.commit()
+        elif pinned_thumbprint != presented_thumbprint:
+            if not trust_cert:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "FTPS_CERT_CHANGED",
+                        "thumbprint": presented_thumbprint,
+                        "previous_thumbprint": pinned_thumbprint,
+                    },
+                )
+            device.ftps_cert_thumbprint = presented_thumbprint
+            await db.commit()
 
-            expected_thumbprint = device.ftps_cert_thumbprint
+        expected_thumbprint = device.ftps_cert_thumbprint
 
     try:
         session_id = await open_ftp_session(

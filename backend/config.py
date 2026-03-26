@@ -53,9 +53,17 @@ class Settings(BaseSettings):
                 "Refusing startup with insecure default ADMIN_PASSWORD in non-development environment"
             )
 
+    def _validate_ftps_mode(self) -> None:
+        """Disallow insecure FTPS mode outside development-like environments."""
+        if self.ftps_allow_insecure and not self._is_development_environment():
+            raise ValueError(
+                "Refusing startup with FTPS_ALLOW_INSECURE enabled in non-development environment"
+            )
+
     def model_post_init(self, __context) -> None:
         self._validate_secret_key()
         self._validate_admin_password()
+        self._validate_ftps_mode()
         if not self.db_path:
             self.db_path = os.path.join(self.data_dir, "cloudshell.db")
         if not self.keys_dir:

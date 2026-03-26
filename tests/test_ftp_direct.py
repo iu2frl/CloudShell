@@ -113,14 +113,11 @@ async def test_open_session_success_ftps():
     dev = _make_device(connection_type=ConnectionType.ftps)
     db = _FakeDB(device=dev)
 
-    settings = MagicMock()
-    settings.ftps_allow_insecure = True
-
     with patch("backend.routers.ftp.decrypt", return_value="plain-pw"), \
-         patch("backend.routers.ftp.get_settings", return_value=settings), \
+         patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="AA:BB:CC")), \
          patch("backend.routers.ftp.open_ftp_session", new_callable=AsyncMock, return_value="sess-2") as mock_open, \
          patch("backend.routers.ftp.write_audit", new_callable=AsyncMock):
-        result = await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
+        result = await open_session(device_id=1, request=_FakeRequest(), trust_cert=True, db=db, current_user="admin")
 
     assert result == {"session_id": "sess-2"}
     _, kwargs = mock_open.call_args
@@ -219,14 +216,11 @@ async def test_open_session_writes_ftps_audit_label():
     dev = _make_device(connection_type=ConnectionType.ftps)
     db = _FakeDB(device=dev)
 
-    settings = MagicMock()
-    settings.ftps_allow_insecure = True
-
     with patch("backend.routers.ftp.decrypt", return_value="pw"), \
-         patch("backend.routers.ftp.get_settings", return_value=settings), \
+         patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="AA:BB:CC")), \
          patch("backend.routers.ftp.open_ftp_session", new_callable=AsyncMock, return_value="s"), \
          patch("backend.routers.ftp.write_audit", new_callable=AsyncMock) as mock_audit:
-        await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
+        await open_session(device_id=1, request=_FakeRequest(), trust_cert=True, db=db, current_user="admin")
 
     detail = mock_audit.call_args.kwargs.get("detail", "")
     assert "FTPS" in detail
@@ -237,12 +231,8 @@ async def test_open_session_ftps_probe_unavailable_raises_502():
     dev = _make_device(connection_type=ConnectionType.ftps)
     db = _FakeDB(device=dev)
 
-    settings = MagicMock()
-    settings.ftps_allow_insecure = False
-
     with (
         patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
-        patch("backend.routers.ftp.get_settings", return_value=settings),
         patch(
             "backend.routers.ftp.probe_ftps_thumbprint",
             new=AsyncMock(side_effect=FTPSCertificateUnavailableError("no cert")),
@@ -261,12 +251,8 @@ async def test_open_session_ftps_untrusted_without_confirmation_raises_409():
     dev.ftps_cert_thumbprint = None
     db = _FakeDB(device=dev)
 
-    settings = MagicMock()
-    settings.ftps_allow_insecure = False
-
     with (
         patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
-        patch("backend.routers.ftp.get_settings", return_value=settings),
         patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="AA:BB:CC")),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -283,11 +269,7 @@ async def test_open_session_ftps_untrusted_with_confirmation_pins_certificate():
     dev.ftps_cert_thumbprint = None
     db = _FakeDB(device=dev)
 
-    settings = MagicMock()
-    settings.ftps_allow_insecure = False
-
     with (
-        patch("backend.routers.ftp.get_settings", return_value=settings),
         patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="AA:BB:CC")),
         patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
         patch("backend.routers.ftp.open_ftp_session", new=AsyncMock(return_value="ftps-sess")) as mock_open,
@@ -314,12 +296,8 @@ async def test_open_session_ftps_changed_without_confirmation_raises_409():
     dev.ftps_cert_thumbprint = "OLD:THUMB"
     db = _FakeDB(device=dev)
 
-    settings = MagicMock()
-    settings.ftps_allow_insecure = False
-
     with (
         patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
-        patch("backend.routers.ftp.get_settings", return_value=settings),
         patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="NEW:THUMB")),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -337,11 +315,7 @@ async def test_open_session_ftps_changed_with_confirmation_updates_certificate()
     dev.ftps_cert_thumbprint = "OLD:THUMB"
     db = _FakeDB(device=dev)
 
-    settings = MagicMock()
-    settings.ftps_allow_insecure = False
-
     with (
-        patch("backend.routers.ftp.get_settings", return_value=settings),
         patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="NEW:THUMB")),
         patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
         patch("backend.routers.ftp.open_ftp_session", new=AsyncMock(return_value="ftps-sess")) as mock_open,
@@ -367,12 +341,11 @@ async def test_open_session_ftps_mismatch_error_maps_to_409_changed_cert():
     dev = _make_device(connection_type=ConnectionType.ftps)
     db = _FakeDB(device=dev)
 
-    settings = MagicMock()
-    settings.ftps_allow_insecure = True
+    dev.ftps_cert_thumbprint = "OLD:THUMB"
 
     with (
         patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
-        patch("backend.routers.ftp.get_settings", return_value=settings),
+        patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="OLD:THUMB")),
         patch(
             "backend.routers.ftp.open_ftp_session",
             new=AsyncMock(side_effect=FTPSCertificateMismatchError("OLD:THUMB", "NEW:THUMB")),
