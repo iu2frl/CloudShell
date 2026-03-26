@@ -375,6 +375,48 @@ async def test_remember_trusted_device_sets_cookie_and_persists_record():
     assert any("Secure" in value for value in set_cookie_values)
 
 
+async def test_remember_trusted_device_sets_secure_cookie_when_trusted_xfp_https(monkeypatch):
+    """Trusted proxy + X-Forwarded-Proto=https should set Secure cookie."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "127.0.0.1")
+
+    db = _FakeDB()
+    response = Response()
+    request = _FakeRequest()
+    request.url.scheme = "http"
+    request.headers = Headers(headers={"x-forwarded-proto": "https"})
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    await _remember_trusted_device("admin", response, request, db)
+
+    set_cookie_values = response.headers.getlist("set-cookie")
+    assert any("cloudshell_trusted_device=" in value for value in set_cookie_values)
+    assert any("Secure" in value for value in set_cookie_values)
+    get_settings.cache_clear()
+
+
+async def test_remember_trusted_device_does_not_trust_untrusted_xfp(monkeypatch):
+    """Untrusted peers must not force Secure cookie via X-Forwarded-Proto."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
+
+    db = _FakeDB()
+    response = Response()
+    request = _FakeRequest()
+    request.url.scheme = "http"
+    request.headers = Headers(headers={"x-forwarded-proto": "https"})
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    await _remember_trusted_device("admin", response, request, db)
+
+    set_cookie_values = response.headers.getlist("set-cookie")
+    assert any("cloudshell_trusted_device=" in value for value in set_cookie_values)
+    assert all("Secure" not in value for value in set_cookie_values)
+    get_settings.cache_clear()
+
+
 async def test_login_direct_backup_code_used_low_warning_and_remember_device():
     """login should consume backup code, warn when low, and remember device when requested."""
     from fastapi.security import OAuth2PasswordRequestForm

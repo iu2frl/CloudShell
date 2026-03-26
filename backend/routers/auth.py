@@ -128,6 +128,30 @@ def _is_truthy_form_flag(value: str | None) -> bool:
     return normalized in {"1", "true", "yes", "on"}
 
 
+def _is_secure_request(request: Request) -> bool:
+    """Return True when the original client-facing request used HTTPS.
+
+    Trust X-Forwarded-Proto only when the direct peer is listed in
+    TRUSTED_PROXIES.
+    """
+    if request.url.scheme == "https":
+        return True
+
+    peer_ip = request.client.host if request.client else "unknown"
+    settings = get_settings()
+    trusted_proxies = {
+        item.strip() for item in settings.trusted_proxies.split(",") if item.strip()
+    }
+
+    if peer_ip in trusted_proxies:
+        forwarded_proto = request.headers.get("x-forwarded-proto", "")
+        if forwarded_proto:
+            first_hop_proto = forwarded_proto.split(",")[0].strip().lower()
+            return first_hop_proto == "https"
+
+    return False
+
+
 async def _prune_expired_trusted_devices(db: AsyncSession) -> None:
     """Delete expired trusted-device rows."""
     now = datetime.now(timezone.utc)
@@ -182,7 +206,7 @@ async def _remember_trusted_device(
         max_age=REMEMBER_DEVICE_MAX_AGE_SECONDS,
         expires=REMEMBER_DEVICE_MAX_AGE_SECONDS,
         httponly=True,
-        secure=(request.url.scheme == "https"),
+        secure=_is_secure_request(request),
         samesite="lax",
         path="/",
     )
@@ -201,7 +225,7 @@ def _set_auth_cookie(
         max_age=ttl_hours * 60 * 60,
         expires=ttl_hours * 60 * 60,
         httponly=True,
-        secure=(request.url.scheme == "https"),
+        secure=_is_secure_request(request),
         samesite="lax",
         path="/",
     )
@@ -465,7 +489,7 @@ async def logout(
     response.delete_cookie(
         key=AUTH_COOKIE_NAME,
         path="/",
-        secure=(request.url.scheme == "https"),
+        secure=_is_secure_request(request),
         samesite="lax",
     )
 
