@@ -69,6 +69,16 @@ class _FakeDB:
         pass
 
 
+@pytest.fixture(autouse=True)
+def _mock_probe_fingerprint():
+    """Avoid real-network SSH fingerprint probes in direct tests."""
+    with patch(
+        "backend.routers.terminal.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="AA:BB:CC"),
+    ):
+        yield
+
+
 def _password_device(encrypted: bool = True) -> Device:
     d = MagicMock(spec=Device)
     d.id = 1
@@ -79,6 +89,7 @@ def _password_device(encrypted: bool = True) -> Device:
     d.auth_type = AuthType.password
     d.encrypted_password = b"encrypted-blob" if encrypted else None
     d.key_filename = None
+    d.ssh_host_fingerprint = "AA:BB:CC"
     return d
 
 
@@ -92,6 +103,7 @@ def _key_device(has_key: bool = True) -> Device:
     d.auth_type = AuthType.key
     d.encrypted_password = None
     d.key_filename = "deploy.pem" if has_key else None
+    d.ssh_host_fingerprint = "AA:BB:CC"
     return d
 
 
