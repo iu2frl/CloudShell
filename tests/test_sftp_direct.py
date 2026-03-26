@@ -37,6 +37,10 @@ from starlette.datastructures import Headers
 from backend.models.device import AuthType, Device
 from backend.routers.sftp import _resolve_device_credentials, open_session
 from backend.services.audit import ACTION_SESSION_STARTED
+from backend.services.ssh import (
+    SSHHostFingerprintMismatchError,
+    SSHHostFingerprintUnavailableError,
+)
 from backend.services.sftp import (
     _sftp_sessions,
     close_sftp_session,
@@ -65,9 +69,13 @@ class _FakeDB:
 
     def __init__(self, device=None):
         self._device = device
+        self.committed = False
 
     async def get(self, cls, pk):
         return self._device
+
+    async def commit(self):
+        self.committed = True
 
 
 class _FakeSettings:
@@ -521,6 +529,139 @@ async def test_open_session_direct_unlink_oserror_is_swallowed():
         result = await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
 
     assert result["session_id"] == fake_id
+
+
+async def test_open_session_direct_probe_connection_lost_returns_504():
+    """ConnectionLost raised by probe must map to HTTP 504."""
+    device = _password_device(encrypted=False)
+
+    with patch(
+        "backend.routers.sftp.probe_ssh_host_fingerprint",
+        new=AsyncMock(side_effect=asyncssh.ConnectionLost(reason="lost")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
+
+    assert exc_info.value.status_code == 504
+
+
+async def test_open_session_direct_probe_unavailable_with_connectionlost_cause_returns_504():
+    """Unavailable fingerprint wrapping ConnectionLost must map to HTTP 504."""
+    device = _password_device(encrypted=False)
+    error = SSHHostFingerprintUnavailableError("probe failed")
+    error.__cause__ = asyncssh.ConnectionLost(reason="lost")
+
+    with patch(
+        "backend.routers.sftp.probe_ssh_host_fingerprint",
+        new=AsyncMock(side_effect=error),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
+
+    assert exc_info.value.status_code == 504
+
+
+async def test_open_session_direct_untrusted_host_requires_confirmation():
+    """Unpinned host without trust_host must return 409 challenge."""
+    device = _password_device(encrypted=False)
+    device.ssh_host_fingerprint = None
+
+    with patch(
+        "backend.routers.sftp.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="SHA256:NEW"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "SSH_HOST_UNTRUSTED"
+    assert exc_info.value.detail["fingerprint"] == "SHA256:NEW"
+
+
+async def test_open_session_direct_untrusted_host_can_be_pinned_with_trust():
+    """Unpinned host with trust_host must pin fingerprint and commit."""
+    fake_id = str(uuid.uuid4())
+    device = _password_device(encrypted=False)
+    device.ssh_host_fingerprint = None
+    db = _FakeDB(device)
+
+    with (
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:NEW")),
+        patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(return_value=fake_id)) as mock_open,
+        patch("backend.routers.sftp.write_audit", new=AsyncMock()),
+    ):
+        result = await open_session(1, _FakeRequest(), trust_host=True, db=db, current_user="admin")
+
+    assert result["session_id"] == fake_id
+    assert device.ssh_host_fingerprint == "SHA256:NEW"
+    assert db.committed is True
+    _, kwargs = mock_open.call_args
+    assert kwargs["expected_ssh_host_fingerprint"] == "SHA256:NEW"
+
+
+async def test_open_session_direct_changed_host_requires_confirmation():
+    """Changed pinned host without trust_host must return 409 challenge."""
+    device = _password_device(encrypted=False)
+    device.ssh_host_fingerprint = "SHA256:OLD"
+
+    with patch(
+        "backend.routers.sftp.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="SHA256:NEW"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "SSH_HOST_CHANGED"
+    assert exc_info.value.detail["fingerprint"] == "SHA256:NEW"
+    assert exc_info.value.detail["previous_fingerprint"] == "SHA256:OLD"
+
+
+async def test_open_session_direct_changed_host_can_be_replaced_with_trust():
+    """Changed pinned host with trust_host must replace fingerprint and commit."""
+    fake_id = str(uuid.uuid4())
+    device = _password_device(encrypted=False)
+    device.ssh_host_fingerprint = "SHA256:OLD"
+    db = _FakeDB(device)
+
+    with (
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:NEW")),
+        patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(return_value=fake_id)) as mock_open,
+        patch("backend.routers.sftp.write_audit", new=AsyncMock()),
+    ):
+        result = await open_session(1, _FakeRequest(), trust_host=True, db=db, current_user="admin")
+
+    assert result["session_id"] == fake_id
+    assert device.ssh_host_fingerprint == "SHA256:NEW"
+    assert db.committed is True
+    _, kwargs = mock_open.call_args
+    assert kwargs["expected_ssh_host_fingerprint"] == "SHA256:NEW"
+
+
+async def test_open_session_direct_fingerprint_mismatch_error_maps_to_409():
+    """Mismatch from open_sftp_session must map to SSH_HOST_CHANGED 409 payload."""
+    device = _password_device(encrypted=False)
+    device.ssh_host_fingerprint = "SHA256:OLD"
+
+    with (
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:OLD")),
+        patch(
+            "backend.routers.sftp.open_sftp_session",
+            new=AsyncMock(
+                side_effect=SSHHostFingerprintMismatchError(
+                    expected="SHA256:OLD",
+                    presented="SHA256:NEW",
+                )
+            ),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), trust_host=False, db=_FakeDB(device), current_user="admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "SSH_HOST_CHANGED"
+    assert exc_info.value.detail["fingerprint"] == "SHA256:NEW"
+    assert exc_info.value.detail["previous_fingerprint"] == "SHA256:OLD"
 
 
 # -- services/sftp.py: remaining gap lines -------------------------------------
