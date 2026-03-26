@@ -150,6 +150,24 @@ async def test_open_ftp_session_ftps_thumbprint_mismatch_raises():
 
 
 @pytest.mark.asyncio
+async def test_open_ftp_session_ftps_thumbprint_mismatch_quit_error_is_swallowed():
+    """On FTPS thumbprint mismatch, quit() exceptions are swallowed and mismatch still propagates."""
+    fake = _make_fake_client()
+    fake.quit = AsyncMock(side_effect=RuntimeError("quit failed"))
+
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        with pytest.raises(ftp_service.FTPSCertificateMismatchError):
+            await open_ftp_session(
+                hostname="ftp.example.com",
+                port=21,
+                username="user",
+                password="pass",
+                use_tls=True,
+                expected_ftps_thumbprint="AA:BB:CC",
+            )
+
+
+@pytest.mark.asyncio
 async def test_open_ftp_session_anonymous():
     """username=None should fall back to 'anonymous'."""
     fake = _make_fake_client()
@@ -162,6 +180,39 @@ async def test_open_ftp_session_anonymous():
         )
     assert sid in ftp_service._ftp_sessions
     fake.login.assert_awaited_once_with("anonymous", "")
+
+
+def test_get_ftps_peer_thumbprint_raises_when_ssl_object_missing():
+    """get_ftps_peer_thumbprint must raise when TLS socket has no ssl_object."""
+    fake = _make_fake_client()
+    fake.stream.writer.get_extra_info.return_value = None
+
+    with pytest.raises(ftp_service.FTPSCertificateUnavailableError):
+        ftp_service.get_ftps_peer_thumbprint(fake)
+
+
+def test_get_ftps_peer_thumbprint_raises_when_peer_cert_missing():
+    """get_ftps_peer_thumbprint must raise when peer certificate is empty."""
+    fake = _make_fake_client()
+    ssl_obj = MagicMock()
+    ssl_obj.getpeercert.return_value = b""
+    fake.stream.writer.get_extra_info.return_value = ssl_obj
+
+    with pytest.raises(ftp_service.FTPSCertificateUnavailableError):
+        ftp_service.get_ftps_peer_thumbprint(fake)
+
+
+@pytest.mark.asyncio
+async def test_probe_ftps_thumbprint_swallow_quit_exception_and_return_thumbprint():
+    """probe_ftps_thumbprint should still return thumbprint even when quit() raises."""
+    fake = _make_fake_client()
+    fake.quit = AsyncMock(side_effect=RuntimeError("quit failed"))
+
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        thumbprint = await ftp_service.probe_ftps_thumbprint("ftp.example.com", 21)
+
+    assert isinstance(thumbprint, str)
+    assert len(thumbprint) > 0
 
 
 # -- close_ftp_session ---------------------------------------------------------
