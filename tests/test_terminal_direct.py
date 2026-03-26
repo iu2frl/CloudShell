@@ -531,10 +531,7 @@ async def test_ws_direct_unexpected_exception_sends_error_frame():
 async def test_ws_direct_audit_ip_falls_back_to_source_ip():
     """When get_session_meta returns no audit_ip, source_ip from the token decode is used."""
     token = _valid_token()
-    ws = _make_mock_ws(
-        token=token,
-        headers={"x-real-ip": "55.66.77.88"},
-    )
+    ws = _make_mock_ws(token=token, headers={})
     fake_id = str(uuid.uuid4())
     captured_audit_calls: list = []
 
@@ -543,9 +540,10 @@ async def test_ws_direct_audit_ip_falls_back_to_source_ip():
 
     with (
         patch("backend.routers.terminal.stream_session", new=AsyncMock()),
+        patch("backend.routers.terminal.get_client_ip", return_value="55.66.77.88"),
         patch(
             "backend.routers.terminal.get_session_meta",
-            # audit_ip is None → must fall back to source_ip parsed from x-real-ip
+            # audit_ip is None → must fall back to source_ip collected at connect time
             return_value=("MyBox", "admin", None),
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
