@@ -28,6 +28,7 @@ Covers:
 """
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncssh
@@ -35,8 +36,12 @@ import pytest
 from starlette.datastructures import Headers
 
 from backend.models.device import AuthType, Device
-from backend.routers.terminal import open_session, terminal_ws
+from backend.routers.terminal import _consume_ws_ticket, _ws_tickets, open_session, terminal_ws
 from backend.services.audit import ACTION_SESSION_ENDED, ACTION_SESSION_STARTED
+from backend.services.ssh import (
+    SSHHostFingerprintMismatchError,
+    SSHHostFingerprintUnavailableError,
+)
 from fastapi import HTTPException, WebSocketDisconnect
 
 
@@ -58,6 +63,7 @@ class _FakeDB:
 
     def __init__(self, device: Device | None = None):
         self._device = device
+        self.committed = False
 
     async def get(self, cls, pk):
         return self._device
@@ -66,7 +72,7 @@ class _FakeDB:
         pass
 
     async def commit(self):
-        pass
+        self.committed = True
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +95,10 @@ def _mock_revocation_check():
         yield
 
 
-def _password_device(encrypted: bool = True) -> Device:
+def _password_device(
+    encrypted: bool = True,
+    ssh_host_fingerprint: str | None = "AA:BB:CC",
+) -> Device:
     d = MagicMock(spec=Device)
     d.id = 1
     d.name = "test-box"
@@ -99,11 +108,14 @@ def _password_device(encrypted: bool = True) -> Device:
     d.auth_type = AuthType.password
     d.encrypted_password = b"encrypted-blob" if encrypted else None
     d.key_filename = None
-    d.ssh_host_fingerprint = "AA:BB:CC"
+    d.ssh_host_fingerprint = ssh_host_fingerprint
     return d
 
 
-def _key_device(has_key: bool = True) -> Device:
+def _key_device(
+    has_key: bool = True,
+    ssh_host_fingerprint: str | None = "AA:BB:CC",
+) -> Device:
     d = MagicMock(spec=Device)
     d.id = 2
     d.name = "key-box"
@@ -113,8 +125,37 @@ def _key_device(has_key: bool = True) -> Device:
     d.auth_type = AuthType.key
     d.encrypted_password = None
     d.key_filename = "deploy.pem" if has_key else None
-    d.ssh_host_fingerprint = "AA:BB:CC"
+    d.ssh_host_fingerprint = ssh_host_fingerprint
     return d
+
+
+async def test_consume_ws_ticket_purges_expired_and_missing_returns_none():
+    """Expired tickets are purged and missing ticket returns None."""
+    _ws_tickets.clear()
+    _ws_tickets["expired"] = (
+        "sess-1",
+        "admin",
+        datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+
+    consumed = await _consume_ws_ticket("missing", "sess-1")
+
+    assert consumed is None
+    assert "expired" not in _ws_tickets
+
+
+async def test_consume_ws_ticket_session_mismatch_returns_none():
+    """Ticket bound to another session must be rejected."""
+    _ws_tickets.clear()
+    _ws_tickets["ticket-1"] = (
+        "sess-a",
+        "admin",
+        datetime.now(timezone.utc) + timedelta(seconds=60),
+    )
+
+    consumed = await _consume_ws_ticket("ticket-1", "sess-b")
+
+    assert consumed is None
 
 
 # -- open_session --------------------------------------------------------------
@@ -341,6 +382,127 @@ async def test_open_session_direct_asyncssh_error_returns_502():
     assert exc_info.value.status_code == 502
 
 
+async def test_open_session_direct_fingerprint_unavailable_returns_502():
+    """Unavailable SSH fingerprint must map to HTTP 502."""
+    device = _password_device(encrypted=False)
+
+    with patch(
+        "backend.routers.terminal.probe_ssh_host_fingerprint",
+        new=AsyncMock(side_effect=SSHHostFingerprintUnavailableError("probe failed")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
+
+    assert exc_info.value.status_code == 502
+
+
+async def test_open_session_direct_untrusted_host_requires_confirmation():
+    """When no pinned fingerprint exists and trust_host is false, return 409 challenge."""
+    device = _password_device(encrypted=False, ssh_host_fingerprint=None)
+
+    with patch(
+        "backend.routers.terminal.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="11:22:33"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "SSH_HOST_UNTRUSTED"
+    assert exc_info.value.detail["fingerprint"] == "11:22:33"
+
+
+async def test_open_session_direct_untrusted_host_can_be_pinned_with_trust():
+    """When trust_host is true, a new presented fingerprint is pinned and committed."""
+    fake_id = str(uuid.uuid4())
+    device = _password_device(encrypted=False, ssh_host_fingerprint=None)
+    db = _FakeDB(device)
+
+    with (
+        patch(
+            "backend.routers.terminal.probe_ssh_host_fingerprint",
+            new=AsyncMock(return_value="11:22:33"),
+        ),
+        patch("backend.routers.terminal.create_session", new=AsyncMock(return_value=fake_id)) as mock_create,
+        patch("backend.routers.terminal.write_audit", new=AsyncMock()),
+    ):
+        result = await open_session(1, _FakeRequest(), True, db, "admin")
+
+    assert result["session_id"] == fake_id
+    assert device.ssh_host_fingerprint == "11:22:33"
+    assert db.committed is True
+    _, kwargs = mock_create.call_args
+    assert kwargs["expected_ssh_host_fingerprint"] == "11:22:33"
+
+
+async def test_open_session_direct_changed_host_requires_confirmation():
+    """Changed pinned fingerprint with trust_host false must return 409 challenge."""
+    device = _password_device(encrypted=False, ssh_host_fingerprint="AA:AA:AA")
+
+    with patch(
+        "backend.routers.terminal.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="BB:BB:BB"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "SSH_HOST_CHANGED"
+    assert exc_info.value.detail["fingerprint"] == "BB:BB:BB"
+    assert exc_info.value.detail["previous_fingerprint"] == "AA:AA:AA"
+
+
+async def test_open_session_direct_changed_host_can_be_replaced_with_trust():
+    """Changed fingerprint with trust_host true must replace pin and commit."""
+    fake_id = str(uuid.uuid4())
+    device = _password_device(encrypted=False, ssh_host_fingerprint="AA:AA:AA")
+    db = _FakeDB(device)
+
+    with (
+        patch(
+            "backend.routers.terminal.probe_ssh_host_fingerprint",
+            new=AsyncMock(return_value="BB:BB:BB"),
+        ),
+        patch("backend.routers.terminal.create_session", new=AsyncMock(return_value=fake_id)) as mock_create,
+        patch("backend.routers.terminal.write_audit", new=AsyncMock()),
+    ):
+        result = await open_session(1, _FakeRequest(), True, db, "admin")
+
+    assert result["session_id"] == fake_id
+    assert device.ssh_host_fingerprint == "BB:BB:BB"
+    assert db.committed is True
+    _, kwargs = mock_create.call_args
+    assert kwargs["expected_ssh_host_fingerprint"] == "BB:BB:BB"
+
+
+async def test_open_session_direct_fingerprint_mismatch_error_maps_to_409():
+    """Mismatch raised by create_session must map to SSH_HOST_CHANGED payload."""
+    device = _password_device(encrypted=False, ssh_host_fingerprint="AA:AA:AA")
+
+    with (
+        patch(
+            "backend.routers.terminal.probe_ssh_host_fingerprint",
+            new=AsyncMock(return_value="AA:AA:AA"),
+        ),
+        patch(
+            "backend.routers.terminal.create_session",
+            new=AsyncMock(
+                side_effect=SSHHostFingerprintMismatchError(
+                    expected="AA:AA:AA",
+                    presented="CC:CC:CC",
+                )
+            ),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(1, _FakeRequest(), False, _FakeDB(device), "admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "SSH_HOST_CHANGED"
+    assert exc_info.value.detail["fingerprint"] == "CC:CC:CC"
+    assert exc_info.value.detail["previous_fingerprint"] == "AA:AA:AA"
+
+
 # -- terminal_ws ---------------------------------------------------------------
 
 def _make_mock_ws(token: str | None = None, headers: dict | None = None) -> MagicMock:
@@ -385,6 +547,37 @@ async def test_ws_direct_invalid_token_closes_4001():
     """WebSocket with an invalid JWT must be closed with code 4001."""
     ws = _make_mock_ws(token="this.is.garbage")
     await terminal_ws("fake-session", ws)
+    ws.close.assert_called_once_with(code=4001)
+    ws.accept.assert_not_called()
+
+
+async def test_ws_direct_invalid_ticket_closes_4001():
+    """Invalid or already-consumed ticket must close with code 4001."""
+    ws = _make_mock_ws(token=None)
+    ws.query_params = {"ticket": "invalid-ticket"}
+
+    await terminal_ws("fake-session", ws)
+
+    ws.close.assert_called_once_with(code=4001)
+    ws.accept.assert_not_called()
+
+
+async def test_ws_direct_token_missing_jti_closes_4001():
+    """JWT without jti claim must be rejected with code 4001."""
+    from backend.config import get_settings
+    from backend.main import BOOT_ID
+    from jose import jwt as jose_jwt
+
+    settings = get_settings()
+    token = jose_jwt.encode(
+        {"sub": "admin", "bid": BOOT_ID},
+        settings.secret_key,
+        algorithm="HS256",
+    )
+    ws = _make_mock_ws(token=token)
+
+    await terminal_ws("fake-session", ws)
+
     ws.close.assert_called_once_with(code=4001)
     ws.accept.assert_not_called()
 
