@@ -4,17 +4,15 @@ tests/test_terminal_ws_stream.py — coverage for the terminal WebSocket stream 
 Covers uncovered lines in backend/routers/terminal.py:
 - POST /api/terminal/session/{id}: SSH key device path (decrypts PEM → temp file)
 - POST /api/terminal/session/{id}: asyncssh.HostKeyNotVerifiable → 502
-- WebSocket /api/terminal/ws/{session_id}: valid token + known session → stream
-- WebSocket /api/terminal/ws/{session_id}: valid token + SESSION_ENDED audit written
+- WebSocket /api/terminal/ws/{session_id}: valid ticket + known session → stream
+- WebSocket /api/terminal/ws/{session_id}: valid ticket + SESSION_ENDED audit written
 - WebSocket /api/terminal/ws/{session_id}: unexpected exception triggers _ws_error
 """
 import uuid
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncssh
 import pytest
-from jose import jwt as jose_jwt
 from backend.services.crypto import generate_key_pair
 
 
@@ -95,22 +93,23 @@ async def test_open_session_host_key_not_verifiable_returns_502(auth_client):
     assert "Host key not verifiable" in resp.json()["detail"]
 
 
-# -- WebSocket: valid token + working session → stream_session called ---------
+# -- WebSocket: valid ticket + working session → stream_session called --------
 
-async def test_ws_valid_token_accepted_and_stream_called(auth_client):
+async def test_ws_valid_ticket_accepted_and_stream_called():
     """
-    With a valid JWT and a mocked stream_session the WS must be accepted and
+    With a valid ticket and a mocked stream_session the WS must be accepted and
     stream_session must be invoked.
     """
-    raw_token = auth_client.headers["Authorization"].split(" ")[1]
     fake_session_id = str(uuid.uuid4())
 
     # We call the handler directly to avoid ASGI client lifecycle issues
     from fastapi import WebSocket
-    from backend.routers.terminal import terminal_ws
+    from backend.routers.terminal import _issue_ws_ticket, terminal_ws
+
+    ticket = await _issue_ws_ticket(fake_session_id, "admin")
 
     mock_ws = MagicMock(spec=WebSocket)
-    mock_ws.query_params = {"token": raw_token}
+    mock_ws.query_params = {"ticket": ticket}
     mock_ws.headers = {}
     mock_ws.client = MagicMock()
     mock_ws.client.host = "127.0.0.1"
@@ -122,7 +121,6 @@ async def test_ws_valid_token_accepted_and_stream_called(auth_client):
 
     with (
         patch("backend.routers.terminal.stream_session", new=mock_stream),
-        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=False)),
         patch(
             "backend.routers.terminal.get_session_meta",
             return_value=("MyBox", "admin", "127.0.0.1"),
@@ -142,18 +140,18 @@ async def test_ws_valid_token_accepted_and_stream_called(auth_client):
     mock_stream.assert_called_once_with(fake_session_id, mock_ws)
 
 
-# -- WebSocket: valid token but stream raises exception ------------------------
+# -- WebSocket: valid ticket but stream raises exception -----------------------
 
-async def test_ws_stream_exception_sends_error_frame(auth_client):
+async def test_ws_stream_exception_sends_error_frame():
     """An unexpected exception in stream_session must be caught and an error frame sent."""
     from fastapi import WebSocket
-    from backend.routers.terminal import terminal_ws
+    from backend.routers.terminal import _issue_ws_ticket, terminal_ws
 
-    raw_token = auth_client.headers["Authorization"].split(" ")[1]
     fake_session_id = str(uuid.uuid4())
+    ticket = await _issue_ws_ticket(fake_session_id, "admin")
 
     mock_ws = MagicMock(spec=WebSocket)
-    mock_ws.query_params = {"token": raw_token}
+    mock_ws.query_params = {"ticket": ticket}
     mock_ws.headers = {}
     mock_ws.client = MagicMock()
     mock_ws.client.host = "127.0.0.1"
@@ -166,7 +164,6 @@ async def test_ws_stream_exception_sends_error_frame(auth_client):
             "backend.routers.terminal.stream_session",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ),
-        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=False)),
         patch(
             "backend.routers.terminal.get_session_meta",
             return_value=("", "", None),
@@ -228,13 +225,13 @@ async def test_ws_ticket_auth_accepted_without_token():
 async def test_ws_x_real_ip_extracted(auth_client):
     """The client IP must be extracted from X-Real-IP when X-Forwarded-For is absent."""
     from fastapi import WebSocket
-    from backend.routers.terminal import terminal_ws
+    from backend.routers.terminal import _issue_ws_ticket, terminal_ws
 
-    raw_token = auth_client.headers["Authorization"].split(" ")[1]
     fake_session_id = str(uuid.uuid4())
+    ticket = await _issue_ws_ticket(fake_session_id, "admin")
 
     mock_ws = MagicMock(spec=WebSocket)
-    mock_ws.query_params = {"token": raw_token}
+    mock_ws.query_params = {"ticket": ticket}
     mock_ws.headers = {"x-real-ip": "10.20.30.40"}
     mock_ws.client = MagicMock()
     mock_ws.client.host = "127.0.0.1"
@@ -246,7 +243,6 @@ async def test_ws_x_real_ip_extracted(auth_client):
 
     with (
         patch("backend.routers.terminal.stream_session", new=mock_stream),
-        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=False)),
         patch(
             "backend.routers.terminal.get_session_meta",
             return_value=("", "admin", None),
@@ -269,16 +265,16 @@ async def test_ws_audit_ip_uses_peer_when_proxy_untrusted(auth_client, monkeypat
     """When peer is untrusted, forwarded headers must be ignored for audit source IP."""
     from fastapi import WebSocket
     from backend.config import get_settings
-    from backend.routers.terminal import terminal_ws
+    from backend.routers.terminal import _issue_ws_ticket, terminal_ws
 
     get_settings.cache_clear()
     monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
 
-    raw_token = auth_client.headers["Authorization"].split(" ")[1]
     fake_session_id = str(uuid.uuid4())
+    ticket = await _issue_ws_ticket(fake_session_id, "admin")
 
     mock_ws = MagicMock(spec=WebSocket)
-    mock_ws.query_params = {"token": raw_token}
+    mock_ws.query_params = {"ticket": ticket}
     mock_ws.headers = {"x-forwarded-for": "203.0.113.55, 10.0.0.1"}
     mock_ws.client = MagicMock()
     mock_ws.client.host = "127.0.0.1"
@@ -291,7 +287,6 @@ async def test_ws_audit_ip_uses_peer_when_proxy_untrusted(auth_client, monkeypat
 
     with (
         patch("backend.routers.terminal.stream_session", new=mock_stream),
-        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=False)),
         patch("backend.routers.terminal.get_session_meta", return_value=("", "admin", None)),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=mock_write_audit),
@@ -312,16 +307,16 @@ async def test_ws_audit_ip_uses_xff_when_proxy_trusted(auth_client, monkeypatch)
     """When peer is trusted, forwarded client IP must be used for audit source IP."""
     from fastapi import WebSocket
     from backend.config import get_settings
-    from backend.routers.terminal import terminal_ws
+    from backend.routers.terminal import _issue_ws_ticket, terminal_ws
 
     get_settings.cache_clear()
     monkeypatch.setenv("TRUSTED_PROXIES", "127.0.0.1")
 
-    raw_token = auth_client.headers["Authorization"].split(" ")[1]
     fake_session_id = str(uuid.uuid4())
+    ticket = await _issue_ws_ticket(fake_session_id, "admin")
 
     mock_ws = MagicMock(spec=WebSocket)
-    mock_ws.query_params = {"token": raw_token}
+    mock_ws.query_params = {"ticket": ticket}
     mock_ws.headers = {"x-forwarded-for": "203.0.113.55, 10.0.0.1"}
     mock_ws.client = MagicMock()
     mock_ws.client.host = "127.0.0.1"
@@ -334,7 +329,6 @@ async def test_ws_audit_ip_uses_xff_when_proxy_trusted(auth_client, monkeypatch)
 
     with (
         patch("backend.routers.terminal.stream_session", new=mock_stream),
-        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=False)),
         patch("backend.routers.terminal.get_session_meta", return_value=("", "admin", None)),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=mock_write_audit),
@@ -351,8 +345,8 @@ async def test_ws_audit_ip_uses_xff_when_proxy_trusted(auth_client, monkeypatch)
     get_settings.cache_clear()
 
 
-async def test_ws_revoked_token_closes_4001_before_accept(auth_client):
-    """A revoked JWT must be rejected before websocket acceptance."""
+async def test_ws_token_query_fallback_closes_4001_before_accept(auth_client):
+    """Legacy JWT query-param authentication must be rejected before websocket acceptance."""
     from fastapi import WebSocket
     from backend.routers.terminal import terminal_ws
 
@@ -368,44 +362,21 @@ async def test_ws_revoked_token_closes_4001_before_accept(auth_client):
     mock_ws.close = AsyncMock()
     mock_ws.send_bytes = AsyncMock()
 
-    with (
-        patch("backend.routers.auth._is_revoked", new=AsyncMock(return_value=True)),
-        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
-    ):
-        mock_ctx = MagicMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_sl.return_value = mock_ctx
-
-        await terminal_ws(fake_session_id, mock_ws)
+    await terminal_ws(fake_session_id, mock_ws)
 
     mock_ws.close.assert_called_once_with(code=4001)
     mock_ws.accept.assert_not_called()
 
 
-async def test_ws_boot_id_mismatch_closes_4001_before_accept():
-    """A JWT with wrong boot id must be rejected before websocket acceptance."""
+async def test_ws_missing_ticket_closes_4001_before_accept():
+    """Missing websocket ticket must be rejected before websocket acceptance."""
     from fastapi import WebSocket
-    from backend.config import get_settings
-    from backend.main import BOOT_ID
-    from backend.routers.auth import ALGORITHM
     from backend.routers.terminal import terminal_ws
 
-    settings = get_settings()
     fake_session_id = str(uuid.uuid4())
-    wrong_bid_token = jose_jwt.encode(
-        {
-            "sub": "admin",
-            "jti": str(uuid.uuid4()),
-            "bid": f"{BOOT_ID}-mismatch",
-            "exp": datetime.now(timezone.utc).timestamp() + 3600,
-        },
-        settings.secret_key,
-        algorithm=ALGORITHM,
-    )
 
     mock_ws = MagicMock(spec=WebSocket)
-    mock_ws.query_params = {"token": wrong_bid_token}
+    mock_ws.query_params = {}
     mock_ws.headers = {}
     mock_ws.client = MagicMock()
     mock_ws.client.host = "127.0.0.1"

@@ -217,8 +217,8 @@ async def test_open_session_changed_host_returns_409(auth_client):
 
 # -- WebSocket /api/terminal/ws/{session_id} -----------------------------------
 
-async def test_ws_no_token_closes_4001(client):
-    """WebSocket connection without a token query-param must be closed with code 4001."""
+async def test_ws_no_ticket_closes_4001(client):
+    """WebSocket connection without a ticket query-param must be closed with code 4001."""
     fake_session_id = _make_fake_session_id()
     with pytest.raises(Exception):
         async with client.websocket_connect(
@@ -228,12 +228,12 @@ async def test_ws_no_token_closes_4001(client):
             await ws.receive_json()
 
 
-async def test_ws_invalid_token_closes_4001(client):
-    """WebSocket connection with a garbage JWT must be closed with code 4001."""
+async def test_ws_invalid_ticket_closes_4001(client):
+    """WebSocket connection with an invalid ticket must be closed with code 4001."""
     fake_session_id = _make_fake_session_id()
     with pytest.raises(Exception):
         async with client.websocket_connect(
-            f"/api/terminal/ws/{fake_session_id}?token=this.is.garbage"
+            f"/api/terminal/ws/{fake_session_id}?ticket=not-a-real-ticket"
         ) as ws:
             await ws.receive_json()
 

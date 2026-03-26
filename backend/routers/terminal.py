@@ -203,48 +203,22 @@ async def open_session(
 @router.websocket("/ws/{session_id}")
 async def terminal_ws(session_id: str, websocket: WebSocket):
     """WebSocket endpoint — bridges browser ↔ SSH session. Frames are binary."""
-    from jose import JWTError, jwt as jose_jwt
-    from backend.routers.auth import ALGORITHM, _get_boot_id, _is_revoked
-
     ticket = websocket.query_params.get("ticket")
-    token = websocket.query_params.get("token")
 
     username = "unknown"
     source_ip: str | None = None
 
-    if ticket:
-        consumed_username = await _consume_ws_ticket(ticket, session_id)
-        if not consumed_username:
-            await websocket.close(code=4001)
-            return
-        username = consumed_username
-        source_ip = get_client_ip(websocket)  # type: ignore[arg-type]
-    else:
-        if not token:
-            await websocket.close(code=4001)
-            return
+    if not ticket:
+        await websocket.close(code=4001)
+        return
 
-        try:
-            settings = get_settings()
-            payload = jose_jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-            jti = payload.get("jti")
-            if not jti:
-                await websocket.close(code=4001)
-                return
-            if payload.get("bid") != _get_boot_id():
-                await websocket.close(code=4001)
-                return
+    consumed_username = await _consume_ws_ticket(ticket, session_id)
+    if not consumed_username:
+        await websocket.close(code=4001)
+        return
 
-            async with AsyncSessionLocal() as db:
-                if await _is_revoked(jti, db):
-                    await websocket.close(code=4001)
-                    return
-
-            username = payload.get("sub", "unknown")
-            source_ip = get_client_ip(websocket)  # type: ignore[arg-type]
-        except (JWTError, ValueError, RuntimeError):
-            await websocket.close(code=4001)
-            return
+    username = consumed_username
+    source_ip = get_client_ip(websocket)  # type: ignore[arg-type]
 
     await websocket.accept()
     try:
