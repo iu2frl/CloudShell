@@ -3,16 +3,6 @@ const TOKEN_EXPIRY_KEY = "cloudshell_token_expiry";
 
 // -- Token helpers -------------------------------------------------------------
 
-/** Decode the JWT payload without verifying the signature (client-side only). */
-function _decodePayload(token: string): Record<string, unknown> | null {
-  try {
-    const part = token.split(".")[1];
-    return JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
-  } catch {
-    return null;
-  }
-}
-
 /** Store token expiry in sessionStorage for the countdown badge. */
 function _storeTokenExpiry(expiresAt: string): void {
   try {

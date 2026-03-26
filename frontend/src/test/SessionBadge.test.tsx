@@ -24,14 +24,6 @@ import { SessionBadge } from '../components/SessionBadge';
 
 const FROZEN_NOW = new Date('2026-01-01T12:00:00.000Z').getTime();
 
-/** Build a minimal JWT whose exp claim is `offsetMs` ms from FROZEN_NOW. */
-function makeToken(offsetMs: number): string {
-  const exp = Math.floor((FROZEN_NOW + offsetMs) / 1000);
-  const header  = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = btoa(JSON.stringify({ sub: 'admin', exp }));
-  return `${header}.${payload}.fakesig`;
-}
-
 function setToken(offsetMs: number) {
   // Store expiry in sessionStorage (milliseconds from epoch)
   const expiryMs = FROZEN_NOW + offsetMs;

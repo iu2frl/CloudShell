@@ -66,6 +66,21 @@ async def test_login_response_schema(client):
     assert "expires_at" in body
 
 
+async def test_login_cookie_auth_allows_me_without_authorization_header(client):
+    """After login, auth cookie alone should authorize protected endpoints."""
+    resp = await client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "admin"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert resp.status_code == 200
+
+    client.headers.pop("Authorization", None)
+    me_resp = await client.get("/api/auth/me")
+    assert me_resp.status_code == 200
+    assert me_resp.json()["username"] == "admin"
+
+
 async def test_login_expires_at_is_future(client):
     """expires_at in the login response must be a future UTC datetime."""
     resp = await client.post(

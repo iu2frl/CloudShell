@@ -26,13 +26,6 @@ import {
 
 // -- Helpers -------------------------------------------------------------------
 
-/** Build a minimal JWT with the given exp (unix seconds). */
-function makeToken(exp: number): string {
-  const header  = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = btoa(JSON.stringify({ sub: 'admin', exp }));
-  return `${header}.${payload}.fakesig`;
-}
-
 // -- getTokenExpiry ------------------------------------------------------------
 
 describe('getTokenExpiry', () => {

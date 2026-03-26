@@ -39,7 +39,7 @@ from backend.services.rate_limit import get_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
 ALGORITHM = "HS256"
 REMEMBER_DEVICE_DAYS = 30
@@ -234,7 +234,8 @@ def _set_auth_cookie(
 # -- Shared dependency ---------------------------------------------------------
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> str:
     settings = get_settings()
@@ -243,8 +244,12 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token_value = token or request.cookies.get(AUTH_COOKIE_NAME)
+    if not token_value:
+        raise credentials_exception
+
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(token_value, settings.secret_key, algorithms=[ALGORITHM])
         username: str | None = payload.get("sub")
         jti: str | None = payload.get("jti")
         if username is None or jti is None:
@@ -269,7 +274,8 @@ async def get_current_user(
 
 # Also expose a version that returns the full payload (used by /refresh)
 async def _get_payload(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     settings = get_settings()
@@ -278,8 +284,12 @@ async def _get_payload(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token_value = token or request.cookies.get(AUTH_COOKIE_NAME)
+    if not token_value:
+        raise credentials_exception
+
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(token_value, settings.secret_key, algorithms=[ALGORITHM])
     except JWTError as exc:
         raise credentials_exception from exc
 
@@ -454,13 +464,21 @@ async def refresh(
 async def logout(
     response: Response,
     request: Request,
-    token: str = Depends(oauth2_scheme),
+    token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke the current token immediately and clear the auth cookie."""
+    token_value = token or request.cookies.get(AUTH_COOKIE_NAME)
+    if not token_value:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     settings = get_settings()
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(token_value, settings.secret_key, algorithms=[ALGORITHM])
     except JWTError:
         return  # already invalid — nothing to do
 
