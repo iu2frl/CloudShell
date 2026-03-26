@@ -32,6 +32,7 @@ from backend.services.sftp import (
     rename_remote,
     write_file_bytes,
 )
+from backend.services.ssh import SSHHostFingerprintMismatchError
 
 
 # -- Fixtures -----------------------------------------------------------------
@@ -124,6 +125,49 @@ async def test_open_sftp_session_propagates_connection_error():
     ):
         with pytest.raises(asyncssh.PermissionDenied):
             await open_sftp_session(hostname="host", port=22, username="user")
+
+
+@pytest.mark.asyncio
+async def test_open_sftp_session_host_key_not_verifiable_with_presented_maps_to_mismatch():
+    """When expected fingerprint is set and a presented key is captured, raise mismatch error."""
+
+    class _FakeKey:
+        def export_public_key(self) -> bytes:
+            return b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestSFTPKey"
+
+    async def _fake_connect(**kwargs):
+        client = kwargs["client_factory"]()
+        client.validate_host_public_key("host", "1.2.3.4", 22, _FakeKey())
+        raise asyncssh.HostKeyNotVerifiable(reason="mismatch")
+
+    with patch("asyncssh.connect", new=AsyncMock(side_effect=_fake_connect)):
+        with pytest.raises(SSHHostFingerprintMismatchError) as exc_info:
+            await open_sftp_session(
+                hostname="host",
+                port=22,
+                username="user",
+                expected_ssh_host_fingerprint="00:11:22",
+            )
+
+    assert exc_info.value.expected == "00:11:22"
+    assert isinstance(exc_info.value.presented, str)
+    assert len(exc_info.value.presented) > 0
+
+
+@pytest.mark.asyncio
+async def test_open_sftp_session_host_key_not_verifiable_without_presented_reraises():
+    """When no presented key is captured, HostKeyNotVerifiable is re-raised."""
+    with patch(
+        "asyncssh.connect",
+        new=AsyncMock(side_effect=asyncssh.HostKeyNotVerifiable(reason="mismatch")),
+    ):
+        with pytest.raises(asyncssh.HostKeyNotVerifiable):
+            await open_sftp_session(
+                hostname="host",
+                port=22,
+                username="user",
+                expected_ssh_host_fingerprint="00:11:22",
+            )
 
 
 # -- close_sftp_session --------------------------------------------------------
