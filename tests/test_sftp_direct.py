@@ -433,8 +433,10 @@ async def test_open_session_direct_key_device_success_and_temp_file_deleted():
 async def test_open_session_direct_permission_denied_returns_502():
     """asyncssh.PermissionDenied maps to 502 (not 401, to avoid forcing logout)."""
     device = _password_device()
+    device.ssh_host_fingerprint = "SHA256:TEST"
     with (
         patch("backend.routers.sftp.decrypt", return_value="pw"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=asyncssh.PermissionDenied(reason="bad"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
