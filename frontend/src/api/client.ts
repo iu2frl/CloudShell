@@ -340,11 +340,12 @@ export async function sftpList(sessionId: string, path: string): Promise<SftpLis
 }
 
 export async function sftpDownload(sessionId: string, path: string): Promise<void> {
-  const token = localStorage.getItem("token") ?? "";
   const encoded = encodeURIComponent(path);
-  const res = await fetch(`${BASE}/sftp/${sessionId}/download?path=${encoded}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetch(`${BASE}/sftp/${sessionId}/download?path=${encoded}`);
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "Download failed");
@@ -369,13 +370,11 @@ export async function sftpUpload(
   file: File,
   onProgress?: (pct: number) => void,
 ): Promise<void> {
-  const token = localStorage.getItem("token") ?? "";
   const encoded = encodeURIComponent(remotePath);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${BASE}/sftp/${sessionId}/upload?path=${encoded}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -386,6 +385,9 @@ export async function sftpUpload(
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
+      } else if (xhr.status === 401) {
+        _forceLogout();
+        reject(new Error("Session expired"));
       } else {
         try {
           const err = JSON.parse(xhr.responseText);
@@ -498,11 +500,12 @@ export async function ftpList(sessionId: string, path: string): Promise<SftpList
 }
 
 export async function ftpDownload(sessionId: string, path: string): Promise<void> {
-  const token = localStorage.getItem("token") ?? "";
   const encoded = encodeURIComponent(path);
-  const res = await fetch(`${BASE}/ftp/${sessionId}/download?path=${encoded}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetch(`${BASE}/ftp/${sessionId}/download?path=${encoded}`);
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "Download failed");
@@ -527,13 +530,11 @@ export async function ftpUpload(
   file: File,
   onProgress?: (pct: number) => void,
 ): Promise<void> {
-  const token = localStorage.getItem("token") ?? "";
   const encoded = encodeURIComponent(remotePath);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${BASE}/ftp/${sessionId}/upload?path=${encoded}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -544,6 +545,9 @@ export async function ftpUpload(
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
+      } else if (xhr.status === 401) {
+        _forceLogout();
+        reject(new Error("Session expired"));
       } else {
         try {
           const err = JSON.parse(xhr.responseText);
@@ -599,6 +603,14 @@ export interface ImportResult {
   errors: number;
   messages: string[];
 }
+
+export interface GeneratedKeyPair {
+  private_key: string;
+  public_key: string;
+}
+
+export const generateKeyPair = (): Promise<GeneratedKeyPair> =>
+  request<GeneratedKeyPair>("/keys/generate", { method: "POST" });
 
 /** Download the current device configuration as a JSON blob URL ready for saving. */
 export async function exportConfig(): Promise<Blob> {

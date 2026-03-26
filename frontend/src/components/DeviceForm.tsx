@@ -1,5 +1,12 @@
 import { useRef, useState } from "react";
-import { Device, DeviceCreate, DeviceUpdate, createDevice, updateDevice } from "../api/client";
+import {
+  Device,
+  DeviceCreate,
+  DeviceUpdate,
+  createDevice,
+  generateKeyPair as generateKeyPairApi,
+  updateDevice,
+} from "../api/client";
 import { X, KeyRound, Copy, Check, Loader, Upload, Trash2 } from "lucide-react";
 
 interface Props {
@@ -96,13 +103,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
     setGenerating(true);
     setError(null);
     try {
-      const token = localStorage.getItem("token") ?? "";
-      const res = await fetch("/api/keys/generate", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await generateKeyPairApi();
       set("private_key", data.private_key);
       setPublicKey(data.public_key);
     } catch (err) {
