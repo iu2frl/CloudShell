@@ -79,6 +79,16 @@ def _mock_probe_fingerprint():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _mock_revocation_check():
+    """Avoid DB lookups for revoked tokens in direct websocket tests."""
+    with patch(
+        "backend.routers.auth._is_revoked",
+        new=AsyncMock(return_value=False),
+    ):
+        yield
+
+
 def _password_device(encrypted: bool = True) -> Device:
     d = MagicMock(spec=Device)
     d.id = 1
@@ -396,7 +406,7 @@ async def test_ws_direct_xff_header_parsed():
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -424,7 +434,7 @@ async def test_ws_direct_xri_header_parsed():
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -449,7 +459,7 @@ async def test_ws_direct_client_host_fallback():
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -477,7 +487,7 @@ async def test_ws_direct_websocket_disconnect_is_swallowed():
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -507,7 +517,7 @@ async def test_ws_direct_unexpected_exception_sends_error_frame():
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock()),
         patch("backend.routers.terminal._ws_error", new=AsyncMock()) as mock_ws_error,
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -540,7 +550,7 @@ async def test_ws_direct_audit_ip_falls_back_to_source_ip():
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock(side_effect=_capture_audit)),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -571,7 +581,7 @@ async def test_ws_direct_audit_user_falls_back_to_token_username():
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock(side_effect=_capture_audit)),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -601,7 +611,7 @@ async def test_ws_direct_session_ended_audit_uses_device_label():
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock(side_effect=_capture_audit)),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -632,7 +642,7 @@ async def test_ws_direct_session_ended_audit_fallback_detail():
         ),
         patch("backend.routers.terminal.close_session", new=AsyncMock()),
         patch("backend.routers.terminal.write_audit", new=AsyncMock(side_effect=_capture_audit)),
-        patch("backend.database.AsyncSessionLocal") as mock_sl,
+        patch("backend.routers.terminal.AsyncSessionLocal") as mock_sl,
     ):
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
