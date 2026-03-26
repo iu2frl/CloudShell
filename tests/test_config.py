@@ -4,7 +4,7 @@ tests/test_config.py - tests for startup configuration guards.
 
 import pytest
 
-from backend.config import DEFAULT_SECRET_KEY, get_settings
+from backend.config import DEFAULT_ADMIN_PASSWORD, DEFAULT_SECRET_KEY, get_settings
 
 
 def test_non_dev_environment_rejects_default_secret_key(monkeypatch):
@@ -53,5 +53,72 @@ def test_empty_secret_key_is_rejected(monkeypatch):
 
     with pytest.raises(ValueError, match="SECRET_KEY must be non-empty"):
         get_settings()
+
+    get_settings.cache_clear()
+
+
+def test_non_dev_environment_rejects_default_admin_password(monkeypatch):
+    """Non-development environments must reject default ADMIN_PASSWORD."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("SECRET_KEY", "strong-secret-for-prod")
+    monkeypatch.setenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
+
+    with pytest.raises(ValueError, match="default ADMIN_PASSWORD"):
+        get_settings()
+
+    get_settings.cache_clear()
+
+
+def test_development_environment_allows_default_admin_password(monkeypatch):
+    """Development environment may use default ADMIN_PASSWORD for local setup."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("SECRET_KEY", DEFAULT_SECRET_KEY)
+    monkeypatch.setenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
+
+    settings = get_settings()
+    assert settings.admin_password == DEFAULT_ADMIN_PASSWORD
+
+    get_settings.cache_clear()
+
+
+def test_empty_admin_password_is_rejected(monkeypatch):
+    """Any environment must reject empty ADMIN_PASSWORD."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("SECRET_KEY", DEFAULT_SECRET_KEY)
+    monkeypatch.setenv("ADMIN_PASSWORD", "")
+
+    with pytest.raises(ValueError, match="ADMIN_PASSWORD must be non-empty"):
+        get_settings()
+
+    get_settings.cache_clear()
+
+
+def test_non_dev_environment_rejects_ftps_allow_insecure(monkeypatch):
+    """Non-development environments must reject FTPS_ALLOW_INSECURE=true."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("SECRET_KEY", "strong-secret-for-prod")
+    monkeypatch.setenv("ADMIN_PASSWORD", "StrongPassword!123")
+    monkeypatch.setenv("FTPS_ALLOW_INSECURE", "true")
+
+    with pytest.raises(ValueError, match="FTPS_ALLOW_INSECURE"):
+        get_settings()
+
+    get_settings.cache_clear()
+
+
+def test_development_environment_allows_ftps_allow_insecure(monkeypatch):
+    """Development environment may enable FTPS_ALLOW_INSECURE for local debugging."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("SECRET_KEY", DEFAULT_SECRET_KEY)
+    monkeypatch.setenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
+    monkeypatch.setenv("FTPS_ALLOW_INSECURE", "true")
+
+    settings = get_settings()
+    assert settings.ftps_allow_insecure is True
 
     get_settings.cache_clear()

@@ -11,7 +11,12 @@ from dataclasses import dataclass
 
 import asyncssh
 
-from backend.services.ssh import _known_hosts_path, _make_accept_new_client
+from backend.services.ssh import (
+    SSHHostFingerprintMismatchError,
+    _known_hosts_path,
+    _make_accept_new_client,
+    _make_pinned_fingerprint_client,
+)
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +46,7 @@ async def open_sftp_session(
     device_label: str = "",
     cloudshell_user: str = "",
     source_ip: str | None = None,
+    expected_ssh_host_fingerprint: str | None = None,
 ) -> str:
     """
     Open an SSH connection, start an SFTP client, and return a session_id.
@@ -55,7 +61,14 @@ async def open_sftp_session(
         "username": username,
     }
 
-    if known_hosts == "auto":
+    if expected_ssh_host_fingerprint:
+        captured: dict[str, str] = {}
+        connect_kwargs["client_factory"] = _make_pinned_fingerprint_client(
+            expected_ssh_host_fingerprint,
+            captured,
+        )
+        connect_kwargs["known_hosts"] = None
+    elif known_hosts == "auto":
         kh_path = _known_hosts_path()
         if kh_path:
             connect_kwargs["client_factory"] = _make_accept_new_client(kh_path)
@@ -70,7 +83,16 @@ async def open_sftp_session(
     if private_key_path is not None:
         connect_kwargs["client_keys"] = [private_key_path]
 
-    conn = await asyncssh.connect(**connect_kwargs)
+    try:
+        conn = await asyncssh.connect(**connect_kwargs)
+    except asyncssh.HostKeyNotVerifiable as exc:
+        presented = locals().get("captured", {}).get("presented")
+        if expected_ssh_host_fingerprint and presented:
+            raise SSHHostFingerprintMismatchError(
+                expected=expected_ssh_host_fingerprint,
+                presented=presented,
+            ) from exc
+        raise
     sftp = await conn.start_sftp_client()
 
     _sftp_sessions[session_id] = _SftpSession(

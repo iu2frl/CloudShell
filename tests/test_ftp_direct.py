@@ -31,6 +31,7 @@ from backend.routers.ftp import (
     upload_file,
 )
 from backend.services.ftp import list_directory
+from backend.services.ftp import FTPSCertificateMismatchError, FTPSCertificateUnavailableError
 
 
 # -- Fake helpers --------------------------------------------------------------
@@ -113,9 +114,10 @@ async def test_open_session_success_ftps():
     db = _FakeDB(device=dev)
 
     with patch("backend.routers.ftp.decrypt", return_value="plain-pw"), \
+         patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="AA:BB:CC")), \
          patch("backend.routers.ftp.open_ftp_session", new_callable=AsyncMock, return_value="sess-2") as mock_open, \
          patch("backend.routers.ftp.write_audit", new_callable=AsyncMock):
-        result = await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
+        result = await open_session(device_id=1, request=_FakeRequest(), trust_cert=True, db=db, current_user="admin")
 
     assert result == {"session_id": "sess-2"}
     _, kwargs = mock_open.call_args
@@ -215,12 +217,147 @@ async def test_open_session_writes_ftps_audit_label():
     db = _FakeDB(device=dev)
 
     with patch("backend.routers.ftp.decrypt", return_value="pw"), \
+         patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="AA:BB:CC")), \
          patch("backend.routers.ftp.open_ftp_session", new_callable=AsyncMock, return_value="s"), \
          patch("backend.routers.ftp.write_audit", new_callable=AsyncMock) as mock_audit:
-        await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
+        await open_session(device_id=1, request=_FakeRequest(), trust_cert=True, db=db, current_user="admin")
 
     detail = mock_audit.call_args.kwargs.get("detail", "")
     assert "FTPS" in detail
+
+
+async def test_open_session_ftps_probe_unavailable_raises_502():
+    """FTPS probe errors must map to HTTP 502."""
+    dev = _make_device(connection_type=ConnectionType.ftps)
+    db = _FakeDB(device=dev)
+
+    with (
+        patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
+        patch(
+            "backend.routers.ftp.probe_ftps_thumbprint",
+            new=AsyncMock(side_effect=FTPSCertificateUnavailableError("no cert")),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
+
+    assert exc_info.value.status_code == 502
+    assert "certificate unavailable" in exc_info.value.detail.lower()
+
+
+async def test_open_session_ftps_untrusted_without_confirmation_raises_409():
+    """Unpinned FTPS certificate must return confirmation challenge (409)."""
+    dev = _make_device(connection_type=ConnectionType.ftps)
+    dev.ftps_cert_thumbprint = None
+    db = _FakeDB(device=dev)
+
+    with (
+        patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
+        patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="AA:BB:CC")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "FTPS_CERT_UNTRUSTED"
+    assert exc_info.value.detail["thumbprint"] == "AA:BB:CC"
+
+
+async def test_open_session_ftps_untrusted_with_confirmation_pins_certificate():
+    """When trust_cert=true, an unpinned certificate is saved and used."""
+    dev = _make_device(connection_type=ConnectionType.ftps)
+    dev.ftps_cert_thumbprint = None
+    db = _FakeDB(device=dev)
+
+    with (
+        patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="AA:BB:CC")),
+        patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
+        patch("backend.routers.ftp.open_ftp_session", new=AsyncMock(return_value="ftps-sess")) as mock_open,
+        patch("backend.routers.ftp.write_audit", new=AsyncMock()),
+    ):
+        result = await open_session(
+            device_id=1,
+            request=_FakeRequest(),
+            trust_cert=True,
+            db=db,
+            current_user="admin",
+        )
+
+    assert result == {"session_id": "ftps-sess"}
+    assert dev.ftps_cert_thumbprint == "AA:BB:CC"
+    assert db.committed is True
+    _, kwargs = mock_open.call_args
+    assert kwargs["expected_ftps_thumbprint"] == "AA:BB:CC"
+
+
+async def test_open_session_ftps_changed_without_confirmation_raises_409():
+    """Changed FTPS certificate must return confirmation challenge (409)."""
+    dev = _make_device(connection_type=ConnectionType.ftps)
+    dev.ftps_cert_thumbprint = "OLD:THUMB"
+    db = _FakeDB(device=dev)
+
+    with (
+        patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
+        patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="NEW:THUMB")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "FTPS_CERT_CHANGED"
+    assert exc_info.value.detail["thumbprint"] == "NEW:THUMB"
+    assert exc_info.value.detail["previous_thumbprint"] == "OLD:THUMB"
+
+
+async def test_open_session_ftps_changed_with_confirmation_updates_certificate():
+    """When trust_cert=true, changed certificate replaces previous pin."""
+    dev = _make_device(connection_type=ConnectionType.ftps)
+    dev.ftps_cert_thumbprint = "OLD:THUMB"
+    db = _FakeDB(device=dev)
+
+    with (
+        patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="NEW:THUMB")),
+        patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
+        patch("backend.routers.ftp.open_ftp_session", new=AsyncMock(return_value="ftps-sess")) as mock_open,
+        patch("backend.routers.ftp.write_audit", new=AsyncMock()),
+    ):
+        result = await open_session(
+            device_id=1,
+            request=_FakeRequest(),
+            trust_cert=True,
+            db=db,
+            current_user="admin",
+        )
+
+    assert result == {"session_id": "ftps-sess"}
+    assert dev.ftps_cert_thumbprint == "NEW:THUMB"
+    assert db.committed is True
+    _, kwargs = mock_open.call_args
+    assert kwargs["expected_ftps_thumbprint"] == "NEW:THUMB"
+
+
+async def test_open_session_ftps_mismatch_error_maps_to_409_changed_cert():
+    """FTPSCertificateMismatchError from service must map to 409 payload."""
+    dev = _make_device(connection_type=ConnectionType.ftps)
+    db = _FakeDB(device=dev)
+
+    dev.ftps_cert_thumbprint = "OLD:THUMB"
+
+    with (
+        patch("backend.routers.ftp.decrypt", return_value="plain-pw"),
+        patch("backend.routers.ftp.probe_ftps_thumbprint", new=AsyncMock(return_value="OLD:THUMB")),
+        patch(
+            "backend.routers.ftp.open_ftp_session",
+            new=AsyncMock(side_effect=FTPSCertificateMismatchError("OLD:THUMB", "NEW:THUMB")),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await open_session(device_id=1, request=_FakeRequest(), db=db, current_user="admin")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "FTPS_CERT_CHANGED"
+    assert exc_info.value.detail["thumbprint"] == "NEW:THUMB"
+    assert exc_info.value.detail["previous_thumbprint"] == "OLD:THUMB"
 
 
 # -- services/ftp.py — list_directory sort (line 177) -------------------------

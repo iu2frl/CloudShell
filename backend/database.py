@@ -37,24 +37,27 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 # -- Column migrations ---------------------------------------------------------
-# Each entry is (table, column, sql_type, default_literal).
+# Each entry is (table, column, sql_type, default_literal, nullable).
 # If the column is missing it is added with the given DEFAULT so that existing
 # rows are backfilled automatically (SQLite respects DEFAULT on ADD COLUMN).
-_MIGRATIONS: list[tuple[str, str, str, str]] = [
-    ("devices", "connection_type", "VARCHAR(4)", "'ssh'"),
+_MIGRATIONS: list[tuple[str, str, str, str, bool]] = [
+    ("devices", "connection_type", "VARCHAR(4)", "'ssh'", False),
+    ("devices", "ssh_host_fingerprint", "VARCHAR(128)", "NULL", True),
+    ("devices", "ftps_cert_thumbprint", "VARCHAR(128)", "NULL", True),
 ]
 
 
 async def _run_migrations(conn) -> None:
     """Add any missing columns to existing tables (lightweight ALTER TABLE)."""
-    for table, column, col_type, default in _MIGRATIONS:
+    for table, column, col_type, default, nullable in _MIGRATIONS:
         # PRAGMA table_info returns one row per column
         result = await conn.execute(text(f"PRAGMA table_info({table})"))
         columns = {row[1] for row in result.fetchall()}
         if column not in columns:
+            nullable_sql = "" if nullable else "NOT NULL "
             sql = (
                 f"ALTER TABLE {table} "
-                f"ADD COLUMN {column} {col_type} NOT NULL DEFAULT {default}"
+                f"ADD COLUMN {column} {col_type} {nullable_sql}DEFAULT {default}"
             )
             await conn.execute(text(sql))
             log.info("Migration: added column %s.%s (default=%s)", table, column, default)

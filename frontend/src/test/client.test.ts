@@ -10,7 +10,7 @@
  * - isLoggedIn: true when token is valid and not yet expired
  * - terminalWsUrl: uses ws:// on http:
  * - terminalWsUrl: uses wss:// on https:
- * - terminalWsUrl: embeds session id and token in the URL
+ * - terminalWsUrl: embeds session id and short-lived ticket in the URL
  * - request: throws "Session expired" on 401 and fires cloudshell:session-expired
  * - request: throws parsed detail message on non-ok response
  * - request: returns undefined on 204
@@ -26,17 +26,10 @@ import {
 
 // -- Helpers -------------------------------------------------------------------
 
-/** Build a minimal JWT with the given exp (unix seconds). */
-function makeToken(exp: number): string {
-  const header  = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = btoa(JSON.stringify({ sub: 'admin', exp }));
-  return `${header}.${payload}.fakesig`;
-}
-
 // -- getTokenExpiry ------------------------------------------------------------
 
 describe('getTokenExpiry', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
 
   it('returns null when no token is stored', () => {
     expect(getTokenExpiry()).toBeNull();
@@ -44,25 +37,25 @@ describe('getTokenExpiry', () => {
 
   it('returns a Date matching the exp claim', () => {
     const expSec = Math.floor(Date.now() / 1000) + 3600;
-    localStorage.setItem('token', makeToken(expSec));
+    const expMs = expSec * 1000;
+    sessionStorage.setItem('cloudshell_token_expiry', expMs.toString());
     const result = getTokenExpiry();
     expect(result).toBeInstanceOf(Date);
-    expect(result!.getTime()).toBe(expSec * 1000);
+    expect(result!.getTime()).toBe(expMs);
   });
 
-  it('returns null for a token with no dots (malformed)', () => {
-    localStorage.setItem('token', 'notavalidjwt');
+  it('returns null for a malformed expiry timestamp', () => {
+    sessionStorage.setItem('cloudshell_token_expiry', 'notanumber');
     expect(getTokenExpiry()).toBeNull();
   });
 
-  it('returns null for a token whose payload is not valid base64 JSON', () => {
-    localStorage.setItem('token', 'header.!!invalid!!.sig');
+  it('returns null for a non-numeric expiry', () => {
+    sessionStorage.setItem('cloudshell_token_expiry', '');
     expect(getTokenExpiry()).toBeNull();
   });
 
-  it('returns null when payload has no exp field', () => {
-    const payload = btoa(JSON.stringify({ sub: 'admin' })); // no exp
-    localStorage.setItem('token', `header.${payload}.sig`);
+  it('returns null when expiry key is missing', () => {
+    sessionStorage.clear();
     expect(getTokenExpiry()).toBeNull();
   });
 });
@@ -70,7 +63,7 @@ describe('getTokenExpiry', () => {
 // -- isLoggedIn ----------------------------------------------------------------
 
 describe('isLoggedIn', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
 
   it('returns false when no token is stored', () => {
     expect(isLoggedIn()).toBe(false);
@@ -78,13 +71,15 @@ describe('isLoggedIn', () => {
 
   it('returns false when the token is expired', () => {
     const expSec = Math.floor(Date.now() / 1000) - 60; // expired 1 min ago
-    localStorage.setItem('token', makeToken(expSec));
+    const expMs = expSec * 1000;
+    sessionStorage.setItem('cloudshell_token_expiry', expMs.toString());
     expect(isLoggedIn()).toBe(false);
   });
 
   it('returns true when the token is valid and not expired', () => {
     const expSec = Math.floor(Date.now() / 1000) + 3600; // expires in 1 hour
-    localStorage.setItem('token', makeToken(expSec));
+    const expMs = expSec * 1000;
+    sessionStorage.setItem('cloudshell_token_expiry', expMs.toString());
     expect(isLoggedIn()).toBe(true);
   });
 });
@@ -108,28 +103,27 @@ describe('terminalWsUrl', () => {
 
   it('uses ws:// when the page is served over http', () => {
     mockProtocol('http:');
-    expect(terminalWsUrl('sess-1')).toMatch(/^ws:\/\//);
+    expect(terminalWsUrl('sess-1', 'ticket')).toMatch(/^ws:\/\//);
   });
 
   it('uses wss:// when the page is served over https', () => {
     mockProtocol('https:');
-    expect(terminalWsUrl('sess-1')).toMatch(/^wss:\/\//);
+    expect(terminalWsUrl('sess-1', 'ticket')).toMatch(/^wss:\/\//);
   });
 
   it('embeds the session id in the URL path', () => {
     mockProtocol('http:');
-    expect(terminalWsUrl('my-session-id')).toContain('/my-session-id');
+    expect(terminalWsUrl('my-session-id', 'ticket-123')).toContain('/my-session-id');
   });
 
-  it('appends the stored token as a query parameter', () => {
+  it('appends the provided ticket as a query parameter', () => {
     mockProtocol('http:');
-    localStorage.setItem('token', 'testtoken123');
-    expect(terminalWsUrl('s')).toContain('token=testtoken123');
+    expect(terminalWsUrl('s', 'ticket-abc')).toContain('ticket=ticket-abc');
   });
 
-  it('uses an empty token when none is stored', () => {
+  it('URL-encodes the ticket query parameter', () => {
     mockProtocol('http:');
-    expect(terminalWsUrl('s')).toContain('token=');
+    expect(terminalWsUrl('s', 'a b/c?d')).toContain('ticket=a%20b%2Fc%3Fd');
   });
 });
 
@@ -139,15 +133,18 @@ describe('request (via login helper)', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => vi.restoreAllMocks());
 
-  it('stores the access_token in localStorage on successful login', async () => {
+  it('stores the token expiry in sessionStorage on successful login', async () => {
     const { login } = await import('../api/client');
+    const futureDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ access_token: 'tok-abc' }),
+      json: async () => ({ access_token: 'tok-abc', expires_at: futureDate }),
     }));
     await login('admin', 'admin');
-    expect(localStorage.getItem('token')).toBe('tok-abc');
+    const stored = sessionStorage.getItem('cloudshell_token_expiry');
+    expect(stored).toBeTruthy();
+    expect(isLoggedIn()).toBe(true);
   });
 
   it('throws "Invalid credentials" on non-ok login response', async () => {
@@ -177,8 +174,8 @@ describe('request (via login helper)', () => {
 
   it('fires cloudshell:session-expired event on 401 from request()', async () => {
     const { listDevices } = await import('../api/client');
-    // Put a token so authHeaders() has something
-    localStorage.setItem('token', 'expired-token');
+    // Put an expiry so getTokenExpiry() has something
+    sessionStorage.setItem('cloudshell_token_expiry', Date.now().toString());
     const events: string[] = [];
     window.addEventListener('cloudshell:session-expired', () => events.push('fired'));
 
@@ -190,12 +187,12 @@ describe('request (via login helper)', () => {
 
     await expect(listDevices()).rejects.toThrow('Session expired');
     expect(events).toContain('fired');
-    expect(localStorage.getItem('token')).toBeNull();
+    expect(sessionStorage.getItem('cloudshell_token_expiry')).toBeNull();
   });
 
   it('throws the detail message from the error JSON body', async () => {
     const { listDevices } = await import('../api/client');
-    localStorage.setItem('token', 'tok');
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 3600000).toString());
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
       status: 422,
@@ -205,12 +202,85 @@ describe('request (via login helper)', () => {
   });
 });
 
+// -- SSH / SFTP host trust challenge API functions ----------------------------
+
+describe('SSH host trust challenge API functions', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 3600000).toString());
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('openSession appends trust_host=true when requested', async () => {
+    const { openSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ session_id: 'ssh-sess-1' }),
+    }));
+
+    const id = await openSession(7, { trustHost: true });
+    expect(id).toBe('ssh-sess-1');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/terminal/session/7?trust_host=true');
+  });
+
+  it('openSftpSession appends trust_host=true when requested', async () => {
+    const { openSftpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ session_id: 'sftp-sess-1' }),
+    }));
+
+    const id = await openSftpSession(9, { trustHost: true });
+    expect(id).toBe('sftp-sess-1');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/sftp/session/9?trust_host=true');
+  });
+
+  it('createTerminalWsTicket returns ticket payload', async () => {
+    const { createTerminalWsTicket } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ticket: 'ws-ticket-1', expires_in: 30 }),
+    }));
+
+    const data = await createTerminalWsTicket('sess-123');
+    expect(data.ticket).toBe('ws-ticket-1');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/terminal/ws-ticket/sess-123');
+  });
+
+  it('openSession throws SshHostChallengeError on 409 challenge', async () => {
+    const { openSession, SshHostChallengeError } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: { code: 'SSH_HOST_UNTRUSTED', fingerprint: 'AA:BB' } }),
+    }));
+
+    await expect(openSession(11)).rejects.toBeInstanceOf(SshHostChallengeError);
+  });
+
+  it('openSftpSession throws SshHostChallengeError on 409 challenge', async () => {
+    const { openSftpSession, SshHostChallengeError } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: { code: 'SSH_HOST_CHANGED', fingerprint: 'AA:BB', previous_fingerprint: 'CC:DD' } }),
+    }));
+
+    await expect(openSftpSession(12)).rejects.toBeInstanceOf(SshHostChallengeError);
+  });
+});
+
 // -- FTP / FTPS API functions --------------------------------------------------
 
 describe('FTP API functions', () => {
   beforeEach(() => {
-    localStorage.clear();
-    localStorage.setItem('token', 'test-token');
+    sessionStorage.clear();
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 3600000).toString());
     vi.restoreAllMocks();
   });
 
@@ -232,6 +302,24 @@ describe('FTP API functions', () => {
     const id = await openFtpSession(42);
     expect(id).toBe('ftp-sess-1');
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/ftp/session/42');
+  });
+
+  it('openFtpSession appends trust_cert=true when requested', async () => {
+    const { openFtpSession } = await import('../api/client');
+    mockFetch({ session_id: 'ftp-sess-2' });
+    const id = await openFtpSession(42, { trustCert: true });
+    expect(id).toBe('ftp-sess-2');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('/ftp/session/42?trust_cert=true');
+  });
+
+  it('openFtpSession throws FtpsCertificateChallengeError on 409 challenge', async () => {
+    const { openFtpSession, FtpsCertificateChallengeError } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: { code: 'FTPS_CERT_UNTRUSTED', thumbprint: 'AA:BB' } }),
+    }));
+    await expect(openFtpSession(42)).rejects.toBeInstanceOf(FtpsCertificateChallengeError);
   });
 
   it('closeFtpSession calls DELETE on the session endpoint', async () => {

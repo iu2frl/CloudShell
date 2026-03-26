@@ -1,13 +1,16 @@
 import logging
 import tempfile
 import os
+import secrets
+import asyncio
+from datetime import datetime, timedelta, timezone
 
 import asyncssh
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
-from backend.database import get_db
+from backend.database import AsyncSessionLocal, get_db
 from backend.models.device import AuthType, Device
 from backend.routers.auth import get_current_user
 from backend.services.audit import (
@@ -17,16 +20,69 @@ from backend.services.audit import (
     write_audit,
 )
 from backend.services.crypto import decrypt, load_decrypted_key
-from backend.services.ssh import _ws_error, close_session, create_session, get_session_meta, stream_session
+from backend.services.ssh import (
+    SSHHostFingerprintMismatchError,
+    SSHHostFingerprintUnavailableError,
+    _ws_error,
+    close_session,
+    create_session,
+    get_session_meta,
+    probe_ssh_host_fingerprint,
+    stream_session,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/terminal", tags=["terminal"])
+
+_WS_TICKET_TTL_SECONDS = 30
+_ws_tickets: dict[str, tuple[str, str, datetime]] = {}
+_ws_tickets_lock = asyncio.Lock()
+
+
+async def _issue_ws_ticket(session_id: str, username: str) -> str:
+    ticket = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=_WS_TICKET_TTL_SECONDS)
+    async with _ws_tickets_lock:
+        _ws_tickets[ticket] = (session_id, username, expires_at)
+    return ticket
+
+
+async def _consume_ws_ticket(ticket: str, session_id: str) -> str | None:
+    now = datetime.now(timezone.utc)
+    async with _ws_tickets_lock:
+        for key, (_, _, expiry) in list(_ws_tickets.items()):
+            if expiry <= now:
+                _ws_tickets.pop(key, None)
+
+        payload = _ws_tickets.pop(ticket, None)
+        if not payload:
+            return None
+        ticket_session_id, username, expiry = payload
+        if expiry <= now or ticket_session_id != session_id:
+            return None
+        return username
+
+
+@router.post("/ws-ticket/{session_id}")
+async def create_ws_ticket(
+    session_id: str,
+    _: Request,
+    current_user: str = Depends(get_current_user),
+):
+    """Issue a short-lived, single-use ticket for terminal WebSocket auth."""
+    _, audit_user, _ = get_session_meta(session_id)
+    if not audit_user or audit_user != current_user:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    ticket = await _issue_ws_ticket(session_id, current_user)
+    return {"ticket": ticket, "expires_in": _WS_TICKET_TTL_SECONDS}
 
 
 @router.post("/session/{device_id}")
 async def open_session(
     device_id: int,
     request: Request,
+    trust_host: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: str = Depends(get_current_user),
 ):
@@ -61,6 +117,42 @@ async def open_session(
     device_label = f"{device.name} ({device.hostname}:{device.port})"
 
     try:
+        presented_fingerprint = await probe_ssh_host_fingerprint(
+            device.hostname,
+            device.port,
+            username=device.username,
+            password=password,
+            private_key_path=key_path,
+        )
+    except SSHHostFingerprintUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH host fingerprint unavailable: {exc}") from exc
+
+    pinned_fingerprint = device.ssh_host_fingerprint
+    if pinned_fingerprint is None:
+        if not trust_host:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "SSH_HOST_UNTRUSTED",
+                    "fingerprint": presented_fingerprint,
+                },
+            )
+        device.ssh_host_fingerprint = presented_fingerprint
+        await db.commit()
+    elif pinned_fingerprint != presented_fingerprint:
+        if not trust_host:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "SSH_HOST_CHANGED",
+                    "fingerprint": presented_fingerprint,
+                    "previous_fingerprint": pinned_fingerprint,
+                },
+            )
+        device.ssh_host_fingerprint = presented_fingerprint
+        await db.commit()
+
+    try:
         session_id = await create_session(
             hostname=device.hostname,
             port=device.port,
@@ -71,6 +163,7 @@ async def open_session(
             device_label=device_label,
             cloudshell_user=current_user,
             source_ip=client_ip,
+            expected_ssh_host_fingerprint=device.ssh_host_fingerprint,
         )
     except asyncssh.PermissionDenied:
         raise HTTPException(status_code=502, detail="SSH authentication failed")
@@ -78,6 +171,15 @@ async def open_session(
         raise HTTPException(status_code=504, detail="SSH connection lost")
     except asyncssh.HostKeyNotVerifiable as exc:
         raise HTTPException(status_code=502, detail=f"Host key not verifiable: {exc}")
+    except SSHHostFingerprintMismatchError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "SSH_HOST_CHANGED",
+                "fingerprint": exc.presented,
+                "previous_fingerprint": exc.expected,
+            },
+        ) from exc
     except (OSError, asyncssh.Error) as exc:
         raise HTTPException(status_code=502, detail=f"SSH connection failed: {exc}")
     finally:
@@ -101,32 +203,22 @@ async def open_session(
 @router.websocket("/ws/{session_id}")
 async def terminal_ws(session_id: str, websocket: WebSocket):
     """WebSocket endpoint — bridges browser ↔ SSH session. Frames are binary."""
-    from jose import JWTError, jwt as jose_jwt
-
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001)
-        return
+    ticket = websocket.query_params.get("ticket")
 
     username = "unknown"
     source_ip: str | None = None
-    try:
-        settings = get_settings()
-        payload = jose_jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-        username = payload.get("sub", "unknown")
-        # Extract client IP from the WebSocket upgrade request
-        xff = websocket.headers.get("x-forwarded-for")
-        if xff:
-            source_ip = xff.split(",")[0].strip()[:45]
-        else:
-            xri = websocket.headers.get("x-real-ip")
-            if xri:
-                source_ip = xri.strip()[:45]
-            elif websocket.client:
-                source_ip = websocket.client.host[:45]
-    except JWTError:
+
+    if not ticket:
         await websocket.close(code=4001)
         return
+
+    consumed_username = await _consume_ws_ticket(ticket, session_id)
+    if not consumed_username:
+        await websocket.close(code=4001)
+        return
+
+    username = consumed_username
+    source_ip = get_client_ip(websocket)  # type: ignore[arg-type]
 
     await websocket.accept()
     try:
@@ -146,7 +238,6 @@ async def terminal_ws(session_id: str, websocket: WebSocket):
             audit_ip = source_ip
         await close_session(session_id)
         log.info("Logging SESSION_ENDED for user=%s session=%s", audit_user, session_id[:8])
-        from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
             await write_audit(
                 db,

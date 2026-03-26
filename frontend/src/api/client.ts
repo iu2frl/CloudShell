@@ -1,24 +1,29 @@
 const BASE = "/api";
+const TOKEN_EXPIRY_KEY = "cloudshell_token_expiry";
 
 // -- Token helpers -------------------------------------------------------------
 
-/** Decode the JWT payload without verifying the signature (client-side only). */
-function _decodePayload(token: string): Record<string, unknown> | null {
+/** Store token expiry in sessionStorage for the countdown badge. */
+function _storeTokenExpiry(expiresAt: string): void {
   try {
-    const part = token.split(".")[1];
-    return JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
+    const expiryTime = new Date(expiresAt).getTime();
+    sessionStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
   } catch {
-    return null;
+    // Ignore storage errors
   }
 }
 
 /** Return the UTC expiry Date for the stored token, or null. */
 export function getTokenExpiry(): Date | null {
-  const token = localStorage.getItem("token");
-  if (!token) return null;
-  const payload = _decodePayload(token);
-  if (!payload || typeof payload.exp !== "number") return null;
-  return new Date(payload.exp * 1000);
+  try {
+    const stored = sessionStorage.getItem(TOKEN_EXPIRY_KEY);
+    if (!stored) return null;
+    const timestamp = parseInt(stored, 10);
+    if (isNaN(timestamp)) return null;
+    return new Date(timestamp);
+  } catch {
+    return null;
+  }
 }
 
 /** True if a token exists AND has not expired yet. */
@@ -29,15 +34,16 @@ export function isLoggedIn(): boolean {
 }
 
 function authHeaders(): HeadersInit {
-  const token = localStorage.getItem("token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  // httpOnly cookie is sent automatically by the browser
+  // No need to manually add Authorization header
+  return {};
 }
 
 // -- Core fetch wrapper --------------------------------------------------------
 
 /** Called by the 401 interceptor — clears state and fires a global event. */
 function _forceLogout(): void {
-  localStorage.removeItem("token");
+  sessionStorage.removeItem(TOKEN_EXPIRY_KEY);
   window.dispatchEvent(new Event("cloudshell:session-expired"));
 }
 
@@ -96,7 +102,7 @@ export async function login(
   }
   
   const data = await res.json();
-  localStorage.setItem("token", data.access_token);
+  _storeTokenExpiry(data.expires_at);
 }
 
 export async function logout(): Promise<void> {
@@ -105,7 +111,7 @@ export async function logout(): Promise<void> {
   } catch {
     // ignore errors — we're logging out regardless
   } finally {
-    localStorage.removeItem("token");
+    sessionStorage.removeItem(TOKEN_EXPIRY_KEY);
   }
 }
 
@@ -119,7 +125,7 @@ export async function refreshToken(): Promise<void> {
     return;
   }
   const data = await res.json();
-  localStorage.setItem("token", data.access_token);
+  _storeTokenExpiry(data.expires_at);
 }
 
 export interface MeInfo {
@@ -154,7 +160,9 @@ export interface Device {
   username: string;
   auth_type: "password" | "key";
   connection_type: ConnectionType;
+  ssh_host_fingerprint?: string | null;
   key_filename?: string | null;
+  ftps_cert_thumbprint?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -170,12 +178,17 @@ export interface DeviceCreate {
   private_key?: string;
 }
 
+export interface DeviceUpdate extends Partial<DeviceCreate> {
+  ssh_host_fingerprint?: string | null;
+  ftps_cert_thumbprint?: string | null;
+}
+
 export const listDevices = (): Promise<Device[]> => request("/devices/");
 
 export const createDevice = (d: DeviceCreate): Promise<Device> =>
   request("/devices/", { method: "POST", body: JSON.stringify(d) });
 
-export const updateDevice = (id: number, d: Partial<DeviceCreate>): Promise<Device> =>
+export const updateDevice = (id: number, d: DeviceUpdate): Promise<Device> =>
   request(`/devices/${id}`, { method: "PUT", body: JSON.stringify(d) });
 
 export const deleteDevice = (id: number): Promise<void> =>
@@ -183,17 +196,74 @@ export const deleteDevice = (id: number): Promise<void> =>
 
 // -- Terminal ------------------------------------------------------------------
 
-export async function openSession(deviceId: number): Promise<string> {
-  const data = await request<{ session_id: string }>(`/terminal/session/${deviceId}`, {
-    method: "POST",
-  });
-  return data.session_id;
+export type SshHostChallengeCode = "SSH_HOST_UNTRUSTED" | "SSH_HOST_CHANGED";
+
+export interface SshHostChallengeDetail {
+  code: SshHostChallengeCode;
+  fingerprint: string;
+  previous_fingerprint?: string;
 }
 
-export function terminalWsUrl(sessionId: string): string {
-  const token = localStorage.getItem("token") ?? "";
+export class SshHostChallengeError extends Error {
+  readonly detail: SshHostChallengeDetail;
+
+  constructor(detail: SshHostChallengeDetail) {
+    super(detail.code);
+    this.name = "SshHostChallengeError";
+    this.detail = detail;
+  }
+}
+
+function isSshHostChallengeDetail(value: unknown): value is SshHostChallengeDetail {
+  if (!value || typeof value !== "object") return false;
+  const detail = value as Record<string, unknown>;
+  const code = detail.code;
+  if (code !== "SSH_HOST_UNTRUSTED" && code !== "SSH_HOST_CHANGED") return false;
+  return typeof detail.fingerprint === "string";
+}
+
+export async function openSession(
+  deviceId: number,
+  options?: { trustHost?: boolean },
+): Promise<string> {
+  const trustHost = options?.trustHost === true;
+  const suffix = trustHost ? "?trust_host=true" : "";
+  const res = await fetch(`${BASE}/terminal/session/${deviceId}${suffix}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+  });
+
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
+
+  const data = await res.json().catch(() => ({ detail: res.statusText }));
+  if (!res.ok) {
+    if (res.status === 409 && isSshHostChallengeDetail(data.detail)) {
+      throw new SshHostChallengeError(data.detail);
+    }
+    throw new Error(data.detail ?? "Request failed");
+  }
+
+  return (data as { session_id: string }).session_id;
+}
+
+export interface TerminalWsTicket {
+  ticket: string;
+  expires_in: number;
+}
+
+export async function createTerminalWsTicket(sessionId: string): Promise<TerminalWsTicket> {
+  return request<TerminalWsTicket>(`/terminal/ws-ticket/${sessionId}`, {
+    method: "POST",
+  });
+}
+
+export function terminalWsUrl(sessionId: string, ticket: string): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.host}/api/terminal/ws/${sessionId}?token=${token}`;
+  const encodedTicket = encodeURIComponent(ticket);
+  return `${proto}://${window.location.host}/api/terminal/ws/${sessionId}?ticket=${encodedTicket}`;
 }
 
 // -- Audit ---------------------------------------------------------------------
@@ -233,11 +303,31 @@ export interface SftpListResponse {
   entries: SftpEntry[];
 }
 
-export async function openSftpSession(deviceId: number): Promise<string> {
-  const data = await request<{ session_id: string }>(`/sftp/session/${deviceId}`, {
+export async function openSftpSession(
+  deviceId: number,
+  options?: { trustHost?: boolean },
+): Promise<string> {
+  const trustHost = options?.trustHost === true;
+  const suffix = trustHost ? "?trust_host=true" : "";
+  const res = await fetch(`${BASE}/sftp/session/${deviceId}${suffix}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
   });
-  return data.session_id;
+
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
+
+  const data = await res.json().catch(() => ({ detail: res.statusText }));
+  if (!res.ok) {
+    if (res.status === 409 && isSshHostChallengeDetail(data.detail)) {
+      throw new SshHostChallengeError(data.detail);
+    }
+    throw new Error(data.detail ?? "Request failed");
+  }
+
+  return (data as { session_id: string }).session_id;
 }
 
 export async function closeSftpSession(sessionId: string): Promise<void> {
@@ -250,11 +340,12 @@ export async function sftpList(sessionId: string, path: string): Promise<SftpLis
 }
 
 export async function sftpDownload(sessionId: string, path: string): Promise<void> {
-  const token = localStorage.getItem("token") ?? "";
   const encoded = encodeURIComponent(path);
-  const res = await fetch(`${BASE}/sftp/${sessionId}/download?path=${encoded}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetch(`${BASE}/sftp/${sessionId}/download?path=${encoded}`);
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "Download failed");
@@ -279,13 +370,11 @@ export async function sftpUpload(
   file: File,
   onProgress?: (pct: number) => void,
 ): Promise<void> {
-  const token = localStorage.getItem("token") ?? "";
   const encoded = encodeURIComponent(remotePath);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${BASE}/sftp/${sessionId}/upload?path=${encoded}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -296,6 +385,9 @@ export async function sftpUpload(
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
+      } else if (xhr.status === 401) {
+        _forceLogout();
+        reject(new Error("Session expired"));
       } else {
         try {
           const err = JSON.parse(xhr.responseText);
@@ -345,11 +437,57 @@ export async function sftpMkdir(sessionId: string, path: string): Promise<void> 
 
 // -- FTP / FTPS ----------------------------------------------------------------
 
-export async function openFtpSession(deviceId: number): Promise<string> {
-  const data = await request<{ session_id: string }>(`/ftp/session/${deviceId}`, {
+export type FtpsCertificateChallengeCode = "FTPS_CERT_UNTRUSTED" | "FTPS_CERT_CHANGED";
+
+export interface FtpsCertificateChallengeDetail {
+  code: FtpsCertificateChallengeCode;
+  thumbprint: string;
+  previous_thumbprint?: string;
+}
+
+export class FtpsCertificateChallengeError extends Error {
+  readonly detail: FtpsCertificateChallengeDetail;
+
+  constructor(detail: FtpsCertificateChallengeDetail) {
+    super(detail.code);
+    this.name = "FtpsCertificateChallengeError";
+    this.detail = detail;
+  }
+}
+
+function isFtpsCertificateChallengeDetail(value: unknown): value is FtpsCertificateChallengeDetail {
+  if (!value || typeof value !== "object") return false;
+  const detail = value as Record<string, unknown>;
+  const code = detail.code;
+  if (code !== "FTPS_CERT_UNTRUSTED" && code !== "FTPS_CERT_CHANGED") return false;
+  return typeof detail.thumbprint === "string";
+}
+
+export async function openFtpSession(
+  deviceId: number,
+  options?: { trustCert?: boolean },
+): Promise<string> {
+  const trustCert = options?.trustCert === true;
+  const suffix = trustCert ? "?trust_cert=true" : "";
+  const res = await fetch(`${BASE}/ftp/session/${deviceId}${suffix}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
   });
-  return data.session_id;
+
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
+
+  const err = await res.json().catch(() => ({ detail: res.statusText }));
+  if (!res.ok) {
+    if (res.status === 409 && isFtpsCertificateChallengeDetail(err.detail)) {
+      throw new FtpsCertificateChallengeError(err.detail);
+    }
+    throw new Error(err.detail ?? "Request failed");
+  }
+
+  return (err as { session_id: string }).session_id;
 }
 
 export async function closeFtpSession(sessionId: string): Promise<void> {
@@ -362,11 +500,12 @@ export async function ftpList(sessionId: string, path: string): Promise<SftpList
 }
 
 export async function ftpDownload(sessionId: string, path: string): Promise<void> {
-  const token = localStorage.getItem("token") ?? "";
   const encoded = encodeURIComponent(path);
-  const res = await fetch(`${BASE}/ftp/${sessionId}/download?path=${encoded}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetch(`${BASE}/ftp/${sessionId}/download?path=${encoded}`);
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "Download failed");
@@ -391,13 +530,11 @@ export async function ftpUpload(
   file: File,
   onProgress?: (pct: number) => void,
 ): Promise<void> {
-  const token = localStorage.getItem("token") ?? "";
   const encoded = encodeURIComponent(remotePath);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${BASE}/ftp/${sessionId}/upload?path=${encoded}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -408,6 +545,9 @@ export async function ftpUpload(
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
+      } else if (xhr.status === 401) {
+        _forceLogout();
+        reject(new Error("Session expired"));
       } else {
         try {
           const err = JSON.parse(xhr.responseText);
@@ -463,6 +603,14 @@ export interface ImportResult {
   errors: number;
   messages: string[];
 }
+
+export interface GeneratedKeyPair {
+  private_key: string;
+  public_key: string;
+}
+
+export const generateKeyPair = (): Promise<GeneratedKeyPair> =>
+  request<GeneratedKeyPair>("/keys/generate", { method: "POST" });
 
 /** Download the current device configuration as a JSON blob URL ready for saving. */
 export async function exportConfig(): Promise<Blob> {

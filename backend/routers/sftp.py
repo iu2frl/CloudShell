@@ -44,6 +44,11 @@ from backend.services.sftp import (
     rename_remote,
     write_file_bytes,
 )
+from backend.services.ssh import (
+    SSHHostFingerprintMismatchError,
+    SSHHostFingerprintUnavailableError,
+    probe_ssh_host_fingerprint,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/sftp", tags=["sftp"])
@@ -89,6 +94,7 @@ async def _resolve_device_credentials(
 async def open_session(
     device_id: int,
     request: Request,
+    trust_host: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: str = Depends(get_current_user),
 ):
@@ -105,6 +111,46 @@ async def open_session(
     device_label = f"{device.name} ({device.hostname}:{device.port})"
 
     try:
+        presented_fingerprint = await probe_ssh_host_fingerprint(
+            device.hostname,
+            device.port,
+            username=device.username,
+            password=password,
+            private_key_path=key_path,
+        )
+    except asyncssh.ConnectionLost as exc:
+        raise HTTPException(status_code=504, detail="SSH connection lost") from exc
+    except SSHHostFingerprintUnavailableError as exc:
+        if isinstance(exc.__cause__, asyncssh.ConnectionLost):
+            raise HTTPException(status_code=504, detail="SSH connection lost") from exc
+        raise HTTPException(status_code=502, detail=f"SSH host fingerprint unavailable: {exc}") from exc
+
+    pinned_fingerprint = device.ssh_host_fingerprint
+    if pinned_fingerprint is None:
+        if not trust_host:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "SSH_HOST_UNTRUSTED",
+                    "fingerprint": presented_fingerprint,
+                },
+            )
+        device.ssh_host_fingerprint = presented_fingerprint
+        await db.commit()
+    elif pinned_fingerprint != presented_fingerprint:
+        if not trust_host:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "SSH_HOST_CHANGED",
+                    "fingerprint": presented_fingerprint,
+                    "previous_fingerprint": pinned_fingerprint,
+                },
+            )
+        device.ssh_host_fingerprint = presented_fingerprint
+        await db.commit()
+
+    try:
         session_id = await open_sftp_session(
             hostname=device.hostname,
             port=device.port,
@@ -115,6 +161,7 @@ async def open_session(
             device_label=device_label,
             cloudshell_user=current_user,
             source_ip=client_ip,
+            expected_ssh_host_fingerprint=device.ssh_host_fingerprint,
         )
     except asyncssh.PermissionDenied:
         raise HTTPException(status_code=502, detail="SSH authentication failed")
@@ -122,6 +169,15 @@ async def open_session(
         raise HTTPException(status_code=504, detail="SSH connection lost")
     except asyncssh.HostKeyNotVerifiable as exc:
         raise HTTPException(status_code=502, detail=f"Host key not verifiable: {exc}")
+    except SSHHostFingerprintMismatchError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "SSH_HOST_CHANGED",
+                "fingerprint": exc.presented,
+                "previous_fingerprint": exc.expected,
+            },
+        ) from exc
     except (OSError, asyncssh.Error) as exc:
         raise HTTPException(status_code=502, detail=f"SFTP connection failed: {exc}")
     finally:

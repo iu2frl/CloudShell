@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 DEFAULT_SECRET_KEY = "changeme-please-set-in-env"
+DEFAULT_ADMIN_PASSWORD = "changeme"
 DEVELOPMENT_ENVIRONMENTS = {"development", "dev", "local", "test", "testing"}
 
 
@@ -13,11 +14,14 @@ class Settings(BaseSettings):
     environment: str = os.getenv("ENVIRONMENT", "development")
     secret_key: str = os.getenv("SECRET_KEY", DEFAULT_SECRET_KEY)
     admin_user: str = os.getenv("ADMIN_USER", "admin")
-    admin_password: str = os.getenv("ADMIN_PASSWORD", "changeme")
+    admin_password: str = os.getenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
     token_ttl_hours: int = int(os.getenv("TOKEN_TTL_HOURS", "8"))
     audit_retention_days: int = int(os.getenv("AUDIT_RETENTION_DAYS", "7"))
     data_dir: str = os.getenv("DATA_DIR", "/data")
     trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "")
+    ftps_allow_insecure: bool = os.getenv("FTPS_ALLOW_INSECURE", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
     db_path: str = ""
     keys_dir: str = ""
 
@@ -37,8 +41,29 @@ class Settings(BaseSettings):
                 "Refusing startup with insecure default SECRET_KEY in non-development environment"
             )
 
+    def _validate_admin_password(self) -> None:
+        """Enforce non-default ADMIN_PASSWORD outside development-like environments."""
+        normalized_password = self.admin_password.strip() if self.admin_password else ""
+
+        if not normalized_password:
+            raise ValueError("ADMIN_PASSWORD must be non-empty")
+
+        if not self._is_development_environment() and normalized_password == DEFAULT_ADMIN_PASSWORD:
+            raise ValueError(
+                "Refusing startup with insecure default ADMIN_PASSWORD in non-development environment"
+            )
+
+    def _validate_ftps_mode(self) -> None:
+        """Disallow insecure FTPS mode outside development-like environments."""
+        if self.ftps_allow_insecure and not self._is_development_environment():
+            raise ValueError(
+                "Refusing startup with FTPS_ALLOW_INSECURE enabled in non-development environment"
+            )
+
     def model_post_init(self, __context) -> None:
         self._validate_secret_key()
+        self._validate_admin_password()
+        self._validate_ftps_mode()
         if not self.db_path:
             self.db_path = os.path.join(self.data_dir, "cloudshell.db")
         if not self.keys_dir:

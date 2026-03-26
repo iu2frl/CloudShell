@@ -24,16 +24,10 @@ import { SessionBadge } from '../components/SessionBadge';
 
 const FROZEN_NOW = new Date('2026-01-01T12:00:00.000Z').getTime();
 
-/** Build a minimal JWT whose exp claim is `offsetMs` ms from FROZEN_NOW. */
-function makeToken(offsetMs: number): string {
-  const exp = Math.floor((FROZEN_NOW + offsetMs) / 1000);
-  const header  = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = btoa(JSON.stringify({ sub: 'admin', exp }));
-  return `${header}.${payload}.fakesig`;
-}
-
 function setToken(offsetMs: number) {
-  localStorage.setItem('token', makeToken(offsetMs));
+  // Store expiry in sessionStorage (milliseconds from epoch)
+  const expiryMs = FROZEN_NOW + offsetMs;
+  sessionStorage.setItem('cloudshell_token_expiry', expiryMs.toString());
 }
 
 /** Returns the session trigger button by its title attribute. */
@@ -48,7 +42,7 @@ const getTrigger = () => screen.getByTitle('Session info');
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(FROZEN_NOW);
-  localStorage.clear();
+  sessionStorage.clear();
 });
 
 // Convenience: open the popover synchronously via fireEvent (safe with fake timers)
@@ -58,7 +52,7 @@ function openPopover() {
 
 afterEach(() => {
   vi.useRealTimers();
-  localStorage.clear();
+  sessionStorage.clear();
 });
 
 // -- Rendering -----------------------------------------------------------------

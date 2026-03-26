@@ -1,6 +1,13 @@
 import { useRef, useState } from "react";
-import { Device, DeviceCreate, createDevice, updateDevice } from "../api/client";
-import { X, KeyRound, Copy, Check, Loader, Upload } from "lucide-react";
+import {
+  Device,
+  DeviceCreate,
+  DeviceUpdate,
+  createDevice,
+  generateKeyPair as generateKeyPairApi,
+  updateDevice,
+} from "../api/client";
+import { X, KeyRound, Copy, Check, Loader, Upload, Trash2 } from "lucide-react";
 
 interface Props {
   device?: Device;
@@ -45,6 +52,9 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
   const [generating, setGenerating] = useState(false);
   const [publicKey, setPublicKey]   = useState<string | null>(null);
   const [copied, setCopied]         = useState(false);
+  const [sshFingerprint, setSshFingerprint] = useState<string | null>(device?.ssh_host_fingerprint ?? null);
+  const [ftpsThumbprint, setFtpsThumbprint] = useState<string | null>(device?.ftps_cert_thumbprint ?? null);
+  const [deletingFingerprint, setDeletingFingerprint] = useState<"ssh" | "ftps" | null>(null);
   const fileInputRef                = useRef<HTMLInputElement>(null);
 
   const set = (key: keyof DeviceCreate, value: string | number) =>
@@ -75,9 +85,12 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const saved = device
-        ? await updateDevice(device.id, form)
-        : await createDevice(form);
+      let saved: Device;
+      if (device) {
+        saved = await updateDevice(device.id, { ...form });
+      } else {
+        saved = await createDevice(form);
+      }
       onSave(saved);
     } catch (err) {
       setError(String(err));
@@ -90,13 +103,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
     setGenerating(true);
     setError(null);
     try {
-      const token = localStorage.getItem("token") ?? "";
-      const res = await fetch("/api/keys/generate", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await generateKeyPairApi();
       set("private_key", data.private_key);
       setPublicKey(data.public_key);
     } catch (err) {
@@ -111,6 +118,29 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
     navigator.clipboard.writeText(publicKey);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const deleteFingerprint = async (kind: "ssh" | "ftps") => {
+    if (!device || deletingFingerprint) return;
+
+    setDeletingFingerprint(kind);
+    setError(null);
+    try {
+      const payload: DeviceUpdate =
+        kind === "ssh"
+          ? { ssh_host_fingerprint: null }
+          : { ftps_cert_thumbprint: null };
+      await updateDevice(device.id, payload);
+      if (kind === "ssh") {
+        setSshFingerprint(null);
+      } else {
+        setFtpsThumbprint(null);
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDeletingFingerprint(null);
+    }
   };
 
   return (
@@ -277,6 +307,58 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
                   <pre className="text-[10px] text-green-300 break-all whitespace-pre-wrap font-mono leading-relaxed">
                     {publicKey}
                   </pre>
+                </div>
+              )}
+            </div>
+          )}
+
+          {device && (sshFingerprint || ftpsThumbprint) && (
+            <div className="space-y-3 rounded-lg border border-slate-700 bg-slate-800/40 p-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                Trusted Fingerprints
+              </p>
+
+              {sshFingerprint && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-slate-300">SSH host fingerprint</p>
+                    <button
+                      type="button"
+                      onClick={() => deleteFingerprint("ssh")}
+                      disabled={deletingFingerprint !== null}
+                      className="icon-btn text-red-400 hover:text-red-300 disabled:opacity-50"
+                      aria-label="Delete SSH fingerprint"
+                    >
+                      {deletingFingerprint === "ssh"
+                        ? <Loader size={12} className="animate-spin" />
+                        : <Trash2 size={12} />}
+                    </button>
+                  </div>
+                  <p className="break-all rounded bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300">
+                    {sshFingerprint}
+                  </p>
+                </div>
+              )}
+
+              {ftpsThumbprint && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-slate-300">FTPS certificate thumbprint</p>
+                    <button
+                      type="button"
+                      onClick={() => deleteFingerprint("ftps")}
+                      disabled={deletingFingerprint !== null}
+                      className="icon-btn text-red-400 hover:text-red-300 disabled:opacity-50"
+                      aria-label="Delete FTPS fingerprint"
+                    >
+                      {deletingFingerprint === "ftps"
+                        ? <Loader size={12} className="animate-spin" />
+                        : <Trash2 size={12} />}
+                    </button>
+                  </div>
+                  <p className="break-all rounded bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300">
+                    {ftpsThumbprint}
+                  </p>
                 </div>
               )}
             </div>

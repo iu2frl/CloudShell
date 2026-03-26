@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy import select
 
+from backend.config import get_settings
 from backend.models.audit import AuditLog
 from backend.services.audit import (
     ACTION_LOGIN,
@@ -159,27 +160,44 @@ def _make_request(headers: dict, client_host: str | None = None):
 
 
 def test_get_client_ip_xff_single():
-    """X-Forwarded-For with a single address returns that address."""
-    req = _make_request({"x-forwarded-for": "1.2.3.4"})
+    """Untrusted forwarded headers are ignored in favour of direct peer IP."""
+    get_settings.cache_clear()
+    req = _make_request({"x-forwarded-for": "1.2.3.4"}, client_host="192.168.1.10")
+    assert get_client_ip(req) == "192.168.1.10"
+    get_settings.cache_clear()
+
+
+def test_get_client_ip_xff_chain(monkeypatch):
+    """Trusted X-Forwarded-For chains return the leftmost original client."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "192.168.1.10")
+    req = _make_request(
+        {"x-forwarded-for": "1.2.3.4, 10.0.0.1, 10.0.0.2"},
+        client_host="192.168.1.10",
+    )
     assert get_client_ip(req) == "1.2.3.4"
+    get_settings.cache_clear()
 
 
-def test_get_client_ip_xff_chain():
-    """X-Forwarded-For with a proxy chain returns the leftmost (original client)."""
-    req = _make_request({"x-forwarded-for": "1.2.3.4, 10.0.0.1, 10.0.0.2"})
-    assert get_client_ip(req) == "1.2.3.4"
-
-
-def test_get_client_ip_xff_with_spaces():
-    """X-Forwarded-For entries with surrounding spaces are stripped."""
-    req = _make_request({"x-forwarded-for": "  5.6.7.8 , 10.0.0.1"})
+def test_get_client_ip_xff_with_spaces(monkeypatch):
+    """Trusted X-Forwarded-For entries with spaces are stripped."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "192.168.1.10")
+    req = _make_request(
+        {"x-forwarded-for": "  5.6.7.8 , 10.0.0.1"},
+        client_host="192.168.1.10",
+    )
     assert get_client_ip(req) == "5.6.7.8"
+    get_settings.cache_clear()
 
 
-def test_get_client_ip_x_real_ip():
-    """Falls back to X-Real-IP when X-Forwarded-For is absent."""
-    req = _make_request({"x-real-ip": "9.10.11.12"})
+def test_get_client_ip_x_real_ip(monkeypatch):
+    """Trusted proxy falls back to X-Real-IP when X-Forwarded-For is absent."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "192.168.1.10")
+    req = _make_request({"x-real-ip": "9.10.11.12"}, client_host="192.168.1.10")
     assert get_client_ip(req) == "9.10.11.12"
+    get_settings.cache_clear()
 
 
 def test_get_client_ip_direct_connection():
@@ -188,10 +206,16 @@ def test_get_client_ip_direct_connection():
     assert get_client_ip(req) == "192.168.1.1"
 
 
-def test_get_client_ip_xff_takes_priority_over_x_real_ip():
-    """X-Forwarded-For takes priority over X-Real-IP."""
-    req = _make_request({"x-forwarded-for": "1.1.1.1", "x-real-ip": "2.2.2.2"})
+def test_get_client_ip_xff_takes_priority_over_x_real_ip(monkeypatch):
+    """Trusted X-Forwarded-For takes priority over X-Real-IP."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "192.168.1.10")
+    req = _make_request(
+        {"x-forwarded-for": "1.1.1.1", "x-real-ip": "2.2.2.2"},
+        client_host="192.168.1.10",
+    )
     assert get_client_ip(req) == "1.1.1.1"
+    get_settings.cache_clear()
 
 
 def test_get_client_ip_no_info_returns_none():
@@ -200,17 +224,23 @@ def test_get_client_ip_no_info_returns_none():
     assert get_client_ip(req) is None
 
 
-def test_get_client_ip_truncated_to_45_chars():
+def test_get_client_ip_truncated_to_45_chars(monkeypatch):
     """IP strings longer than 45 characters are truncated to fit the DB column."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "192.168.1.10")
     long_ip = "a" * 60
-    req = _make_request({"x-forwarded-for": long_ip})
+    req = _make_request({"x-forwarded-for": long_ip}, client_host="192.168.1.10")
     result = get_client_ip(req)
     assert result is not None
     assert len(result) <= 45
+    get_settings.cache_clear()
 
 
-def test_get_client_ip_ipv6():
+def test_get_client_ip_ipv6(monkeypatch):
     """Full IPv6 addresses are accepted and returned verbatim."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "192.168.1.10")
     ipv6 = "2001:db8::1"
-    req = _make_request({"x-forwarded-for": ipv6})
+    req = _make_request({"x-forwarded-for": ipv6}, client_host="192.168.1.10")
     assert get_client_ip(req) == ipv6
+    get_settings.cache_clear()

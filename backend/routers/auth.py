@@ -39,12 +39,14 @@ from backend.services.rate_limit import get_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
 ALGORITHM = "HS256"
 REMEMBER_DEVICE_DAYS = 30
 REMEMBER_DEVICE_MAX_AGE_SECONDS = REMEMBER_DEVICE_DAYS * 24 * 60 * 60
 REMEMBER_DEVICE_COOKIE_NAME = "cloudshell_trusted_device"
+AUTH_COOKIE_NAME = "cloudshell_auth"
+AUTH_COOKIE_MAX_AGE_SECONDS = 8 * 60 * 60  # Will be overridden by settings.token_ttl_hours
 
 
 def _get_boot_id() -> str:
@@ -126,6 +128,30 @@ def _is_truthy_form_flag(value: str | None) -> bool:
     return normalized in {"1", "true", "yes", "on"}
 
 
+def _is_secure_request(request: Request) -> bool:
+    """Return True when the original client-facing request used HTTPS.
+
+    Trust X-Forwarded-Proto only when the direct peer is listed in
+    TRUSTED_PROXIES.
+    """
+    if request.url.scheme == "https":
+        return True
+
+    peer_ip = request.client.host if request.client else "unknown"
+    settings = get_settings()
+    trusted_proxies = {
+        item.strip() for item in settings.trusted_proxies.split(",") if item.strip()
+    }
+
+    if peer_ip in trusted_proxies:
+        forwarded_proto = request.headers.get("x-forwarded-proto", "")
+        if forwarded_proto:
+            first_hop_proto = forwarded_proto.split(",")[0].strip().lower()
+            return first_hop_proto == "https"
+
+    return False
+
+
 async def _prune_expired_trusted_devices(db: AsyncSession) -> None:
     """Delete expired trusted-device rows."""
     now = datetime.now(timezone.utc)
@@ -180,7 +206,26 @@ async def _remember_trusted_device(
         max_age=REMEMBER_DEVICE_MAX_AGE_SECONDS,
         expires=REMEMBER_DEVICE_MAX_AGE_SECONDS,
         httponly=True,
-        secure=(request.url.scheme == "https"),
+        secure=_is_secure_request(request),
+        samesite="lax",
+        path="/",
+    )
+
+
+def _set_auth_cookie(
+    response: Response,
+    token: str,
+    request: Request,
+    ttl_hours: int,
+) -> None:
+    """Set the auth token as a secure httpOnly cookie."""
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=ttl_hours * 60 * 60,
+        expires=ttl_hours * 60 * 60,
+        httponly=True,
+        secure=_is_secure_request(request),
         samesite="lax",
         path="/",
     )
@@ -189,7 +234,8 @@ async def _remember_trusted_device(
 # -- Shared dependency ---------------------------------------------------------
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request = None,
+    token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> str:
     settings = get_settings()
@@ -198,8 +244,13 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME) if request is not None else None
+    token_value = token or cookie_token
+    if not token_value:
+        raise credentials_exception
+
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(token_value, settings.secret_key, algorithms=[ALGORITHM])
         username: str | None = payload.get("sub")
         jti: str | None = payload.get("jti")
         if username is None or jti is None:
@@ -224,7 +275,8 @@ async def get_current_user(
 
 # Also expose a version that returns the full payload (used by /refresh)
 async def _get_payload(
-    token: str = Depends(oauth2_scheme),
+    request: Request = None,
+    token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     settings = get_settings()
@@ -233,8 +285,13 @@ async def _get_payload(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME) if request is not None else None
+    token_value = token or cookie_token
+    if not token_value:
+        raise credentials_exception
+
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(token_value, settings.secret_key, algorithms=[ALGORITHM])
     except JWTError as exc:
         raise credentials_exception from exc
 
@@ -367,6 +424,8 @@ async def login(
                 await _remember_trusted_device(form_data.username, response, request, db)
 
     encoded, expire, _ = _make_token(form_data.username)
+    settings = get_settings()
+    _set_auth_cookie(response, encoded, request, settings.token_ttl_hours)
     await write_audit(
         db, form_data.username, ACTION_LOGIN,
         detail="User logged in",
@@ -377,6 +436,8 @@ async def login(
 
 @router.post("/refresh", response_model=Token)
 async def refresh(
+    response: Response,
+    request: Request,
     payload: dict = Depends(_get_payload),
     db: AsyncSession = Depends(get_db),
 ):
@@ -395,20 +456,31 @@ async def refresh(
     # Housekeeping (fire-and-forget, don't block)
     await _prune_expired_tokens(db)
 
+    settings = get_settings()
     encoded, expire, _ = _make_token(username)
+    _set_auth_cookie(response, encoded, request, settings.token_ttl_hours)
     return Token(access_token=encoded, token_type="bearer", expires_at=expire)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
+    response: Response,
     request: Request,
-    token: str = Depends(oauth2_scheme),
+    token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ):
-    """Revoke the current token immediately."""
+    """Revoke the current token immediately and clear the auth cookie."""
+    token_value = token or request.cookies.get(AUTH_COOKIE_NAME)
+    if not token_value:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     settings = get_settings()
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(token_value, settings.secret_key, algorithms=[ALGORITHM])
     except JWTError:
         return  # already invalid — nothing to do
 
@@ -433,6 +505,12 @@ async def logout(
         db, username, ACTION_LOGOUT,
         detail="User logged out",
         source_ip=get_client_ip(request),
+    )
+    response.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        path="/",
+        secure=_is_secure_request(request),
+        samesite="lax",
     )
 
 
