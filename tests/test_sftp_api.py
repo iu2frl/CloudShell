@@ -176,6 +176,7 @@ async def test_open_sftp_session_requires_auth(client):
     device_id = create.json()["id"]
 
     client.headers.clear()
+    client.cookies.clear()
     resp = await client.post(f"/api/sftp/session/{device_id}")
     assert resp.status_code == 401
 

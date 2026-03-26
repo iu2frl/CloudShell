@@ -234,7 +234,7 @@ def _set_auth_cookie(
 # -- Shared dependency ---------------------------------------------------------
 
 async def get_current_user(
-    request: Request,
+    request: Request = None,
     token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> str:
@@ -244,7 +244,8 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    token_value = token or request.cookies.get(AUTH_COOKIE_NAME)
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME) if request is not None else None
+    token_value = token or cookie_token
     if not token_value:
         raise credentials_exception
 
@@ -274,7 +275,7 @@ async def get_current_user(
 
 # Also expose a version that returns the full payload (used by /refresh)
 async def _get_payload(
-    request: Request,
+    request: Request = None,
     token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -284,7 +285,8 @@ async def _get_payload(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    token_value = token or request.cookies.get(AUTH_COOKIE_NAME)
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME) if request is not None else None
+    token_value = token or cookie_token
     if not token_value:
         raise credentials_exception
 

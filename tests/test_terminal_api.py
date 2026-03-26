@@ -70,6 +70,7 @@ async def test_open_session_requires_auth(client):
 
     # Remove the token and try to open a session
     client.headers.pop("Authorization", None)
+    client.cookies.clear()
     resp = await client.post(f"/api/terminal/session/{device_id}")
     assert resp.status_code == 401
 
