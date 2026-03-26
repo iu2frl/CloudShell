@@ -114,6 +114,16 @@ def _make_fake_conn(sftp_client: MagicMock) -> MagicMock:
     return conn
 
 
+@pytest.fixture(autouse=True)
+def _mock_probe_fingerprint():
+    """Avoid real-network probe calls in tests by returning a stable fingerprint."""
+    with patch(
+        "backend.routers.sftp.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="AA:BB:CC"),
+    ):
+        yield
+
+
 # -- Device connection_type field ----------------------------------------------
 
 @pytest.mark.asyncio
@@ -153,7 +163,7 @@ async def test_device_update_connection_type(auth_client):
 # -- POST /api/sftp/session/{device_id} ---------------------------------------
 
 @pytest.mark.asyncio
-async def test_open_sftp_session_requires_auth(client, db_session):
+async def test_open_sftp_session_requires_auth(client):
     """POST /api/sftp/session/{id} without a token returns 401."""
     login = await client.post(
         "/api/auth/token",
@@ -166,6 +176,7 @@ async def test_open_sftp_session_requires_auth(client, db_session):
     device_id = create.json()["id"]
 
     client.headers.clear()
+    client.cookies.clear()
     resp = await client.post(f"/api/sftp/session/{device_id}")
     assert resp.status_code == 401
 
@@ -192,7 +203,7 @@ async def test_open_sftp_session_auth_failure(auth_client):
             ),
         ),
     ):
-        r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
     assert r.status_code == 502
 
 
@@ -209,7 +220,7 @@ async def test_open_sftp_session_connection_failure(auth_client):
             new=AsyncMock(side_effect=OSError("connection refused")),
         ),
     ):
-        r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
     assert r.status_code == 502
 
 
@@ -226,7 +237,7 @@ async def test_open_sftp_session_success(auth_client, db_session):
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
 
     assert r.status_code == 200
     data = r.json()
@@ -245,6 +256,49 @@ async def test_open_sftp_session_success(auth_client, db_session):
     _sftp_sessions.pop(session_id, None)
 
 
+@pytest.mark.asyncio
+async def test_open_sftp_session_untrusted_host_returns_409(auth_client):
+    """Unknown SSH host fingerprint must require explicit trust confirmation for SFTP."""
+    resp = await auth_client.post("/api/devices/", json=_sftp_device_payload())
+    device_id = resp.json()["id"]
+
+    with patch(
+        "backend.routers.sftp.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="AA:BB:CC"),
+    ):
+        r = await auth_client.post(f"/api/sftp/session/{device_id}")
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "SSH_HOST_UNTRUSTED"
+    assert detail["fingerprint"] == "AA:BB:CC"
+
+
+@pytest.mark.asyncio
+async def test_open_sftp_session_changed_host_returns_409(auth_client):
+    """Changed SSH host fingerprint must require re-confirmation for SFTP."""
+    resp = await auth_client.post("/api/devices/", json=_sftp_device_payload())
+    device_id = resp.json()["id"]
+
+    upd = await auth_client.put(
+        f"/api/devices/{device_id}",
+        json={"ssh_host_fingerprint": "11:22:33"},
+    )
+    assert upd.status_code == 200
+
+    with patch(
+        "backend.routers.sftp.probe_ssh_host_fingerprint",
+        new=AsyncMock(return_value="AA:BB:CC"),
+    ):
+        r = await auth_client.post(f"/api/sftp/session/{device_id}")
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "SSH_HOST_CHANGED"
+    assert detail["previous_fingerprint"] == "11:22:33"
+    assert detail["fingerprint"] == "AA:BB:CC"
+
+
 # -- DELETE /api/sftp/session/{session_id} ------------------------------------
 
 @pytest.mark.asyncio
@@ -260,7 +314,7 @@ async def test_close_sftp_session(auth_client, db_session):
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        open_r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        open_r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
 
     session_id = open_r.json()["session_id"]
 
@@ -298,7 +352,7 @@ async def test_list_directory(auth_client):
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        open_r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        open_r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
 
     session_id = open_r.json()["session_id"]
 
@@ -342,7 +396,7 @@ async def test_download_file(auth_client):
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        open_r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        open_r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
 
     session_id = open_r.json()["session_id"]
 
@@ -374,7 +428,7 @@ async def test_upload_file(auth_client):
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        open_r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        open_r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
 
     session_id = open_r.json()["session_id"]
 
@@ -409,7 +463,7 @@ async def test_delete_file(auth_client):
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        open_r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        open_r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
 
     session_id = open_r.json()["session_id"]
 
@@ -440,7 +494,7 @@ async def test_rename(auth_client):
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        open_r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        open_r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
 
     session_id = open_r.json()["session_id"]
 
@@ -471,7 +525,7 @@ async def test_mkdir(auth_client):
         patch("backend.services.sftp._known_hosts_path", return_value=None),
         patch("asyncssh.connect", new=AsyncMock(return_value=conn)),
     ):
-        open_r = await auth_client.post(f"/api/sftp/session/{device_id}")
+        open_r = await auth_client.post(f"/api/sftp/session/{device_id}?trust_host=true")
 
     session_id = open_r.json()["session_id"]
 

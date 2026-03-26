@@ -290,6 +290,30 @@ async def test_update_device_commits_and_refreshes():
     assert device in db.refreshed
 
 
+async def test_update_device_normalizes_fingerprint_fields():
+    """update_device strips whitespace and normalizes empty trust fingerprints to None."""
+    dev = Device(
+        name="srv",
+        hostname="1.1.1.1",
+        port=22,
+        username="root",
+        auth_type=AuthType.password,
+        connection_type=ConnectionType.ssh,
+    )
+    dev.id = 1
+    db = _FakeDB(device=dev)
+    payload = DeviceUpdate(
+        ssh_host_fingerprint=" 11:22:33 ",
+        ftps_cert_thumbprint="   ",
+    )
+
+    device = await update_device(device_id=1, payload=payload, db=db, _="admin")
+
+    assert device.ssh_host_fingerprint == "11:22:33"
+    assert device.ftps_cert_thumbprint is None
+    assert db.committed
+
+
 # -- delete_device -------------------------------------------------------------
 
 async def test_delete_device_not_found():

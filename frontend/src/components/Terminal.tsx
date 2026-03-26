@@ -3,9 +3,10 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { Device, openSession, terminalWsUrl } from "../api/client";
+import { Device, SshHostChallengeDetail, SshHostChallengeError, createTerminalWsTicket, openSession, terminalWsUrl } from "../api/client";
 import { RefreshCw, Wifi, WifiOff, Loader, Copy } from "lucide-react";
 import { useToast } from "./Toast";
+import { FingerprintTrustModal } from "./FingerprintTrustModal";
 
 type ConnState = "connecting" | "connected" | "disconnected" | "error" | "failed";
 
@@ -23,11 +24,27 @@ export function Terminal({ device }: TerminalProps) {
   const retriesRef     = useRef(0);
   const connectingRef  = useRef(false);
   const onDataDisposer = useRef<ReturnType<XTerm["onData"]> | null>(null);
+  const challengeResolverRef = useRef<((accepted: boolean) => void) | null>(null);
   const [connState, setConnState] = useState<ConnState>("connecting");
+  const [sshChallenge, setSshChallenge] = useState<SshHostChallengeDetail | null>(null);
   const toast = useToast();
   // Stable ref so connect() doesn't need toast in its dep array (prevents reconnect loop)
   const toastRef = useRef(toast);
   useEffect(() => { toastRef.current = toast; });
+
+  const requestSshHostTrust = useCallback((err: SshHostChallengeError): Promise<boolean> => {
+    setSshChallenge(err.detail);
+    return new Promise((resolve) => {
+      challengeResolverRef.current = resolve;
+    });
+  }, []);
+
+  const resolveSshHostTrust = useCallback((accepted: boolean) => {
+    setSshChallenge(null);
+    const resolver = challengeResolverRef.current;
+    challengeResolverRef.current = null;
+    resolver?.(accepted);
+  }, []);
 
   // -- Build the xterm instance once ------------------------------------------
   useEffect(() => {
@@ -98,7 +115,19 @@ export function Terminal({ device }: TerminalProps) {
 
     let sessionId: string;
     try {
-      sessionId = await openSession(device.id);
+      try {
+        sessionId = await openSession(device.id);
+      } catch (err) {
+        if (!(err instanceof SshHostChallengeError)) {
+          throw err;
+        }
+        const accepted = await requestSshHostTrust(err);
+        if (!accepted) {
+          throw new Error("Connection cancelled: SSH host key not trusted");
+        }
+        sessionId = await openSession(device.id, { trustHost: true });
+        toastRef.current.success("SSH host key trusted and saved for this device");
+      }
     } catch (err) {
       retriesRef.current += 1;
       const msg = String(err);
@@ -114,7 +143,26 @@ export function Terminal({ device }: TerminalProps) {
       return;
     }
 
-    const url = terminalWsUrl(sessionId);
+    let wsTicket: string;
+    try {
+      const ticketResponse = await createTerminalWsTicket(sessionId);
+      wsTicket = ticketResponse.ticket;
+    } catch (err) {
+      retriesRef.current += 1;
+      const msg = String(err);
+      term.writeln(`\r\n\x1b[31m[websocket ticket failed: ${msg}]\x1b[0m`);
+      if (retriesRef.current >= MAX_RETRIES) {
+        term.writeln(`\r\n\x1b[31m[max retries (${MAX_RETRIES}) reached — click reconnect to try again]\x1b[0m`);
+        setConnState("failed");
+      } else {
+        setConnState("error");
+      }
+      toastRef.current.error(`${device.name}: ${msg}`);
+      connectingRef.current = false;
+      return;
+    }
+
+    const url = terminalWsUrl(sessionId, wsTicket);
     const ws  = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
@@ -159,7 +207,7 @@ export function Terminal({ device }: TerminalProps) {
     });
   // toast intentionally excluded — accessed via toastRef to keep connect() stable
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [device.id, device.name]);
+  }, [device.id, device.name, requestSshHostTrust]);
 
   useEffect(() => { connect(); }, [connect]);
 
@@ -223,6 +271,10 @@ export function Terminal({ device }: TerminalProps) {
   // frame, so SESSION_ENDED is not written until the connection times out.
   useEffect(() => {
     return () => {
+      if (challengeResolverRef.current) {
+        challengeResolverRef.current(false);
+        challengeResolverRef.current = null;
+      }
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         wsRef.current = null;   // prevent onclose handler from firing
@@ -294,6 +346,20 @@ export function Terminal({ device }: TerminalProps) {
         className="flex-1 overflow-hidden border-x border-b border-slate-700 rounded-b-lg"
         style={{ background: "#0f1117" }}
       />
+
+      {sshChallenge && (
+        <FingerprintTrustModal
+          title={sshChallenge.code === "SSH_HOST_UNTRUSTED" ? "Trust SSH Host Key" : "SSH Host Key Changed"}
+          host={device.hostname}
+          currentLabel="Presented fingerprint (SHA-256)"
+          currentFingerprint={sshChallenge.fingerprint}
+          previousLabel={sshChallenge.code === "SSH_HOST_CHANGED" ? "Previously trusted fingerprint" : undefined}
+          previousFingerprint={sshChallenge.code === "SSH_HOST_CHANGED" ? sshChallenge.previous_fingerprint : undefined}
+          acceptLabel={sshChallenge.code === "SSH_HOST_UNTRUSTED" ? "Trust host key" : "Trust new host key"}
+          onAccept={() => resolveSshHostTrust(true)}
+          onCancel={() => resolveSshHostTrust(false)}
+        />
+      )}
     </div>
   );
 }

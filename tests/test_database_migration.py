@@ -10,9 +10,10 @@ Covers:
 """
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from backend.database import _run_migrations, _MIGRATIONS
+from backend.database import _run_migrations, _MIGRATIONS, _encrypt_legacy_totp_secrets
+from backend.services.crypto import decrypt_versioned, encrypt, encrypt_versioned
 
 
 # -- Helpers -------------------------------------------------------------------
@@ -144,8 +145,148 @@ async def test_migrations_table_covers_all_entries():
     Every entry in _MIGRATIONS references a real column name and a non-empty
     default — a basic sanity guard against typos.
     """
-    for table, column, col_type, default in _MIGRATIONS:
+    for table, column, col_type, default, nullable in _MIGRATIONS:
         assert table, "table name must not be empty"
         assert column, "column name must not be empty"
         assert col_type, "col_type must not be empty"
         assert default, "default must not be empty"
+        assert isinstance(nullable, bool), "nullable must be a boolean"
+
+
+@pytest.mark.asyncio
+async def test_migration_encrypts_plaintext_totp_secret():
+    """Legacy plaintext TOTP secrets should be encrypted during startup migration."""
+    engine = await _make_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE admin_totp_secrets ("
+            "  username VARCHAR(128) PRIMARY KEY,"
+            "  secret VARCHAR(512) NOT NULL,"
+            "  is_enabled BOOLEAN NOT NULL DEFAULT 0,"
+            "  backup_codes VARCHAR(512),"
+            "  created_at DATETIME"
+            ")"
+        ))
+        await conn.execute(text(
+            "INSERT INTO admin_totp_secrets (username, secret, is_enabled) "
+            "VALUES ('admin', 'ABCDEFGHIJKLMNOPQRSTUVWX12345678', 1)"
+        ))
+
+        before = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        plaintext = before.scalar_one()
+
+        await _encrypt_legacy_totp_secrets(conn)
+
+        after = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        encrypted_value = after.scalar_one()
+
+        assert encrypted_value != plaintext
+        normalized, version = decrypt_versioned(encrypted_value)
+        assert normalized == plaintext
+        assert version == "v1"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_migration_wraps_legacy_unversioned_ciphertext():
+    """Legacy encrypted but unversioned secrets should be rewritten with a version tag."""
+    engine = await _make_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE admin_totp_secrets ("
+            "  username VARCHAR(128) PRIMARY KEY,"
+            "  secret VARCHAR(512) NOT NULL,"
+            "  is_enabled BOOLEAN NOT NULL DEFAULT 0,"
+            "  backup_codes VARCHAR(512),"
+            "  created_at DATETIME"
+            ")"
+        ))
+        legacy_cipher = encrypt("ABCDEFGHIJKLMNOPQRSTUVWX12345678")
+        await conn.execute(
+            text(
+                "INSERT INTO admin_totp_secrets (username, secret, is_enabled) "
+                "VALUES ('admin', :secret, 1)"
+            ),
+            {"secret": legacy_cipher},
+        )
+
+        await _encrypt_legacy_totp_secrets(conn)
+
+        after = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        normalized_secret = after.scalar_one()
+
+        assert normalized_secret.startswith("v1:")
+        plaintext, version = decrypt_versioned(normalized_secret)
+        assert plaintext == "ABCDEFGHIJKLMNOPQRSTUVWX12345678"
+        assert version == "v1"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_migration_skips_non_string_or_empty_totp_secret():
+    """Rows with empty/non-string secrets should be ignored during normalization."""
+    engine = await _make_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE admin_totp_secrets ("
+            "  username VARCHAR(128) PRIMARY KEY,"
+            "  secret VARCHAR(512),"
+            "  is_enabled BOOLEAN NOT NULL DEFAULT 0,"
+            "  backup_codes VARCHAR(512),"
+            "  created_at DATETIME"
+            ")"
+        ))
+        await conn.execute(text(
+            "INSERT INTO admin_totp_secrets (username, secret, is_enabled) "
+            "VALUES ('admin', '', 1)"
+        ))
+
+        await _encrypt_legacy_totp_secrets(conn)
+
+        after = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        assert after.scalar_one() == ""
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_migration_skips_already_current_versioned_secret():
+    """Rows already encrypted with current version should remain unchanged."""
+    engine = await _make_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE admin_totp_secrets ("
+            "  username VARCHAR(128) PRIMARY KEY,"
+            "  secret VARCHAR(512) NOT NULL,"
+            "  is_enabled BOOLEAN NOT NULL DEFAULT 0,"
+            "  backup_codes VARCHAR(512),"
+            "  created_at DATETIME"
+            ")"
+        ))
+        already_current = encrypt_versioned("ABCDEFGHIJKLMNOPQRSTUVWX12345678", version="v1")
+        await conn.execute(
+            text(
+                "INSERT INTO admin_totp_secrets (username, secret, is_enabled) "
+                "VALUES ('admin', :secret, 1)"
+            ),
+            {"secret": already_current},
+        )
+
+        await _encrypt_legacy_totp_secrets(conn)
+
+        after = await conn.execute(
+            text("SELECT secret FROM admin_totp_secrets WHERE username = 'admin'")
+        )
+        assert after.scalar_one() == already_current
+
+    await engine.dispose()

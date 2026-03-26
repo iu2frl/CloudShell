@@ -32,12 +32,15 @@ from backend.services.audit import (
 )
 from backend.services.crypto import decrypt
 from backend.services.ftp import (
+    FTPSCertificateMismatchError,
+    FTPSCertificateUnavailableError,
     close_ftp_session,
     delete_remote,
     get_ftp_session_meta,
     list_directory,
     mkdir_remote,
     open_ftp_session,
+    probe_ftps_thumbprint,
     read_file_bytes,
     rename_remote,
     write_file_bytes,
@@ -54,6 +57,7 @@ router = APIRouter(prefix="/ftp", tags=["ftp"])
 async def open_session(
     device_id: int,
     request: Request,
+    trust_cert: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: str = Depends(get_current_user),
 ):
@@ -75,6 +79,40 @@ async def open_session(
     use_tls = device.connection_type == ConnectionType.ftps
     client_ip = get_client_ip(request)
     device_label = f"{device.name} ({device.hostname}:{device.port})"
+    expected_thumbprint: str | None = None
+
+    if use_tls:
+        try:
+            presented_thumbprint = await probe_ftps_thumbprint(device.hostname, device.port)
+        except FTPSCertificateUnavailableError as exc:
+            raise HTTPException(status_code=502, detail=f"FTPS certificate unavailable: {exc}") from exc
+
+        pinned_thumbprint = device.ftps_cert_thumbprint
+        if pinned_thumbprint is None:
+            if not trust_cert:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "FTPS_CERT_UNTRUSTED",
+                        "thumbprint": presented_thumbprint,
+                    },
+                )
+            device.ftps_cert_thumbprint = presented_thumbprint
+            await db.commit()
+        elif pinned_thumbprint != presented_thumbprint:
+            if not trust_cert:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "FTPS_CERT_CHANGED",
+                        "thumbprint": presented_thumbprint,
+                        "previous_thumbprint": pinned_thumbprint,
+                    },
+                )
+            device.ftps_cert_thumbprint = presented_thumbprint
+            await db.commit()
+
+        expected_thumbprint = device.ftps_cert_thumbprint
 
     try:
         session_id = await open_ftp_session(
@@ -86,13 +124,23 @@ async def open_session(
             device_label=device_label,
             cloudshell_user=current_user,
             source_ip=client_ip,
+            expected_ftps_thumbprint=expected_thumbprint,
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=502, detail=f"FTP authentication failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"FTP authentication failed: {exc}") from exc
     except ConnectionRefusedError as exc:
-        raise HTTPException(status_code=502, detail=f"FTP connection refused: {exc}")
+        raise HTTPException(status_code=502, detail=f"FTP connection refused: {exc}") from exc
+    except FTPSCertificateMismatchError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "FTPS_CERT_CHANGED",
+                "thumbprint": exc.presented,
+                "previous_thumbprint": exc.expected,
+            },
+        ) from exc
     except (OSError, Exception) as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"FTP connection failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"FTP connection failed: {exc}") from exc
 
     await write_audit(
         db,

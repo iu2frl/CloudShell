@@ -218,6 +218,37 @@ async def test_update_device_not_found(auth_client):
     assert resp.status_code == 404
 
 
+async def test_update_device_can_clear_trusted_fingerprints(auth_client):
+    """PUT /api/devices/{id} supports clearing persisted trust fingerprints."""
+    create_resp = await auth_client.post(
+        "/api/devices/",
+        json=_password_device_payload(),
+    )
+    device_id = create_resp.json()["id"]
+
+    set_resp = await auth_client.put(
+        f"/api/devices/{device_id}",
+        json={
+            "ssh_host_fingerprint": "11:22:33",
+            "ftps_cert_thumbprint": "AA:BB:CC",
+        },
+    )
+    assert set_resp.status_code == 200
+    assert set_resp.json()["ssh_host_fingerprint"] == "11:22:33"
+    assert set_resp.json()["ftps_cert_thumbprint"] == "AA:BB:CC"
+
+    clear_resp = await auth_client.put(
+        f"/api/devices/{device_id}",
+        json={
+            "ssh_host_fingerprint": None,
+            "ftps_cert_thumbprint": "",
+        },
+    )
+    assert clear_resp.status_code == 200
+    assert clear_resp.json()["ssh_host_fingerprint"] is None
+    assert clear_resp.json()["ftps_cert_thumbprint"] is None
+
+
 async def test_update_device_requires_auth(client):
     """PUT /api/devices/{id} without auth must return 401."""
     resp = await client.put("/api/devices/1", json={"name": "x"})

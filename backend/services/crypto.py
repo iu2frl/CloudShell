@@ -12,6 +12,7 @@ import base64
 import functools
 import logging
 import os
+import re
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -24,6 +25,8 @@ log = logging.getLogger(__name__)
 
 _SALT = b"cloudshell-static-salt-v1"  # static salt; effective key rotates via SECRET_KEY
 _PBKDF2_ITERATIONS = 260_000
+_DEFAULT_SECRET_VERSION = "v1"
+_VERSIONED_PREFIX_PATTERN = re.compile(r"^(v\d+):(.*)$")
 
 
 @functools.lru_cache(maxsize=1)
@@ -51,6 +54,31 @@ def encrypt(plaintext: str) -> str:
 def decrypt(token: str) -> str:
     """Decrypt a base64-encoded token; returns the original UTF-8 string."""
     return _decrypt_bytes(token).decode()
+
+
+def current_secret_version() -> str:
+    """Return the active secret version tag used for encrypted payloads."""
+    return _DEFAULT_SECRET_VERSION
+
+
+def encrypt_versioned(plaintext: str, *, version: str | None = None) -> str:
+    """Encrypt plaintext and prefix ciphertext with a key version tag."""
+    key_version = version or current_secret_version()
+    return f"{key_version}:{encrypt(plaintext)}"
+
+
+def decrypt_versioned(token: str) -> tuple[str, str | None]:
+    """Decrypt a versioned or legacy token and return (plaintext, version)."""
+    if not isinstance(token, str) or not token:
+        raise ValueError("Encrypted token must be a non-empty string")
+
+    match = _VERSIONED_PREFIX_PATTERN.match(token)
+    if match:
+        version = match.group(1)
+        payload = match.group(2)
+        return decrypt(payload), version
+
+    return decrypt(token), None
 
 
 def _encrypt_bytes(data: bytes) -> str:

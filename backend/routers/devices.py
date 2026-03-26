@@ -40,6 +40,8 @@ class DeviceUpdate(BaseModel):
     connection_type: Optional[ConnectionType] = None
     password: Optional[str] = None
     private_key: Optional[str] = None
+    ssh_host_fingerprint: Optional[str] = None
+    ftps_cert_thumbprint: Optional[str] = None
 
 
 class DeviceOut(BaseModel):
@@ -50,7 +52,9 @@ class DeviceOut(BaseModel):
     username: str
     auth_type: AuthType
     connection_type: ConnectionType
+    ssh_host_fingerprint: str | None = None
     key_filename: str | None = None
+    ftps_cert_thumbprint: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -136,8 +140,24 @@ async def update_device(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
-    for field in ("name", "hostname", "port", "username", "auth_type", "connection_type"):
+    provided_fields = payload.model_fields_set
+
+    for field in (
+        "name",
+        "hostname",
+        "port",
+        "username",
+        "auth_type",
+        "connection_type",
+        "ssh_host_fingerprint",
+        "ftps_cert_thumbprint",
+    ):
         val = getattr(payload, field)
+        if field in {"ssh_host_fingerprint", "ftps_cert_thumbprint"}:
+            if field in provided_fields:
+                normalized_val = val.strip() if isinstance(val, str) else val
+                setattr(device, field, normalized_val or None)
+            continue
         if val is not None:
             setattr(device, field, val)
 

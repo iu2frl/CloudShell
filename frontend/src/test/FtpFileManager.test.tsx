@@ -123,6 +123,23 @@ describe('FtpFileManager — connecting state', () => {
     setup({ connection_type: 'ftps' });
     expect(screen.getByText(/Connecting FTPS/i)).toBeInTheDocument();
   });
+
+  it('prompts on FTPS untrusted certificate and retries with trust', async () => {
+    const api = await import('../api/client');
+    const challenge = new api.FtpsCertificateChallengeError({
+      code: 'FTPS_CERT_UNTRUSTED',
+      thumbprint: 'AA:BB:CC',
+    });
+    mockOpenFtpSession.mockRejectedValueOnce(challenge).mockResolvedValueOnce('sess-ftp-2');
+
+    setup({ connection_type: 'ftps' });
+
+    await waitFor(() => expect(mockOpenFtpSession).toHaveBeenNthCalledWith(1, 5));
+    expect(screen.getByText('Trust FTPS Certificate')).toBeInTheDocument();
+    expect(screen.getByText('AA:BB:CC')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Trust certificate' }));
+    await waitFor(() => expect(mockOpenFtpSession).toHaveBeenNthCalledWith(2, 5, { trustCert: true }));
+  });
 });
 
 // -- Error state ---------------------------------------------------------------

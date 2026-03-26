@@ -2,13 +2,21 @@
 models/auth.py — persistence for auth-related state:
   - RevokedToken: JWT deny-list (jti → expiry)
   - AdminCredential: hashed admin password stored in DB
+  - AdminTOTPSecret: TOTP secrets for two-factor authentication
 """
 from datetime import datetime, timezone
+import binascii
+import logging
 
-from sqlalchemy import DateTime, String
+from cryptography.exceptions import InvalidTag
+from sqlalchemy import DateTime, String, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
+from backend.services.crypto import encrypt_versioned, decrypt_versioned
+
+
+log = logging.getLogger(__name__)
 
 
 class RevokedToken(Base):
@@ -42,4 +50,60 @@ class AdminCredential(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class AdminTOTPSecret(Base):
+    """
+    Stores TOTP secrets for two-factor authentication.
+
+    - `username`: primary key (matches AdminCredential username)
+    - `secret`: base32-encoded TOTP secret
+    - `is_enabled`: whether 2FA is currently active
+    - `backup_codes`: JSON list of backup codes (hashed)
+    - `created_at`: when 2FA was first set up
+    """
+    __tablename__ = "admin_totp_secrets"
+
+    username: Mapped[str] = mapped_column(String(128), primary_key=True)
+    _secret_encrypted: Mapped[str] = mapped_column("secret", String(512), nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    backup_codes: Mapped[str] = mapped_column(String(512), nullable=True)  # JSON list
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    @property
+    def secret(self) -> str:
+        """Return decrypted TOTP secret with legacy plaintext fallback."""
+        try:
+            plaintext, _ = decrypt_versioned(self._secret_encrypted)
+            return plaintext
+        except (ValueError, TypeError, binascii.Error, InvalidTag):
+            log.warning("Legacy plaintext TOTP secret loaded from database")
+            return self._secret_encrypted
+
+    @secret.setter
+    def secret(self, value: str) -> None:
+        """Encrypt TOTP secret before storing it in the database."""
+        self._secret_encrypted = encrypt_versioned(value)
+
+
+class AdminTrustedDevice(Base):
+    """Stores hashed remember-device tokens for optional 2FA bypass.
+
+    Each row maps a single random token hash to one username and expiration time.
+    Raw tokens are never persisted and are only sent to the client as HttpOnly
+    cookies.
+    """
+
+    __tablename__ = "admin_trusted_devices"
+
+    token_hash: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
     )

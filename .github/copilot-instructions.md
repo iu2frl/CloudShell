@@ -54,3 +54,14 @@
 - Every new feature should be documented in the README.md (or in one of the referenced markdown files) with clear instructions on how to use it
 - Every new feature should be documented in the index.html file of the website folder with a dedicated feature tile
 
+## Connections security
+
+- At first connection to a new host, the user should be prompted to verify the host's fingerprint before proceeding with the connection
+- The fingerprint should be displayed in a clear and easily understandable format, such as a hexadecimal string
+- The user should have the option to save the host's fingerprint for future connections, but this should be an explicit choice and not the default behavior
+- If the user chooses to save the fingerprint, it should be stored securely and associated with the host's address
+- If the user chooses not to save the fingerprint, they should be prompted to verify it again on the next connection attempt
+- If the fingerprint does not match the saved value on subsequent connections, the user should be alerted and given the option to proceed or abort the connection
+  - If the user chooses to proceed, the new fingerprint should be saved and associated with the host's address, replacing the old value
+  - If the user chooses to abort, the connection should be terminated immediately and no changes should be made to the saved fingerprint
+- The user should have the option to view and manage their saved fingerprints, including the ability to delete them if they are no longer needed or if they want to reset their trusted hosts list

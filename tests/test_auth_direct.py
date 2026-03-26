@@ -20,7 +20,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import bcrypt
 import pytest
 from fastapi import HTTPException, Request
+from starlette.responses import Response
 from jose import jwt as jose_jwt
+from jose import JWTError
 from starlette.datastructures import Headers
 
 from backend.config import get_settings
@@ -28,6 +30,11 @@ from backend.models.auth import AdminCredential, RevokedToken
 from backend.routers.auth import (
     ALGORITHM,
     ChangePasswordIn,
+    _is_trusted_device,
+    _remember_trusted_device,
+    _get_hashed_password,
+    _verify_credentials,
+    _prune_expired_tokens,
     _get_payload,
     _make_token,
     change_password,
@@ -48,7 +55,25 @@ class _FakeRequest:
     def __init__(self):
         self.headers = Headers(headers={})
         self.client = None
+        self.cookies = {}
 
+        class _URL:
+            scheme = "http"
+
+        self.url = _URL()
+
+
+class _FakeResponse:
+    """Minimal Response duck-type for set_cookie/delete_cookie testing."""
+
+    def __init__(self):
+        self.cookies = {}
+
+    def set_cookie(self, key, value=None, max_age=None, expires=None, httponly=False, secure=False, samesite=None, path=None):
+        self.cookies[key] = {"value": value, "max_age": max_age}
+
+    def delete_cookie(self, key, path=None, secure=False, samesite=None):
+        self.cookies[key] = None
 
 class _FakeDB:
     """Minimal AsyncSession duck-type."""
@@ -56,6 +81,7 @@ class _FakeDB:
     def __init__(self, get_return=None):
         self._get_return = get_return
         self.added = []
+        self.deleted = []
         self.committed = False
 
     async def get(self, cls, pk):
@@ -63,6 +89,9 @@ class _FakeDB:
 
     def add(self, obj):
         self.added.append(obj)
+
+    async def delete(self, obj):
+        self.deleted.append(obj)
 
     async def commit(self):
         self.committed = True
@@ -145,6 +174,27 @@ async def test_get_current_user_valid_token_returns_username():
     assert username == "admin"
 
 
+async def test_get_current_user_missing_subject_or_jti_raises_401():
+    """get_current_user raises 401 when required claims are missing."""
+    settings = get_settings()
+    from backend.main import BOOT_ID
+
+    token = jose_jwt.encode(
+        {
+            "sub": "admin",
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+            "bid": BOOT_ID,
+        },
+        settings.secret_key,
+        algorithm=ALGORITHM,
+    )
+
+    db = _FakeDB()
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(token=token, db=db)
+    assert exc_info.value.status_code == 401
+
+
 # -- _get_payload --------------------------------------------------------------
 
 async def test_get_payload_boot_id_mismatch_raises_401():
@@ -184,6 +234,57 @@ async def test_get_payload_valid_token_returns_dict():
     assert "jti" in payload
 
 
+async def test_get_payload_missing_jti_raises_401():
+    """_get_payload raises 401 when jti claim is missing."""
+    settings = get_settings()
+    from backend.main import BOOT_ID
+
+    token = jose_jwt.encode(
+        {
+            "sub": "admin",
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+            "bid": BOOT_ID,
+        },
+        settings.secret_key,
+        algorithm=ALGORITHM,
+    )
+
+    db = _FakeDB()
+    with pytest.raises(HTTPException) as exc_info:
+        await _get_payload(token=token, db=db)
+    assert exc_info.value.status_code == 401
+
+
+async def test_get_hashed_password_returns_value_or_none():
+    """_get_hashed_password returns stored hash when present, else None."""
+    stored = AdminCredential(username="admin", hashed_password="hash")
+    db = _FakeDB(get_return=stored)
+    assert await _get_hashed_password("admin", db) == "hash"
+
+    db_none = _FakeDB(get_return=None)
+    assert await _get_hashed_password("admin", db_none) is None
+
+
+async def test_verify_credentials_uses_db_hash_and_fallback_plaintext():
+    """_verify_credentials should validate against DB hash or env fallback."""
+    settings = get_settings()
+
+    db_hash = bcrypt.hashpw(settings.admin_password.encode(), bcrypt.gensalt()).decode()
+
+    with patch("backend.routers.auth._get_hashed_password", new_callable=AsyncMock, return_value=db_hash):
+        assert await _verify_credentials(settings.admin_user, settings.admin_password, _FakeDB()) is True
+
+    with patch("backend.routers.auth._get_hashed_password", new_callable=AsyncMock, return_value=None):
+        assert await _verify_credentials(settings.admin_user, settings.admin_password, _FakeDB()) is True
+
+
+async def test_prune_expired_tokens_commits():
+    """_prune_expired_tokens should execute delete and commit."""
+    db = _FakeDB()
+    await _prune_expired_tokens(db)
+    assert db.committed is True
+
+
 # -- login ---------------------------------------------------------------------
 
 async def test_login_direct_success():
@@ -196,10 +297,11 @@ async def test_login_direct_success():
 
     db = _FakeDB()
     request = _FakeRequest()
+    response = Response()
 
     with patch("backend.routers.auth._verify_credentials", new_callable=AsyncMock, return_value=True), \
          patch("backend.routers.auth.write_audit", new_callable=AsyncMock):
-        token = await login(request=request, form_data=form, db=db)
+        token = await login(request=request, response=response, form_data=form, db=db)
 
     assert token.token_type == "bearer"
     assert token.access_token
@@ -216,11 +318,174 @@ async def test_login_direct_bad_credentials_raises_401():
 
     db = _FakeDB()
     request = _FakeRequest()
+    response = Response()
 
     with patch("backend.routers.auth._verify_credentials", new_callable=AsyncMock, return_value=False):
         with pytest.raises(HTTPException) as exc_info:
-            await login(request=request, form_data=form, db=db)
+            await login(request=request, response=response, form_data=form, db=db)
     assert exc_info.value.status_code == 401
+
+
+async def test_is_trusted_device_returns_false_when_record_missing():
+    """_is_trusted_device should return False when token hash is not found."""
+    db = _FakeDB(get_return=None)
+    is_trusted = await _is_trusted_device("admin", "cookie-token", db)
+    assert is_trusted is False
+
+
+async def test_is_trusted_device_invalid_record_is_deleted():
+    """_is_trusted_device should delete stale/mismatched records and return False."""
+    record = MagicMock()
+    record.username = "other-user"
+    record.expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    db = _FakeDB(get_return=record)
+
+    is_trusted = await _is_trusted_device("admin", "cookie-token", db)
+
+    assert is_trusted is False
+    assert record in db.deleted
+    assert db.committed is True
+
+
+async def test_is_trusted_device_accepts_naive_future_expiry():
+    """_is_trusted_device should normalize naive expiry and accept valid records."""
+    record = MagicMock()
+    record.username = "admin"
+    record.expires_at = datetime.now() + timedelta(hours=1)
+    db = _FakeDB(get_return=record)
+
+    is_trusted = await _is_trusted_device("admin", "cookie-token", db)
+
+    assert is_trusted is True
+
+
+async def test_remember_trusted_device_sets_cookie_and_persists_record():
+    """_remember_trusted_device should store DB row and set secure cookie on HTTPS."""
+    db = _FakeDB()
+    response = Response()
+    request = _FakeRequest()
+    request.url.scheme = "https"
+
+    await _remember_trusted_device("admin", response, request, db)
+
+    assert db.committed is True
+    assert len(db.added) == 1
+    set_cookie_values = response.headers.getlist("set-cookie")
+    assert any("cloudshell_trusted_device=" in value for value in set_cookie_values)
+    assert any("Secure" in value for value in set_cookie_values)
+
+
+async def test_remember_trusted_device_sets_secure_cookie_when_trusted_xfp_https(monkeypatch):
+    """Trusted proxy + X-Forwarded-Proto=https should set Secure cookie."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "127.0.0.1")
+
+    db = _FakeDB()
+    response = Response()
+    request = _FakeRequest()
+    request.url.scheme = "http"
+    request.headers = Headers(headers={"x-forwarded-proto": "https"})
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    await _remember_trusted_device("admin", response, request, db)
+
+    set_cookie_values = response.headers.getlist("set-cookie")
+    assert any("cloudshell_trusted_device=" in value for value in set_cookie_values)
+    assert any("Secure" in value for value in set_cookie_values)
+    get_settings.cache_clear()
+
+
+async def test_remember_trusted_device_does_not_trust_untrusted_xfp(monkeypatch):
+    """Untrusted peers must not force Secure cookie via X-Forwarded-Proto."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
+
+    db = _FakeDB()
+    response = Response()
+    request = _FakeRequest()
+    request.url.scheme = "http"
+    request.headers = Headers(headers={"x-forwarded-proto": "https"})
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    await _remember_trusted_device("admin", response, request, db)
+
+    set_cookie_values = response.headers.getlist("set-cookie")
+    assert any("cloudshell_trusted_device=" in value for value in set_cookie_values)
+    assert all("Secure" not in value for value in set_cookie_values)
+    get_settings.cache_clear()
+
+
+async def test_login_direct_backup_code_used_low_warning_and_remember_device():
+    """login should consume backup code, warn when low, and remember device when requested."""
+    from fastapi.security import OAuth2PasswordRequestForm
+
+    form = MagicMock(spec=OAuth2PasswordRequestForm)
+    form.username = "admin"
+    form.password = "admin"
+
+    totp_record = MagicMock()
+    totp_record.is_enabled = True
+    totp_record.secret = "SECRET"
+    totp_record.backup_codes = "[]"
+
+    db = _FakeDB(get_return=totp_record)
+    request = _FakeRequest()
+    response = Response()
+
+    with patch("backend.routers.auth._verify_credentials", new_callable=AsyncMock, return_value=True), \
+         patch("backend.routers.auth._prune_expired_trusted_devices", new_callable=AsyncMock), \
+         patch("backend.routers.auth._is_trusted_device", new_callable=AsyncMock, return_value=False), \
+         patch("backend.routers.auth._remember_trusted_device", new_callable=AsyncMock) as mock_remember, \
+         patch("backend.routers.auth.write_audit", new_callable=AsyncMock) as mock_audit, \
+         patch("backend.services.totp.TOTPService.verify_token", return_value=False), \
+         patch("backend.services.totp.TOTPService.verify_and_consume_backup_code", return_value=(True, '["hashed-only"]')), \
+         patch("backend.services.totp.TOTPService.codes_from_json", return_value=["leftover"]):
+        token = await login(
+            request=request,
+            response=response,
+            form_data=form,
+            totp_code="ABCD-EFGH",
+            remember_device="true",
+            db=db,
+        )
+
+    assert token.access_token
+    assert db.committed is True
+    assert "Only 1 backup code(s) remaining" in (token.backup_codes_warning or "")
+    assert mock_audit.await_count >= 3
+    mock_remember.assert_awaited_once()
+
+
+async def test_login_direct_trusted_device_skips_totp_code_requirement():
+    """login should allow successful auth without totp_code when device is trusted."""
+    from fastapi.security import OAuth2PasswordRequestForm
+
+    form = MagicMock(spec=OAuth2PasswordRequestForm)
+    form.username = "admin"
+    form.password = "admin"
+
+    totp_record = MagicMock()
+    totp_record.is_enabled = True
+
+    db = _FakeDB(get_return=totp_record)
+    request = _FakeRequest()
+    response = Response()
+
+    with patch("backend.routers.auth._verify_credentials", new_callable=AsyncMock, return_value=True), \
+         patch("backend.routers.auth._prune_expired_trusted_devices", new_callable=AsyncMock), \
+         patch("backend.routers.auth._is_trusted_device", new_callable=AsyncMock, return_value=True), \
+         patch("backend.routers.auth.write_audit", new_callable=AsyncMock):
+        token = await login(
+            request=request,
+            response=response,
+            form_data=form,
+            totp_code=None,
+            db=db,
+        )
+
+    assert token.access_token
 
 
 # -- refresh -------------------------------------------------------------------
@@ -236,9 +501,11 @@ async def test_refresh_direct_success():
     }
 
     db = _FakeDB()
+    request = _FakeRequest()
+    response = _FakeResponse()
 
     with patch("backend.routers.auth._prune_expired_tokens", new_callable=AsyncMock) as mock_prune:
-        token = await refresh(payload=payload, db=db)
+        token = await refresh(response=response, request=request, payload=payload, db=db)
 
     assert token.token_type == "bearer"
     assert token.access_token
@@ -258,13 +525,27 @@ async def test_logout_direct_no_jti_returns_early():
     no_jti_payload = {"sub": "admin", "bid": BOOT_ID}
     db = _FakeDB()
     request = _FakeRequest()
+    response = _FakeResponse()
 
     with patch("backend.routers.auth.jwt.decode", return_value=no_jti_payload):
-        await logout(request=request, token="any.token.value", db=db)
+        await logout(response=response, request=request, token="any.token.value", db=db)
 
     # No RevokedToken should have been added and no commit
     assert not any(isinstance(o, RevokedToken) for o in db.added)
     assert not db.committed
+
+
+async def test_logout_direct_invalid_jwt_returns_early():
+    """logout should return early when jwt.decode raises JWTError."""
+    db = _FakeDB()
+    request = _FakeRequest()
+    response = _FakeResponse()
+
+    with patch("backend.routers.auth.jwt.decode", side_effect=JWTError("bad token")):
+        await logout(response=response, request=request, token="bad.token", db=db)
+
+    assert db.added == []
+    assert db.committed is False
 
 
 async def test_logout_direct_success_with_exp():
@@ -272,9 +553,10 @@ async def test_logout_direct_success_with_exp():
     token = _valid_token()
     db = _FakeDB(get_return=None)  # not already revoked
     request = _FakeRequest()
+    response = _FakeResponse()
 
     with patch("backend.routers.auth.write_audit", new_callable=AsyncMock) as mock_audit:
-        await logout(request=request, token=token, db=db)
+        await logout(response=response, request=request, token=token, db=db)
 
     assert db.committed
     assert any(isinstance(o, RevokedToken) for o in db.added)
@@ -302,10 +584,11 @@ async def test_logout_direct_exp_missing_uses_now():
 
     db = _FakeDB(get_return=None)
     request = _FakeRequest()
+    response = _FakeResponse()
 
     with patch("backend.routers.auth.jwt.decode", return_value=no_exp_payload), \
          patch("backend.routers.auth.write_audit", new_callable=AsyncMock):
-        await logout(request=request, token=encoded, db=db)
+        await logout(response=response, request=request, token=encoded, db=db)
 
     # The fallback path should have added a RevokedToken
     assert any(isinstance(o, RevokedToken) for o in db.added)
@@ -324,9 +607,10 @@ async def test_logout_direct_already_revoked_skips_add():
     )
     db = _FakeDB(get_return=existing_row)  # already revoked
     request = _FakeRequest()
+    response = _FakeResponse()
 
     with patch("backend.routers.auth.write_audit", new_callable=AsyncMock):
-        await logout(request=request, token=token, db=db)
+        await logout(response=response, request=request, token=token, db=db)
 
     # No new RevokedToken should have been added
     assert not any(isinstance(o, RevokedToken) for o in db.added)
