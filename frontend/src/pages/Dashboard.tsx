@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Device, listDevices, logout } from "../api/client";
-import { DeviceList } from "../components/DeviceList";
+import { Device, FolderWithChildren, listDevices, listFolders, logout } from "../api/client";
+import { DeviceListWithFolders } from "../components/DeviceListWithFolders";
 import { DeviceForm } from "../components/DeviceForm";
 import { Terminal } from "../components/Terminal";
 import { FileManager } from "../components/FileManager";
@@ -28,6 +28,7 @@ let tabCounter = 0;
 
 export function Dashboard({ onLogout }: Props) {
   const [devices, setDevices]       = useState<Device[]>([]);
+  const [folders, setFolders]       = useState<FolderWithChildren[]>([]);
   const [loading, setLoading]       = useState(true);
   const [tabs, setTabs]             = useState<Tab[]>([]);
   const [activeTab, setActiveTab]   = useState<number | null>(null);
@@ -97,7 +98,9 @@ export function Dashboard({ onLogout }: Props) {
   const fetchDevices = async () => {
     setLoading(true);
     try {
-      setDevices(await listDevices());
+      const [devicesData, foldersData] = await Promise.all([listDevices(), listFolders().catch(() => [])]);
+      setDevices(devicesData);
+      setFolders(foldersData);
     } catch {
       toast.error("Failed to load devices");
     } finally {
@@ -271,7 +274,7 @@ export function Dashboard({ onLogout }: Props) {
 
       {/* -- Body ------------------------------------------------------------- */}
       <div className="flex flex-1 overflow-hidden">
-        <DeviceList
+        <DeviceListWithFolders
           devices={devices}
           activeDeviceId={focusedDevice?.id ?? activeDevice?.id ?? null}
           loading={loading}
@@ -381,6 +384,7 @@ export function Dashboard({ onLogout }: Props) {
       {showForm && (
         <DeviceForm
           device={editDevice}
+          folders={folders}
           onSave={(saved) => {
             setDevices((prev) =>
               editDevice

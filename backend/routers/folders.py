@@ -1,0 +1,183 @@
+"""API endpoints for device folder management."""
+
+from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.database import get_db
+from backend.models.folder import Folder
+from backend.routers.auth import get_current_user
+
+router = APIRouter(prefix="/folders", tags=["folders"])
+
+
+# -- Schemas ------------------------------------------------------------------
+
+class FolderCreate(BaseModel):
+    """Schema for creating a new folder."""
+
+    name: str
+    description: Optional[str] = None
+    parent_folder_id: Optional[int] = None
+
+
+class FolderUpdate(BaseModel):
+    """Schema for updating a folder."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    parent_folder_id: Optional[int] = None
+
+
+class FolderOut(BaseModel):
+    """Schema for folder response."""
+
+    id: int
+    name: str
+    description: Optional[str] = None
+    parent_folder_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class FolderWithChildrenOut(FolderOut):
+    """Schema for folder response with nested children."""
+
+    children: list["FolderWithChildrenOut"] = []
+    device_count: int = 0
+
+
+FolderWithChildrenOut.model_rebuild()
+
+
+# -- Routes -------------------------------------------------------------------
+
+@router.post("/", response_model=FolderOut, status_code=status.HTTP_201_CREATED)
+async def create_folder(
+    payload: FolderCreate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    """Create a new folder for organizing devices."""
+    # Validate parent folder exists if specified
+    if payload.parent_folder_id is not None:
+        parent = await db.get(Folder, payload.parent_folder_id)
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent folder not found")
+
+    folder = Folder(
+        name=payload.name,
+        description=payload.description,
+        parent_folder_id=payload.parent_folder_id,
+    )
+    db.add(folder)
+    await db.commit()
+    await db.refresh(folder)
+    return folder
+
+
+@router.get("/", response_model=list[FolderWithChildrenOut])
+async def list_root_folders(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    """List all root-level folders (folders with no parent) with their hierarchical structure."""
+    result = await db.execute(
+        select(Folder).where(Folder.parent_folder_id.is_(None)).order_by(Folder.name)
+    )
+    folders = result.scalars().all()
+    return [_folder_to_dict_with_children(f) for f in folders]
+
+
+@router.get("/{folder_id}", response_model=FolderWithChildrenOut)
+async def get_folder(
+    folder_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    """Get a specific folder with its complete hierarchy."""
+    folder = await db.get(Folder, folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    return _folder_to_dict_with_children(folder)
+
+
+@router.put("/{folder_id}", response_model=FolderOut)
+async def update_folder(
+    folder_id: int,
+    payload: FolderUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    """Update a folder's details."""
+    folder = await db.get(Folder, folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # Validate new parent folder if specified
+    if payload.parent_folder_id is not None:
+        if payload.parent_folder_id == folder_id:
+            raise HTTPException(status_code=400, detail="Cannot move folder into itself")
+
+        parent = await db.get(Folder, payload.parent_folder_id)
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent folder not found")
+
+    # Update fields
+    if payload.name is not None:
+        folder.name = payload.name
+    if payload.description is not None:
+        folder.description = payload.description
+    if payload.parent_folder_id is not None:
+        folder.parent_folder_id = payload.parent_folder_id
+
+    db.add(folder)
+    await db.commit()
+    await db.refresh(folder)
+    return folder
+
+
+@router.delete("/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_folder(
+    folder_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    """Delete a folder and move its devices to the root level."""
+    folder = await db.get(Folder, folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # Move devices to root level (set folder_id to NULL)
+    for device in folder.devices:
+        device.folder_id = None
+
+    # Move subfolders to root level
+    for subfolder in folder.children:
+        subfolder.parent_folder_id = None
+
+    db.add(folder)
+    await db.delete(folder)
+    await db.commit()
+
+
+# -- Helpers ------------------------------------------------------------------
+
+def _folder_to_dict_with_children(folder: Folder) -> dict:
+    """Convert a folder instance to a dictionary with nested children."""
+    return {
+        "id": folder.id,
+        "name": folder.name,
+        "description": folder.description,
+        "parent_folder_id": folder.parent_folder_id,
+        "created_at": folder.created_at,
+        "updated_at": folder.updated_at,
+        "children": [_folder_to_dict_with_children(child) for child in sorted(folder.children, key=lambda f: f.name)],
+        "device_count": len(folder.devices),
+    }
