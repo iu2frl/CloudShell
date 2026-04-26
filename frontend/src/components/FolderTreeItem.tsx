@@ -53,7 +53,7 @@ export function FolderTreeItem({
     }
   };
 
-  const hasChildren = folder.children.length > 0;
+  const hasChildren = folder.children && Array.isArray(folder.children) && folder.children.length > 0;
 
   return (
     <div>
@@ -151,7 +151,7 @@ export function FolderTreeItem({
           {renderDevices(folder.id)}
 
           {/* Child folders */}
-          {folder.children.map((child) => (
+          {folder.children && Array.isArray(folder.children) && folder.children.map((child) => (
             <FolderTreeItem
               key={child.id}
               folder={child}

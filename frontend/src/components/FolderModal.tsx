@@ -1,10 +1,15 @@
 import { useState } from "react";
 import { Folder, FolderWithChildren, createFolder, updateFolder } from "../api/client";
 
+interface FolderOption {
+  folder: FolderWithChildren;
+  path: string;
+}
+
 interface FolderModalProps {
   isOpen: boolean;
   editingFolder: FolderWithChildren | null;
-  availableFolders: FolderWithChildren[];
+  availableFolders: FolderOption[];
   onClose: () => void;
   onSave: (folder: Folder) => void;
 }
@@ -118,9 +123,9 @@ export function FolderModal({
               disabled={loading}
             >
               <option value="">Root</option>
-              {availableFolders.map((folder) => (
+              {availableFolders.map(({ folder, path }) => (
                 <option key={folder.id} value={folder.id}>
-                  {folder.name}
+                  {path}
                 </option>
               ))}
             </select>

@@ -52,7 +52,9 @@ export function DeviceListWithFolders({
         const collectIds = (folders: FolderWithChildren[]) => {
           folders.forEach((f) => {
             allFolderIds.add(f.id);
-            collectIds(f.children);
+            if (f.children && f.children.length > 0) {
+              collectIds(f.children);
+            }
           });
         };
         collectIds(data);
@@ -132,6 +134,35 @@ export function DeviceListWithFolders({
       setShowMoveModal(false);
       setMovingDevice(null);
     }
+  };
+
+  const getFlattenedFolders = (folders: FolderWithChildren[], prefix = ""): Array<{folder: FolderWithChildren, path: string}> => {
+    const result: Array<{folder: FolderWithChildren, path: string}> = [];
+    
+    folders.forEach((folder) => {
+      const currentPath = prefix ? `${prefix} > ${folder.name}` : folder.name;
+      result.push({ folder, path: currentPath });
+      
+      if (folder.children && Array.isArray(folder.children) && folder.children.length > 0) {
+        result.push(...getFlattenedFolders(folder.children, currentPath));
+      }
+    });
+    
+    return result;
+  };
+
+  const renderFolderTreeForMove = (folders: FolderWithChildren[]): React.ReactElement[] => {
+    const flattened = getFlattenedFolders(folders);
+    
+    return flattened.map(({ folder, path }) => (
+      <button
+        key={`folder-${folder.id}`}
+        onClick={() => handleMoveConfirm(folder.id)}
+        className="w-full text-left px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors"
+      >
+        {path}
+      </button>
+    ));
   };
 
   const renderDeviceInFolder = (folderId: number) => {
@@ -488,7 +519,7 @@ export function DeviceListWithFolders({
       <FolderModal
         isOpen={showFolderModal}
         editingFolder={editingFolder}
-        availableFolders={folders}
+        availableFolders={getFlattenedFolders(folders)}
         onClose={() => {
           setShowFolderModal(false);
           setEditingFolder(null);
@@ -505,22 +536,14 @@ export function DeviceListWithFolders({
               Move "{movingDevice.name}" to a folder:
             </p>
             
-            <div className="space-y-2 mb-6">
+            <div className="space-y-2 mb-6 max-h-64 overflow-y-auto border border-slate-600 rounded p-2">
               <button
                 onClick={() => handleMoveConfirm(null)}
                 className="w-full text-left px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors"
               >
-                📁 Root (no folder)
+                Root (no folder)
               </button>
-              {folders.map((folder) => (
-                <button
-                  key={folder.id}
-                  onClick={() => handleMoveConfirm(folder.id)}
-                  className="w-full text-left px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors"
-                >
-                  📁 {folder.name}
-                </button>
-              ))}
+              {renderFolderTreeForMove(folders)}
             </div>
             
             <div className="flex justify-end gap-3">
