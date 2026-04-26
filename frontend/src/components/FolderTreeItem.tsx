@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight, ChevronDown, FolderPlus, Trash2, PencilLine, FolderOpen } from "lucide-react";
+import { ChevronRight, ChevronDown, Trash2, PencilLine, FolderOpen } from "lucide-react";
 import { FolderWithChildren, deleteFolder } from "../api/client";
 import { useToast } from "./Toast";
 

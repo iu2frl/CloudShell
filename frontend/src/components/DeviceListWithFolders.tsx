@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Device, FolderWithChildren, deleteDevice, listFolders, listDevices } from "../api/client";
+import { Device, FolderWithChildren, deleteDevice, listFolders } from "../api/client";
 import { Monitor, Trash2, PencilLine, Plus, RefreshCw, KeyRound, Lock, ChevronsLeft, ChevronsRight, FolderPlus, Folder as FolderIcon } from "lucide-react";
 import { useToast } from "./Toast";
 import { FolderTreeItem } from "./FolderTreeItem";
