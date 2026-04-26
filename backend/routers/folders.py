@@ -5,9 +5,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, contains_eager
 
 from backend.database import get_db
 from backend.models.folder import Folder
@@ -92,15 +92,10 @@ async def list_root_folders(
     result = await db.execute(
         select(Folder)
         .where(Folder.parent_folder_id.is_(None))
-        .options(
-            selectinload(Folder.children).selectinload(Folder.children),
-            selectinload(Folder.children).selectinload(Folder.devices),
-            selectinload(Folder.devices),
-        )
         .order_by(Folder.name)
     )
     folders = result.scalars().all()
-    return [_folder_to_dict_with_children(f) for f in folders]
+    return [await _folder_to_dict_with_children_async(folder, db) for folder in folders]
 
 
 @router.get("/{folder_id}", response_model=FolderWithChildrenOut)
@@ -111,18 +106,12 @@ async def get_folder(
 ):
     """Get a specific folder with its complete hierarchy."""
     result = await db.execute(
-        select(Folder)
-        .where(Folder.id == folder_id)
-        .options(
-            selectinload(Folder.children).selectinload(Folder.children),
-            selectinload(Folder.children).selectinload(Folder.devices),
-            selectinload(Folder.devices),
-        )
+        select(Folder).where(Folder.id == folder_id)
     )
     folder = result.scalars().first()
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
-    return _folder_to_dict_with_children(folder)
+    return await _folder_to_dict_with_children_async(folder, db)
 
 
 @router.put("/{folder_id}", response_model=FolderOut)
@@ -167,24 +156,68 @@ async def delete_folder(
     _: str = Depends(get_current_user),
 ):
     """Delete a folder and move its devices to the root level."""
-    folder = await db.get(Folder, folder_id)
+    # Get folder with devices and children eager-loaded
+    result = await db.execute(
+        select(Folder)
+        .where(Folder.id == folder_id)
+        .options(selectinload(Folder.devices), selectinload(Folder.children))
+    )
+    folder = result.scalars().first()
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
 
     # Move devices to root level (set folder_id to NULL)
-    for device in folder.devices:
-        device.folder_id = None
+    if folder.devices:
+        for device in folder.devices:
+            device.folder_id = None
+            db.add(device)
 
     # Move subfolders to root level
-    for subfolder in folder.children:
-        subfolder.parent_folder_id = None
+    if folder.children:
+        for subfolder in folder.children:
+            subfolder.parent_folder_id = None
+            db.add(subfolder)
 
-    db.add(folder)
+    # Flush changes to ensure devices and subfolders are updated before deleting folder
+    await db.flush()
+    
+    # Now delete the folder
     await db.delete(folder)
     await db.commit()
 
 
 # -- Helpers ------------------------------------------------------------------
+
+async def _folder_to_dict_with_children_async(folder: Folder, db: AsyncSession) -> dict:
+    """Convert a folder instance to a dictionary with nested children, loading them from DB."""
+    from backend.models.device import Device
+    
+    # Query for direct children
+    children_result = await db.execute(
+        select(Folder).where(Folder.parent_folder_id == folder.id).order_by(Folder.name)
+    )
+    children = children_result.scalars().all()
+    
+    # Query for device count in this folder
+    device_count_result = await db.execute(
+        select(func.count(Device.id)).where(Device.folder_id == folder.id)
+    )
+    device_count = device_count_result.scalar() or 0
+    
+    return {
+        "id": folder.id,
+        "name": folder.name,
+        "description": folder.description,
+        "parent_folder_id": folder.parent_folder_id,
+        "created_at": folder.created_at,
+        "updated_at": folder.updated_at,
+        "children": [
+            await _folder_to_dict_with_children_async(child, db) 
+            for child in children
+        ],
+        "device_count": device_count,
+    }
+
 
 def _folder_to_dict_with_children(folder: Folder) -> dict:
     """Convert a folder instance to a dictionary with nested children."""

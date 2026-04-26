@@ -44,5 +44,4 @@ class Folder(Base):
     devices: Mapped[list["Device"]] = relationship(
         "Device",
         back_populates="folder",
-        cascade="all, delete-orphan",
     )
