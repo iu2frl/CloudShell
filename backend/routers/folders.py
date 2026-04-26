@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
 from backend.models.folder import Folder
@@ -89,7 +90,10 @@ async def list_root_folders(
 ):
     """List all root-level folders (folders with no parent) with their hierarchical structure."""
     result = await db.execute(
-        select(Folder).where(Folder.parent_folder_id.is_(None)).order_by(Folder.name)
+        select(Folder)
+        .where(Folder.parent_folder_id.is_(None))
+        .options(selectinload(Folder.children), selectinload(Folder.devices))
+        .order_by(Folder.name)
     )
     folders = result.scalars().all()
     return [_folder_to_dict_with_children(f) for f in folders]
@@ -102,7 +106,12 @@ async def get_folder(
     _: str = Depends(get_current_user),
 ):
     """Get a specific folder with its complete hierarchy."""
-    folder = await db.get(Folder, folder_id)
+    result = await db.execute(
+        select(Folder)
+        .where(Folder.id == folder_id)
+        .options(selectinload(Folder.children), selectinload(Folder.devices))
+    )
+    folder = result.scalars().first()
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
     return _folder_to_dict_with_children(folder)
@@ -171,6 +180,7 @@ async def delete_folder(
 
 def _folder_to_dict_with_children(folder: Folder) -> dict:
     """Convert a folder instance to a dictionary with nested children."""
+    children_list = folder.children if folder.children is not None else []
     return {
         "id": folder.id,
         "name": folder.name,
@@ -178,6 +188,6 @@ def _folder_to_dict_with_children(folder: Folder) -> dict:
         "parent_folder_id": folder.parent_folder_id,
         "created_at": folder.created_at,
         "updated_at": folder.updated_at,
-        "children": [_folder_to_dict_with_children(child) for child in sorted(folder.children, key=lambda f: f.name)],
-        "device_count": len(folder.devices),
+        "children": [_folder_to_dict_with_children(child) for child in sorted(children_list, key=lambda f: f.name)],
+        "device_count": len(folder.devices) if folder.devices is not None else 0,
     }
