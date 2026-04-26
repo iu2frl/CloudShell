@@ -92,7 +92,11 @@ async def list_root_folders(
     result = await db.execute(
         select(Folder)
         .where(Folder.parent_folder_id.is_(None))
-        .options(selectinload(Folder.children), selectinload(Folder.devices))
+        .options(
+            selectinload(Folder.children).selectinload(Folder.children),
+            selectinload(Folder.children).selectinload(Folder.devices),
+            selectinload(Folder.devices),
+        )
         .order_by(Folder.name)
     )
     folders = result.scalars().all()
@@ -109,7 +113,11 @@ async def get_folder(
     result = await db.execute(
         select(Folder)
         .where(Folder.id == folder_id)
-        .options(selectinload(Folder.children), selectinload(Folder.devices))
+        .options(
+            selectinload(Folder.children).selectinload(Folder.children),
+            selectinload(Folder.children).selectinload(Folder.devices),
+            selectinload(Folder.devices),
+        )
     )
     folder = result.scalars().first()
     if not folder:
