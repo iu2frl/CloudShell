@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { Device, FolderWithChildren, deleteDevice, listFolders } from "../api/client";
-import { Monitor, Trash2, PencilLine, Plus, RefreshCw, KeyRound, Lock, ChevronsLeft, ChevronsRight, FolderPlus, Folder as FolderIcon } from "lucide-react";
+import { Device, FolderWithChildren, deleteDevice, listFolders, updateDevice } from "../api/client";
+import { Monitor, Trash2, PencilLine, Plus, RefreshCw, KeyRound, Lock, ChevronsLeft, ChevronsRight, FolderPlus, Folder as FolderIcon, FolderOpen } from "lucide-react";
 import { useToast } from "./Toast";
 import { FolderTreeItem } from "./FolderTreeItem";
 import { FolderModal } from "./FolderModal";
@@ -38,6 +38,8 @@ export function DeviceListWithFolders({
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [editingFolder, setEditingFolder] = useState<FolderWithChildren | null>(null);
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [movingDevice, setMovingDevice] = useState<Device | null>(null);
 
   // Load folders
   useEffect(() => {
@@ -111,6 +113,27 @@ export function DeviceListWithFolders({
     }
   };
 
+  const handleMoveDevice = (device: Device) => {
+    setMovingDevice(device);
+    setShowMoveModal(true);
+  };
+
+  const handleMoveConfirm = async (folderId: number | null) => {
+    if (!movingDevice) return;
+    
+    try {
+      await updateDevice(movingDevice.id, { folder_id: folderId });
+      // Refresh devices to reflect the move
+      onRefresh();
+      toast.success(`Device moved to ${folderId ? 'folder' : 'root'}`);
+    } catch (err) {
+      toast.error(`Failed to move device: ${err}`);
+    } finally {
+      setShowMoveModal(false);
+      setMovingDevice(null);
+    }
+  };
+
   const renderDeviceInFolder = (folderId: number) => {
     const devicesInFolder = devices.filter((d) => d.folder_id === folderId);
     return devicesInFolder.map((d) => {
@@ -169,6 +192,16 @@ export function DeviceListWithFolders({
             {/* Action icons */}
             {!isDeleting && (
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 rounded pl-1">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMoveDevice(d);
+                  }}
+                  className="icon-btn"
+                  aria-label="Move to folder"
+                >
+                  <FolderOpen size={12} />
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -274,6 +307,16 @@ export function DeviceListWithFolders({
             {/* Action icons */}
             {!isDeleting && (
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 rounded pl-1">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMoveDevice(d);
+                  }}
+                  className="icon-btn"
+                  aria-label="Move to folder"
+                >
+                  <FolderOpen size={12} />
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -452,6 +495,48 @@ export function DeviceListWithFolders({
         }}
         onSave={handleFolderSaved}
       />
+
+      {/* Move Device Modal */}
+      {showMoveModal && movingDevice && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 w-96 max-w-[90vw]">
+            <h3 className="text-lg font-semibold text-white mb-4">Move Device</h3>
+            <p className="text-slate-300 mb-4">
+              Move "{movingDevice.name}" to a folder:
+            </p>
+            
+            <div className="space-y-2 mb-6">
+              <button
+                onClick={() => handleMoveConfirm(null)}
+                className="w-full text-left px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors"
+              >
+                📁 Root (no folder)
+              </button>
+              {folders.map((folder) => (
+                <button
+                  key={folder.id}
+                  onClick={() => handleMoveConfirm(folder.id)}
+                  className="w-full text-left px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors"
+                >
+                  📁 {folder.name}
+                </button>
+              ))}
+            </div>
+            
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowMoveModal(false);
+                  setMovingDevice(null);
+                }}
+                className="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
