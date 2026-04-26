@@ -2,16 +2,13 @@
 
 import pytest
 from httpx import AsyncClient
-from backend.models.device import Device
-from backend.models.folder import Folder
 
 
 @pytest.mark.asyncio
-async def test_create_folder(client: AsyncClient, token: str):
+async def test_create_folder(auth_client: AsyncClient):
     """Test creating a new folder."""
-    response = await client.post(
+    response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "Production Servers",
             "description": "All production servers",
@@ -25,20 +22,18 @@ async def test_create_folder(client: AsyncClient, token: str):
 
 
 @pytest.mark.asyncio
-async def test_create_folder_with_parent(client: AsyncClient, token: str):
+async def test_create_folder_with_parent(auth_client: AsyncClient):
     """Test creating a nested folder."""
     # Create parent folder
-    parent_response = await client.post(
+    parent_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "USA"},
     )
     parent_id = parent_response.json()["id"]
 
     # Create child folder
-    response = await client.post(
+    response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "New York",
             "parent_folder_id": parent_id,
@@ -51,26 +46,23 @@ async def test_create_folder_with_parent(client: AsyncClient, token: str):
 
 
 @pytest.mark.asyncio
-async def test_list_folders_hierarchy(client: AsyncClient, token: str):
+async def test_list_folders_hierarchy(auth_client: AsyncClient):
     """Test listing folders with hierarchical structure."""
     # Create folder structure
-    parent_response = await client.post(
+    parent_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Parent"},
     )
     parent_id = parent_response.json()["id"]
 
-    child_response = await client.post(
+    child_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Child", "parent_folder_id": parent_id},
     )
 
     # List root folders
-    response = await client.get(
+    response = await auth_client.get(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     folders = response.json()
@@ -81,26 +73,23 @@ async def test_list_folders_hierarchy(client: AsyncClient, token: str):
 
 
 @pytest.mark.asyncio
-async def test_get_folder_with_children(client: AsyncClient, token: str):
+async def test_get_folder_with_children(auth_client: AsyncClient):
     """Test getting a specific folder with its children."""
     # Create folder structure
-    parent_response = await client.post(
+    parent_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Parent"},
     )
     parent_id = parent_response.json()["id"]
 
-    await client.post(
+    await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Child", "parent_folder_id": parent_id},
     )
 
     # Get parent folder
-    response = await client.get(
+    response = await auth_client.get(
         f"/api/folders/{parent_id}",
-        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -109,20 +98,18 @@ async def test_get_folder_with_children(client: AsyncClient, token: str):
 
 
 @pytest.mark.asyncio
-async def test_update_folder(client: AsyncClient, token: str):
+async def test_update_folder(auth_client: AsyncClient):
     """Test updating folder details."""
     # Create folder
-    create_response = await client.post(
+    create_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Original Name"},
     )
     folder_id = create_response.json()["id"]
 
     # Update folder
-    response = await client.put(
+    response = await auth_client.put(
         f"/api/folders/{folder_id}",
-        headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "Updated Name",
             "description": "Updated description",
@@ -135,46 +122,41 @@ async def test_update_folder(client: AsyncClient, token: str):
 
 
 @pytest.mark.asyncio
-async def test_delete_folder(client: AsyncClient, token: str):
+async def test_delete_folder(auth_client: AsyncClient):
     """Test deleting a folder."""
     # Create folder
-    create_response = await client.post(
+    create_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "To Delete"},
     )
     folder_id = create_response.json()["id"]
 
     # Delete folder
-    response = await client.delete(
+    response = await auth_client.delete(
         f"/api/folders/{folder_id}",
-        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 204
 
     # Verify it's deleted
-    response = await client.get(
+    response = await auth_client.get(
         f"/api/folders/{folder_id}",
-        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_create_device_with_folder(client: AsyncClient, token: str):
+async def test_create_device_with_folder(auth_client: AsyncClient):
     """Test creating a device in a folder."""
     # Create folder
-    folder_response = await client.post(
+    folder_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Web Servers"},
     )
     folder_id = folder_response.json()["id"]
 
     # Create device in folder
-    response = await client.post(
+    response = await auth_client.post(
         "/api/devices/",
-        headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "Web Server 1",
             "hostname": "web1.example.com",
@@ -192,12 +174,11 @@ async def test_create_device_with_folder(client: AsyncClient, token: str):
 
 
 @pytest.mark.asyncio
-async def test_move_device_to_folder(client: AsyncClient, token: str):
+async def test_move_device_to_folder(auth_client: AsyncClient):
     """Test moving a device to a folder."""
     # Create device
-    device_response = await client.post(
+    device_response = await auth_client.post(
         "/api/devices/",
-        headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "My Server",
             "hostname": "server.example.com",
@@ -211,17 +192,15 @@ async def test_move_device_to_folder(client: AsyncClient, token: str):
     device_id = device_response.json()["id"]
 
     # Create folder
-    folder_response = await client.post(
+    folder_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "My Servers"},
     )
     folder_id = folder_response.json()["id"]
 
     # Move device to folder
-    response = await client.put(
+    response = await auth_client.put(
         f"/api/devices/{device_id}",
-        headers={"Authorization": f"Bearer {token}"},
         json={"folder_id": folder_id},
     )
     assert response.status_code == 200
@@ -230,20 +209,18 @@ async def test_move_device_to_folder(client: AsyncClient, token: str):
 
 
 @pytest.mark.asyncio
-async def test_delete_folder_moves_devices_to_root(client: AsyncClient, token: str):
+async def test_delete_folder_moves_devices_to_root(auth_client: AsyncClient):
     """Test that deleting a folder moves its devices to root level."""
     # Create folder
-    folder_response = await client.post(
+    folder_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Temporary"},
     )
     folder_id = folder_response.json()["id"]
 
     # Create device in folder
-    device_response = await client.post(
+    device_response = await auth_client.post(
         "/api/devices/",
-        headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "Device in Temp",
             "hostname": "temp.example.com",
@@ -258,15 +235,13 @@ async def test_delete_folder_moves_devices_to_root(client: AsyncClient, token: s
     device_id = device_response.json()["id"]
 
     # Delete folder
-    await client.delete(
+    await auth_client.delete(
         f"/api/folders/{folder_id}",
-        headers={"Authorization": f"Bearer {token}"},
     )
 
     # Verify device is now at root level
-    response = await client.get(
+    response = await auth_client.get(
         f"/api/devices/{device_id}",
-        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -274,20 +249,18 @@ async def test_delete_folder_moves_devices_to_root(client: AsyncClient, token: s
 
 
 @pytest.mark.asyncio
-async def test_cannot_move_folder_into_itself(client: AsyncClient, token: str):
+async def test_cannot_move_folder_into_itself(auth_client: AsyncClient):
     """Test that moving a folder into itself is rejected."""
     # Create folder
-    folder_response = await client.post(
+    folder_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Test Folder"},
     )
     folder_id = folder_response.json()["id"]
 
     # Try to move folder into itself
-    response = await client.put(
+    response = await auth_client.put(
         f"/api/folders/{folder_id}",
-        headers={"Authorization": f"Bearer {token}"},
         json={"parent_folder_id": folder_id},
     )
     assert response.status_code == 400
@@ -295,21 +268,19 @@ async def test_cannot_move_folder_into_itself(client: AsyncClient, token: str):
 
 
 @pytest.mark.asyncio
-async def test_folder_device_count(client: AsyncClient, token: str):
+async def test_folder_device_count(auth_client: AsyncClient):
     """Test that folder device_count is calculated correctly."""
     # Create folder
-    folder_response = await client.post(
+    folder_response = await auth_client.post(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
         json={"name": "Web Servers"},
     )
     folder_id = folder_response.json()["id"]
 
     # Create devices in folder
     for i in range(3):
-        await client.post(
+        await auth_client.post(
             "/api/devices/",
-            headers={"Authorization": f"Bearer {token}"},
             json={
                 "name": f"Server {i+1}",
                 "hostname": f"server{i+1}.example.com",
@@ -323,9 +294,8 @@ async def test_folder_device_count(client: AsyncClient, token: str):
         )
 
     # List folders and check device count
-    response = await client.get(
+    response = await auth_client.get(
         "/api/folders/",
-        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     folders = response.json()
