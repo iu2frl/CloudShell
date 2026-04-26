@@ -31,8 +31,8 @@ class Folder(Base):
     children: Mapped[list["Folder"]] = relationship(
         "Folder",
         remote_side=[id],
-        cascade="all, delete-orphan",
         back_populates="parent",
+        foreign_keys=[parent_folder_id],
     )
     parent: Mapped["Folder | None"] = relationship(
         "Folder",
