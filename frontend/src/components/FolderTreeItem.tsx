@@ -53,10 +53,14 @@ export function FolderTreeItem({
     }
   };
 
-  const hasChildren = folder.children && Array.isArray(folder.children) && folder.children.length > 0;
+  const hasChildren = (folder.children && Array.isArray(folder.children) && folder.children.length > 0) || (folder.device_count && folder.device_count > 0);
+  
+  if (level > 0) {
+    console.log(`Nested folder "${folder.name}": children=${folder.children?.length ?? 0}, device_count=${folder.device_count}, hasChildren=${hasChildren}`);
+  }
 
   return (
-    <div>
+    <div data-test-folder={`${folder.name}-level-${level}-haschildren-${hasChildren}`}>
       {/* Folder item */}
       <div
         onClick={() => !confirmId && onSelectFolder(folder.id)}

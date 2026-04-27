@@ -46,6 +46,7 @@ export function DeviceListWithFolders({
     const loadFolders = async () => {
       try {
         const data = await listFolders();
+        console.log("Folders data from API:", JSON.stringify(data, null, 2));
         setFolders(data);
         // Auto-expand all folders initially
         const allFolderIds = new Set<number>();
@@ -176,12 +177,12 @@ export function DeviceListWithFolders({
         <div key={d.id} className="relative">
           <div
             onClick={() => !isConfirm && onConnect(d)}
-            className={`group flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors select-none ml-8
+            className={`group flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors select-none ml-12
               ${isActive ? "bg-blue-600/20 border-l-2 border-blue-500" : "hover:bg-slate-800 border-l-2 border-transparent"}
               ${isConfirm ? "opacity-40 pointer-events-none" : ""}`}
           >
-            {/* Status dot */}
-            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-green-400" : "bg-slate-600"}`} />
+            {/* Status dot - only show when connected */}
+            {isActive && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />}
 
             {/* Info */}
             <div className="flex-1 min-w-0">
@@ -295,8 +296,8 @@ export function DeviceListWithFolders({
               ${isActive ? "bg-blue-600/20 border-l-2 border-blue-500" : "hover:bg-slate-800 border-l-2 border-transparent"}
               ${isConfirm ? "opacity-40 pointer-events-none" : ""}`}
           >
-            {/* Status dot */}
-            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-green-400" : "bg-slate-600"}`} />
+            {/* Status dot - only show when connected */}
+            {isActive && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />}
 
             {/* Info */}
             <div className="flex-1 min-w-0">
