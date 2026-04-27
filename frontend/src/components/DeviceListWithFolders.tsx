@@ -48,18 +48,6 @@ export function DeviceListWithFolders({
         const data = await listFolders();
         console.log("Folders data from API:", JSON.stringify(data, null, 2));
         setFolders(data);
-        // Auto-expand all folders initially
-        const allFolderIds = new Set<number>();
-        const collectIds = (folders: FolderWithChildren[]) => {
-          folders.forEach((f) => {
-            allFolderIds.add(f.id);
-            if (f.children && f.children.length > 0) {
-              collectIds(f.children);
-            }
-          });
-        };
-        collectIds(data);
-        setExpandedFolders(allFolderIds);
       } catch (err) {
         // Folders might not exist yet, which is fine
       }
@@ -444,11 +432,6 @@ export function DeviceListWithFolders({
             <div className="flex items-center gap-2">
               <Monitor size={16} className="text-blue-400" />
               <span className="font-semibold text-white text-sm">Devices</span>
-              {devices.length > 0 && (
-                <span className="text-[10px] bg-slate-700 text-slate-400 rounded-full px-1.5 py-0.5">
-                  {devices.length}
-                </span>
-              )}
             </div>
             <div className="flex items-center gap-1">
               <button onClick={onRefresh} title="Refresh" className="icon-btn">

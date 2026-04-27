@@ -30,13 +30,12 @@ class Folder(Base):
     # Self-referential relationship for hierarchical structure
     children: Mapped[list["Folder"]] = relationship(
         "Folder",
-        remote_side=[id],
         back_populates="parent",
         foreign_keys=[parent_folder_id],
     )
     parent: Mapped["Folder | None"] = relationship(
         "Folder",
-        remote_side=[parent_folder_id],
+        remote_side=[id],
         back_populates="children",
     )
 

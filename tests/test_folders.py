@@ -249,6 +249,48 @@ async def test_delete_folder_moves_devices_to_root(auth_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_delete_nested_folder_moves_devices_to_root(auth_client: AsyncClient):
+    """Test that deleting a nested folder moves its devices to root level."""
+    cloud_response = await auth_client.post(
+        "/api/folders/",
+        json={"name": "cloud"},
+    )
+    cloud_id = cloud_response.json()["id"]
+
+    asd_response = await auth_client.post(
+        "/api/folders/",
+        json={"name": "asd", "parent_folder_id": cloud_id},
+    )
+    asd_id = asd_response.json()["id"]
+
+    device_response = await auth_client.post(
+        "/api/devices/",
+        json={
+            "name": "Nested Device",
+            "hostname": "nested.example.com",
+            "port": 22,
+            "username": "root",
+            "auth_type": "password",
+            "connection_type": "ssh",
+            "password": "secret123",
+            "folder_id": asd_id,
+        },
+    )
+    device_id = device_response.json()["id"]
+
+    response = await auth_client.delete(f"/api/folders/{asd_id}")
+    assert response.status_code == 204
+
+    device_lookup = await auth_client.get(f"/api/devices/{device_id}")
+    assert device_lookup.status_code == 200
+    assert device_lookup.json()["folder_id"] is None
+
+    cloud_lookup = await auth_client.get(f"/api/folders/{cloud_id}")
+    assert cloud_lookup.status_code == 200
+    assert cloud_lookup.json()["children"] == []
+
+
+@pytest.mark.asyncio
 async def test_cannot_move_folder_into_itself(auth_client: AsyncClient):
     """Test that moving a folder into itself is rejected."""
     # Create folder

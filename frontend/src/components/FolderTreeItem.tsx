@@ -112,13 +112,6 @@ export function FolderTreeItem({
           {folder.name}
         </span>
 
-        {/* Device count badge */}
-        {folder.device_count > 0 && (
-          <span className="text-[10px] bg-slate-700 text-slate-400 rounded-full px-1.5 py-0.5 flex-shrink-0">
-            {folder.device_count}
-          </span>
-        )}
-
         {/* Action icons */}
         {!deletingId && (
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 rounded pl-1">
