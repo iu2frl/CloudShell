@@ -10,9 +10,14 @@ import {
 } from "../api/client";
 import { X, KeyRound, Copy, Check, Loader, Upload, Trash2 } from "lucide-react";
 
+interface FolderOption {
+  folder: FolderWithChildren;
+  path: string;
+}
+
 interface Props {
   device?: Device;
-  folders?: FolderWithChildren[];
+  folders?: FolderOption[];
   onSave: (d: Device) => void;
   onCancel: () => void;
 }
@@ -247,9 +252,9 @@ export function DeviceForm({ device, folders = [], onSave, onCancel }: Props) {
                 onChange={(e) => set("folder_id", e.target.value ? parseInt(e.target.value) : null)}
               >
                 <option value="">Root</option>
-                {folders.map((folder) => (
+                {folders.map(({ folder, path }) => (
                   <option key={folder.id} value={folder.id}>
-                    {folder.name}
+                    {path}
                   </option>
                 ))}
               </select>

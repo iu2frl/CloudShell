@@ -41,6 +41,21 @@ export function Dashboard({ onLogout }: Props) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const toast = useToast();
 
+  const getFlattenedFolders = (folders: FolderWithChildren[], prefix = ""): Array<{folder: FolderWithChildren, path: string}> => {
+    const result: Array<{folder: FolderWithChildren, path: string}> = [];
+    
+    folders.forEach((folder) => {
+      const currentPath = prefix ? `${prefix} > ${folder.name}` : folder.name;
+      result.push({ folder, path: currentPath });
+      
+      if (folder.children && Array.isArray(folder.children) && folder.children.length > 0) {
+        result.push(...getFlattenedFolders(folder.children, currentPath));
+      }
+    });
+    
+    return result;
+  };
+
   const grid = useGridLayout<number>({ rows: 1, cols: 1 });
 
   // panel pool: tabKey → the always-mounted wrapper div in the hidden pool
@@ -384,7 +399,7 @@ export function Dashboard({ onLogout }: Props) {
       {showForm && (
         <DeviceForm
           device={editDevice}
-          folders={folders}
+          folders={getFlattenedFolders(folders)}
           onSave={(saved) => {
             setDevices((prev) =>
               editDevice
