@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Folder, FolderWithChildren, createFolder, updateFolder } from "../api/client";
 
 interface FolderOption {
@@ -28,6 +28,22 @@ export function FolderModal({
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Update form when editing folder changes or modal opens
+  useEffect(() => {
+    if (isOpen && editingFolder) {
+      setName(editingFolder.name);
+      setDescription(editingFolder.description ?? "");
+      setParentFolderId(editingFolder.parent_folder_id ?? null);
+      setError("");
+    } else if (isOpen && !editingFolder) {
+      // Creating a new folder
+      setName("");
+      setDescription("");
+      setParentFolderId(null);
+      setError("");
+    }
+  }, [isOpen, editingFolder]);
 
   // Reset form when modal opens/closes or editing folder changes
   const handleOpenChange = (open: boolean) => {

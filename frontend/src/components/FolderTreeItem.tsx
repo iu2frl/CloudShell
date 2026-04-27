@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, ChevronDown, Trash2, PencilLine, FolderOpen } from "lucide-react";
 import { FolderWithChildren, deleteFolder } from "../api/client";
 import { useToast } from "./Toast";
@@ -39,6 +39,26 @@ export function FolderTreeItem({
     setConfirmId(folder.id);
   };
 
+  const handleDeleteCancel = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setConfirmId(null);
+  };
+
+  useEffect(() => {
+    if (confirmId !== folder.id) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setConfirmId(null);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [confirmId, folder.id]);
+
   const handleDeleteConfirm = async () => {
     setConfirmId(null);
     setDeletingId(folder.id);
@@ -64,7 +84,7 @@ export function FolderTreeItem({
       {/* Folder item */}
       <div
         onClick={() => !confirmId && onSelectFolder(folder.id)}
-        className={`group flex items-center gap-2 px-4 py-2 cursor-pointer transition-colors select-none ml-${level * 4}
+        className={`group relative flex items-center gap-2 px-4 py-2 cursor-pointer transition-colors select-none ml-${level * 4}
           ${isSelected ? "bg-blue-600/20 border-l-2 border-blue-500" : "hover:bg-slate-800 border-l-2 border-transparent"}
           ${confirmId ? "opacity-40 pointer-events-none" : ""}`}
         style={{ paddingLeft: `${8 + level * 16}px` }}
@@ -101,7 +121,7 @@ export function FolderTreeItem({
 
         {/* Action icons */}
         {!deletingId && (
-          <div className="absolute right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 rounded pl-1">
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 rounded pl-1">
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -122,31 +142,47 @@ export function FolderTreeItem({
           </div>
         )}
 
-        {/* Delete confirmation */}
-        {confirmId === folder.id && (
-          <div className="absolute right-2 flex items-center gap-1 bg-red-900/80 rounded px-2 py-1">
-            <span className="text-[11px] text-red-200">Delete?</span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDeleteConfirm();
-              }}
-              className="text-[11px] text-red-300 hover:text-red-100 font-semibold"
-            >
-              Yes
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setConfirmId(null);
-              }}
-              className="text-[11px] text-slate-400 hover:text-slate-200"
-            >
-              No
-            </button>
-          </div>
-        )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {confirmId === folder.id && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={handleDeleteCancel}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`folder-delete-title-${folder.id}`}
+            className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-800 p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id={`folder-delete-title-${folder.id}`} className="text-lg font-semibold text-white">
+              Delete folder?
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-slate-300">
+              Devices in this folder will not be deleted. They will be moved to the root level.
+            </p>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">
+              Are you sure you want to delete {folder.name}?
+            </p>
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={handleDeleteCancel}
+                className="flex-1 rounded bg-slate-700 px-4 py-2 text-slate-100 transition-colors hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteConfirm();
+                }}
+                className="flex-1 rounded bg-red-600 px-4 py-2 text-white transition-colors hover:bg-red-500"
+              >
+                Delete folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Expanded content */}
       {isExpanded && (
