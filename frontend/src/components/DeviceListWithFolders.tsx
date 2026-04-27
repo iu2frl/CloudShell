@@ -99,6 +99,7 @@ export function DeviceListWithFolders({
     try {
       const data = await listFolders();
       setFolders(data);
+      onRefresh();
     } catch (err) {
       toast.error(`Failed to refresh folders: ${err}`);
     }

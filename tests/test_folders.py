@@ -249,8 +249,8 @@ async def test_delete_folder_moves_devices_to_root(auth_client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_nested_folder_moves_devices_to_root(auth_client: AsyncClient):
-    """Test that deleting a nested folder moves its devices to root level."""
+async def test_delete_nested_folder_moves_devices_to_parent(auth_client: AsyncClient):
+    """Test that deleting a nested folder moves its devices to its parent folder."""
     cloud_response = await auth_client.post(
         "/api/folders/",
         json={"name": "cloud"},
@@ -283,7 +283,7 @@ async def test_delete_nested_folder_moves_devices_to_root(auth_client: AsyncClie
 
     device_lookup = await auth_client.get(f"/api/devices/{device_id}")
     assert device_lookup.status_code == 200
-    assert device_lookup.json()["folder_id"] is None
+    assert device_lookup.json()["folder_id"] == cloud_id
 
     cloud_lookup = await auth_client.get(f"/api/folders/{cloud_id}")
     assert cloud_lookup.status_code == 200

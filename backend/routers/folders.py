@@ -5,11 +5,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, contains_eager
 
 from backend.database import get_db
+from backend.models.device import Device
 from backend.models.folder import Folder
 from backend.routers.auth import get_current_user
 
@@ -155,28 +156,26 @@ async def delete_folder(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    """Delete a folder and move its devices to the root level."""
-    # Get folder with devices and children eager-loaded
-    result = await db.execute(
-        select(Folder)
-        .where(Folder.id == folder_id)
-        .options(selectinload(Folder.devices), selectinload(Folder.children))
-    )
-    folder = result.scalars().first()
+    """Delete a folder and move its direct contents to the parent folder."""
+    folder = await db.get(Folder, folder_id)
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
 
-    # Move devices to root level (set folder_id to NULL)
-    if folder.devices:
-        for device in folder.devices:
-            device.folder_id = None
-            db.add(device)
+    target_parent_id = folder.parent_folder_id
 
-    # Move subfolders to root level
-    if folder.children:
-        for subfolder in folder.children:
-            subfolder.parent_folder_id = None
-            db.add(subfolder)
+    # Move devices to the parent folder (or root when deleting a root folder)
+    await db.execute(
+        update(Device)
+        .where(Device.folder_id == folder.id)
+        .values(folder_id=target_parent_id)
+    )
+
+    # Move direct subfolders to the parent folder as well
+    await db.execute(
+        update(Folder)
+        .where(Folder.parent_folder_id == folder.id)
+        .values(parent_folder_id=target_parent_id)
+    )
 
     # Flush changes to ensure devices and subfolders are updated before deleting folder
     await db.flush()
