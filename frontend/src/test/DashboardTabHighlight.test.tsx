@@ -33,6 +33,7 @@ vi.mock('../api/client', async (importOriginal) => {
   return {
     ...actual,
     listDevices: vi.fn().mockResolvedValue([]),
+    listFolders: vi.fn().mockResolvedValue([]),
     logout: vi.fn().mockResolvedValue(undefined),
     getTokenExpiry: vi.fn().mockReturnValue(new Date(Date.now() + 60 * 60 * 1000)),
   };
@@ -56,8 +57,8 @@ vi.mock('../components/FtpFileManager', () => ({
   ),
 }));
 
-vi.mock('../components/DeviceList', () => ({
-  DeviceList: (props: { onConnect: (d: Device) => void }) => (
+vi.mock('../components/DeviceListWithFolders', () => ({
+  DeviceListWithFolders: (props: { onConnect: (d: Device) => void }) => (
     <div data-testid="device-list">
       <button
         data-testid="connect-device-1"
