@@ -22,6 +22,28 @@ vi.mock('../components/FolderTreeItem', () => ({
   ),
 }));
 
+vi.mock('../components/FolderModal', () => ({
+  FolderModal: ({ isOpen, onSave }: { isOpen: boolean; onSave: (folder: FolderWithChildren) => void }) =>
+    isOpen ? (
+      <button
+        onClick={() =>
+          onSave({
+            id: 99,
+            name: 'new-folder',
+            description: null,
+            parent_folder_id: null,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            device_count: 0,
+            children: [],
+          })
+        }
+      >
+        Mock save folder
+      </button>
+    ) : null,
+}));
+
 const makeDevice = (id: number): Device => ({
   id,
   name: `Server-${id}`,
@@ -80,5 +102,20 @@ describe('DeviceListWithFolders refresh handling', () => {
     await userEvent.click(deleteButton);
 
     expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it('notifies the dashboard after a new folder is saved', async () => {
+    const onFoldersChanged = vi.fn();
+
+    render(
+      <ToastProvider>
+        <DeviceListWithFolders {...defaultProps} onFoldersChanged={onFoldersChanged} />
+      </ToastProvider>,
+    );
+
+    await userEvent.click(screen.getByTitle('Create folder'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Mock save folder' }));
+
+    expect(onFoldersChanged).toHaveBeenCalledOnce();
   });
 });

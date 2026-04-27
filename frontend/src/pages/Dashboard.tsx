@@ -311,6 +311,7 @@ export function Dashboard({ onLogout }: Props) {
             });
           }}
           onRefresh={fetchDevices}
+          onFoldersChanged={fetchDevices}
         />
 
         {/* -- Split-view main area ------------------------------------------- */}

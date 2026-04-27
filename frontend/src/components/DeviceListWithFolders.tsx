@@ -16,6 +16,7 @@ interface Props {
   onEdit: (d: Device) => void;
   onDelete: (id: number) => void;
   onRefresh: () => void;
+  onFoldersChanged?: () => void;
 }
 
 export function DeviceListWithFolders({
@@ -29,6 +30,7 @@ export function DeviceListWithFolders({
   onEdit,
   onDelete,
   onRefresh,
+  onFoldersChanged,
 }: Props) {
   const toast = useToast();
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -90,6 +92,7 @@ export function DeviceListWithFolders({
     try {
       const data = await listFolders();
       setFolders(data);
+      onFoldersChanged?.();
     } catch (err) {
       toast.error(`Failed to refresh folders: ${err}`);
     }
@@ -100,6 +103,7 @@ export function DeviceListWithFolders({
       const data = await listFolders();
       setFolders(data);
       onRefresh();
+      onFoldersChanged?.();
     } catch (err) {
       toast.error(`Failed to refresh folders: ${err}`);
     }
