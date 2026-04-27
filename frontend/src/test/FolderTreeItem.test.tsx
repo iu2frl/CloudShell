@@ -29,6 +29,7 @@ describe('FolderTreeItem', () => {
           folder={folder}
           level={0}
           activeDeviceId={null}
+          folderIdsWithDevices={new Set<number>()}
           selectedFolderId={null}
           expandedFolders={new Set<number>()}
           onToggleExpand={vi.fn()}
@@ -40,7 +41,7 @@ describe('FolderTreeItem', () => {
       </ToastProvider>,
     );
 
-    const row = container.querySelector('div[data-test-folder="Servers-level-0-haschildren-0"] > div');
+    const row = container.querySelector('div[data-test-folder="Servers-level-0-haschildren-false"] > div');
     expect(row?.className).toContain('relative');
 
     const editButton = screen.getByTitle('Edit folder');
@@ -59,6 +60,7 @@ describe('FolderTreeItem', () => {
           folder={folder}
           level={0}
           activeDeviceId={null}
+          folderIdsWithDevices={new Set<number>()}
           selectedFolderId={null}
           expandedFolders={new Set<number>()}
           onToggleExpand={vi.fn()}
@@ -87,6 +89,7 @@ describe('FolderTreeItem', () => {
           folder={folder}
           level={0}
           activeDeviceId={null}
+          folderIdsWithDevices={new Set<number>()}
           selectedFolderId={null}
           expandedFolders={new Set<number>()}
           onToggleExpand={vi.fn()}
@@ -107,5 +110,27 @@ describe('FolderTreeItem', () => {
     await userEvent.click(screen.getByTitle('Delete folder'));
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete folder?' })).not.toBeInTheDocument());
+  });
+
+  it('treats a folder with live assigned devices as expandable', () => {
+    const { container } = render(
+      <ToastProvider>
+        <FolderTreeItem
+          folder={folder}
+          level={0}
+          activeDeviceId={null}
+          folderIdsWithDevices={new Set<number>([1])}
+          selectedFolderId={null}
+          expandedFolders={new Set<number>()}
+          onToggleExpand={vi.fn()}
+          onSelectFolder={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          renderDevices={() => null}
+        />
+      </ToastProvider>,
+    );
+
+    expect(container.querySelector('div[data-test-folder="Servers-level-0-haschildren-true"]')).toBeInTheDocument();
   });
 });

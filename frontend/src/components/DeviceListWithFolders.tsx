@@ -42,6 +42,11 @@ export function DeviceListWithFolders({
   const [editingFolder, setEditingFolder] = useState<FolderWithChildren | null>(null);
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [movingDevice, setMovingDevice] = useState<Device | null>(null);
+  const folderIdsWithDevices = new Set(
+    devices
+      .filter((d) => d.folder_id != null)
+      .map((d) => d.folder_id as number),
+  );
 
   // Load folders
   useEffect(() => {
@@ -121,6 +126,9 @@ export function DeviceListWithFolders({
       await updateDevice(movingDevice.id, { folder_id: folderId });
       // Refresh devices to reflect the move
       onRefresh();
+      const data = await listFolders();
+      setFolders(data);
+      onFoldersChanged?.();
       toast.success(`Device moved to ${folderId ? 'folder' : 'root'}`);
     } catch (err) {
       toast.error(`Failed to move device: ${err}`);
@@ -488,6 +496,7 @@ export function DeviceListWithFolders({
                 folder={folder}
                 level={0}
                 activeDeviceId={activeDeviceId}
+                folderIdsWithDevices={folderIdsWithDevices}
                 selectedFolderId={selectedFolderId}
                 expandedFolders={expandedFolders}
                 onToggleExpand={handleToggleExpand}

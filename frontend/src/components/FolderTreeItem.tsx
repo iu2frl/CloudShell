@@ -7,6 +7,7 @@ interface FolderTreeItemProps {
   folder: FolderWithChildren;
   level: number;
   activeDeviceId: number | null;
+  folderIdsWithDevices: Set<number>;
   selectedFolderId: number | null;
   expandedFolders: Set<number>;
   onToggleExpand: (folderId: number) => void;
@@ -20,6 +21,7 @@ export function FolderTreeItem({
   folder,
   level,
   activeDeviceId,
+  folderIdsWithDevices,
   selectedFolderId,
   expandedFolders,
   onToggleExpand,
@@ -73,7 +75,9 @@ export function FolderTreeItem({
     }
   };
 
-  const hasChildren = (folder.children && Array.isArray(folder.children) && folder.children.length > 0) || (folder.device_count && folder.device_count > 0);
+  const hasChildren =
+    (folder.children && Array.isArray(folder.children) && folder.children.length > 0) ||
+    folderIdsWithDevices.has(folder.id);
   
   if (level > 0) {
     console.log(`Nested folder "${folder.name}": children=${folder.children?.length ?? 0}, device_count=${folder.device_count}, hasChildren=${hasChildren}`);
@@ -151,7 +155,7 @@ export function FolderTreeItem({
               Delete folder?
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-slate-300">
-              Devices in this folder will not be deleted. They will be moved to the root level.
+              Devices in this folder will not be deleted. They will be moved to the parent folder.
             </p>
             <p className="mt-2 text-sm leading-relaxed text-slate-400">
               Are you sure you want to delete {folder.name}?
@@ -190,6 +194,7 @@ export function FolderTreeItem({
               folder={child}
               level={level + 1}
               activeDeviceId={activeDeviceId}
+              folderIdsWithDevices={folderIdsWithDevices}
               selectedFolderId={selectedFolderId}
               expandedFolders={expandedFolders}
               onToggleExpand={onToggleExpand}
