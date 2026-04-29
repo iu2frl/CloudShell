@@ -1,0 +1,179 @@
+import { useState, useEffect } from "react";
+import { Folder, FolderWithChildren, createFolder, updateFolder } from "../api/client";
+
+interface FolderOption {
+  folder: FolderWithChildren;
+  path: string;
+}
+
+interface FolderModalProps {
+  isOpen: boolean;
+  editingFolder: FolderWithChildren | null;
+  availableFolders: FolderOption[];
+  onClose: () => void;
+  onSave: (folder: Folder) => void;
+}
+
+export function FolderModal({
+  isOpen,
+  editingFolder,
+  availableFolders,
+  onClose,
+  onSave,
+}: FolderModalProps) {
+  const [name, setName] = useState(editingFolder?.name ?? "");
+  const [description, setDescription] = useState(editingFolder?.description ?? "");
+  const [parentFolderId, setParentFolderId] = useState<number | null>(
+    editingFolder?.parent_folder_id ?? null
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // Update form when editing folder changes or modal opens
+  useEffect(() => {
+    if (isOpen && editingFolder) {
+      setName(editingFolder.name);
+      setDescription(editingFolder.description ?? "");
+      setParentFolderId(editingFolder.parent_folder_id ?? null);
+      setError("");
+    } else if (isOpen && !editingFolder) {
+      // Creating a new folder
+      setName("");
+      setDescription("");
+      setParentFolderId(null);
+      setError("");
+    }
+  }, [isOpen, editingFolder]);
+
+  // Reset form when modal opens/closes or editing folder changes
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      onClose();
+      setName("");
+      setDescription("");
+      setParentFolderId(null);
+      setError("");
+    }
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) {
+      setError("Folder name is required");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      let savedFolder: Folder;
+      if (editingFolder) {
+        savedFolder = await updateFolder(editingFolder.id, {
+          name: name.trim(),
+          description: description.trim() || undefined,
+          parent_folder_id: parentFolderId,
+        });
+      } else {
+        savedFolder = await createFolder({
+          name: name.trim(),
+          description: description.trim() || undefined,
+          parent_folder_id: parentFolderId,
+        });
+      }
+      onSave(savedFolder);
+      handleOpenChange(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save folder");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="folder-modal-title"
+        className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-800 p-6 shadow-xl"
+      >
+        <h2 id="folder-modal-title" className="text-lg font-semibold text-white mb-4">
+          {editingFolder ? "Edit Folder" : "New Folder"}
+        </h2>
+
+        <div className="space-y-4">
+          {/* Name field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1">
+              Folder Name
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="My Servers"
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              disabled={loading}
+            />
+          </div>
+
+          {/* Description field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1">
+              Description (optional)
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Organize your servers..."
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 resize-none h-16"
+              disabled={loading}
+            />
+          </div>
+
+          {/* Parent folder selector */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1">
+              Parent Folder (optional)
+            </label>
+            <select
+              value={parentFolderId ?? ""}
+              onChange={(e) => setParentFolderId(e.target.value ? parseInt(e.target.value) : null)}
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-slate-100 focus:outline-none focus:border-blue-500"
+              disabled={loading}
+            >
+              <option value="">Root</option>
+              {availableFolders.map(({ folder, path }) => (
+                <option key={folder.id} value={folder.id}>
+                  {path}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Error message */}
+          {error && <div className="text-sm text-red-400">{error}</div>}
+        </div>
+
+        {/* Buttons */}
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={() => handleOpenChange(false)}
+            className="btn-secondary flex-1"
+            disabled={loading}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            className="btn-primary flex-1"
+            disabled={loading}
+          >
+            {loading ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Integer, String, DateTime, Enum as SAEnum, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Integer, String, DateTime, Enum as SAEnum, text, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
 
@@ -39,6 +39,9 @@ class Device(Base):
         default=ConnectionType.ssh,
         server_default=text("'ssh'"),  # backfills existing rows on ALTER TABLE
     )
+    folder_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("folders.id", ondelete="SET NULL"), nullable=True
+    )
     # AES-256-GCM encrypted, base64-encoded
     encrypted_password: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # SHA-256 SSH host key fingerprint for SSH/SFTP trust-on-first-use pinning
@@ -56,3 +59,6 @@ class Device(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+    # Relationship with folder
+    folder: Mapped["Folder | None"] = relationship("Folder", back_populates="devices")

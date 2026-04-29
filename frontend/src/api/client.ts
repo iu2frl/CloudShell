@@ -160,6 +160,7 @@ export interface Device {
   username: string;
   auth_type: "password" | "key";
   connection_type: ConnectionType;
+  folder_id?: number | null;
   ssh_host_fingerprint?: string | null;
   key_filename?: string | null;
   ftps_cert_thumbprint?: string | null;
@@ -176,12 +177,36 @@ export interface DeviceCreate {
   connection_type: ConnectionType;
   password?: string;
   private_key?: string;
+  folder_id?: number | null;
 }
 
 export interface DeviceUpdate extends Partial<DeviceCreate> {
   ssh_host_fingerprint?: string | null;
   ftps_cert_thumbprint?: string | null;
+  folder_id?: number | null;
 }
+
+export interface Folder {
+  id: number;
+  name: string;
+  description?: string | null;
+  parent_folder_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FolderWithChildren extends Folder {
+  children: FolderWithChildren[];
+  device_count: number;
+}
+
+export interface FolderCreate {
+  name: string;
+  description?: string;
+  parent_folder_id?: number | null;
+}
+
+export interface FolderUpdate extends Partial<FolderCreate> {}
 
 export const listDevices = (): Promise<Device[]> => request("/devices/");
 
@@ -193,6 +218,22 @@ export const updateDevice = (id: number, d: DeviceUpdate): Promise<Device> =>
 
 export const deleteDevice = (id: number): Promise<void> =>
   request(`/devices/${id}`, { method: "DELETE" });
+
+// -- Folders -------------------------------------------------------------------
+
+export const listFolders = (): Promise<FolderWithChildren[]> => request("/folders/");
+
+export const getFolder = (id: number): Promise<FolderWithChildren> =>
+  request(`/folders/${id}`);
+
+export const createFolder = (f: FolderCreate): Promise<Folder> =>
+  request("/folders/", { method: "POST", body: JSON.stringify(f) });
+
+export const updateFolder = (id: number, f: FolderUpdate): Promise<Folder> =>
+  request(`/folders/${id}`, { method: "PUT", body: JSON.stringify(f) });
+
+export const deleteFolder = (id: number): Promise<void> =>
+  request(`/folders/${id}`, { method: "DELETE" });
 
 // -- Terminal ------------------------------------------------------------------
 

@@ -14,6 +14,7 @@ from backend.services.crypto import (
     encrypt,
     save_encrypted_key,
 )
+from backend.services.folder import validate_folder_exists
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -29,6 +30,7 @@ class DeviceCreate(BaseModel):
     connection_type: ConnectionType = ConnectionType.ssh
     password: Optional[str] = None
     private_key: Optional[str] = None  # PEM string
+    folder_id: Optional[int] = None
 
 
 class DeviceUpdate(BaseModel):
@@ -42,6 +44,7 @@ class DeviceUpdate(BaseModel):
     private_key: Optional[str] = None
     ssh_host_fingerprint: Optional[str] = None
     ftps_cert_thumbprint: Optional[str] = None
+    folder_id: Optional[int] = None
 
 
 class DeviceOut(BaseModel):
@@ -52,6 +55,7 @@ class DeviceOut(BaseModel):
     username: str
     auth_type: AuthType
     connection_type: ConnectionType
+    folder_id: Optional[int] = None
     ssh_host_fingerprint: str | None = None
     key_filename: str | None = None
     ftps_cert_thumbprint: str | None = None
@@ -88,6 +92,9 @@ async def create_device(
     from backend.config import get_settings
     settings = get_settings()
 
+    if payload.folder_id is not None:
+        await validate_folder_exists(db, payload.folder_id)
+
     device = Device(
         name=payload.name,
         hostname=payload.hostname,
@@ -95,6 +102,7 @@ async def create_device(
         username=payload.username,
         auth_type=payload.auth_type,
         connection_type=payload.connection_type,
+        folder_id=payload.folder_id,
     )
     if payload.auth_type == AuthType.password:
         if not payload.password:
@@ -151,12 +159,18 @@ async def update_device(
         "connection_type",
         "ssh_host_fingerprint",
         "ftps_cert_thumbprint",
+        "folder_id",
     ):
         val = getattr(payload, field)
         if field in {"ssh_host_fingerprint", "ftps_cert_thumbprint"}:
             if field in provided_fields:
                 normalized_val = val.strip() if isinstance(val, str) else val
                 setattr(device, field, normalized_val or None)
+            continue
+        if field == "folder_id":
+            if val is not None and "folder_id" in provided_fields:
+                await validate_folder_exists(db, val)
+                device.folder_id = val
             continue
         if val is not None:
             setattr(device, field, val)
