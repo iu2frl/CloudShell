@@ -46,6 +46,13 @@ export function Login({ onLogin }: Props) {
     }
   };
 
+  const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    if (e.key !== "Enter") return;
+    if (loading) return;
+    e.preventDefault();
+    e.currentTarget.requestSubmit();
+  };
+
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
@@ -67,7 +74,7 @@ export function Login({ onLogin }: Props) {
               {error}
             </div>
           )}
-          <form onSubmit={submit} className="space-y-5">
+          <form onSubmit={submit} onKeyDown={handleFormKeyDown} className="space-y-5">
             {!requires2FA ? (
               <>
                 <div className="space-y-1">

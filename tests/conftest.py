@@ -30,6 +30,9 @@ async def db_session():
     """Yield an AsyncSession backed by a fully-isolated in-memory SQLite database."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     async with engine.begin() as conn:
+        # Enable foreign key constraints for SQLite
+        from sqlalchemy import text
+        await conn.execute(text("PRAGMA foreign_keys = ON"))
         await conn.run_sync(Base.metadata.create_all)
 
     factory = async_sessionmaker(engine, expire_on_commit=False)

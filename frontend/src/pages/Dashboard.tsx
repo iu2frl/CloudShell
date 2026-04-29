@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Device, listDevices, logout } from "../api/client";
-import { DeviceList } from "../components/DeviceList";
+import { Device, FolderWithChildren, listDevices, listFolders, logout } from "../api/client";
+import { DeviceListWithFolders } from "../components/DeviceListWithFolders";
 import { DeviceForm } from "../components/DeviceForm";
 import { Terminal } from "../components/Terminal";
 import { FileManager } from "../components/FileManager";
@@ -28,6 +28,7 @@ let tabCounter = 0;
 
 export function Dashboard({ onLogout }: Props) {
   const [devices, setDevices]       = useState<Device[]>([]);
+  const [folders, setFolders]       = useState<FolderWithChildren[]>([]);
   const [loading, setLoading]       = useState(true);
   const [tabs, setTabs]             = useState<Tab[]>([]);
   const [activeTab, setActiveTab]   = useState<number | null>(null);
@@ -39,6 +40,21 @@ export function Dashboard({ onLogout }: Props) {
   const [showConfigTransfer, setShowConfigTransfer] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const toast = useToast();
+
+  const getFlattenedFolders = (folders: FolderWithChildren[], prefix = ""): Array<{folder: FolderWithChildren, path: string}> => {
+    const result: Array<{folder: FolderWithChildren, path: string}> = [];
+    
+    folders.forEach((folder) => {
+      const currentPath = prefix ? `${prefix} > ${folder.name}` : folder.name;
+      result.push({ folder, path: currentPath });
+      
+      if (folder.children && Array.isArray(folder.children) && folder.children.length > 0) {
+        result.push(...getFlattenedFolders(folder.children, currentPath));
+      }
+    });
+    
+    return result;
+  };
 
   const grid = useGridLayout<number>({ rows: 1, cols: 1 });
 
@@ -97,7 +113,9 @@ export function Dashboard({ onLogout }: Props) {
   const fetchDevices = async () => {
     setLoading(true);
     try {
-      setDevices(await listDevices());
+      const [devicesData, foldersData] = await Promise.all([listDevices(), listFolders().catch(() => [])]);
+      setDevices(devicesData);
+      setFolders(foldersData);
     } catch {
       toast.error("Failed to load devices");
     } finally {
@@ -271,7 +289,7 @@ export function Dashboard({ onLogout }: Props) {
 
       {/* -- Body ------------------------------------------------------------- */}
       <div className="flex flex-1 overflow-hidden">
-        <DeviceList
+        <DeviceListWithFolders
           devices={devices}
           activeDeviceId={focusedDevice?.id ?? activeDevice?.id ?? null}
           loading={loading}
@@ -293,6 +311,7 @@ export function Dashboard({ onLogout }: Props) {
             });
           }}
           onRefresh={fetchDevices}
+          onFoldersChanged={fetchDevices}
         />
 
         {/* -- Split-view main area ------------------------------------------- */}
@@ -381,6 +400,7 @@ export function Dashboard({ onLogout }: Props) {
       {showForm && (
         <DeviceForm
           device={editDevice}
+          folders={getFlattenedFolders(folders)}
           onSave={(saved) => {
             setDevices((prev) =>
               editDevice

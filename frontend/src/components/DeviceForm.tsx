@@ -3,14 +3,21 @@ import {
   Device,
   DeviceCreate,
   DeviceUpdate,
+  FolderWithChildren,
   createDevice,
   generateKeyPair as generateKeyPairApi,
   updateDevice,
 } from "../api/client";
 import { X, KeyRound, Copy, Check, Loader, Upload, Trash2 } from "lucide-react";
 
+interface FolderOption {
+  folder: FolderWithChildren;
+  path: string;
+}
+
 interface Props {
   device?: Device;
+  folders?: FolderOption[];
   onSave: (d: Device) => void;
   onCancel: () => void;
 }
@@ -24,6 +31,7 @@ const EMPTY: DeviceCreate = {
   connection_type: "ssh",
   password: "",
   private_key: "",
+  folder_id: null,
 };
 
 /** Default port for each connection type. */
@@ -34,7 +42,7 @@ const DEFAULT_PORT: Record<string, number> = {
   ftps: 21,
 };
 
-export function DeviceForm({ device, onSave, onCancel }: Props) {
+export function DeviceForm({ device, folders = [], onSave, onCancel }: Props) {
   const [form, setForm] = useState<DeviceCreate>(
     device
       ? {
@@ -44,6 +52,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
           username: device.username,
           auth_type: device.auth_type,
           connection_type: device.connection_type,
+          folder_id: device.folder_id,
         }
       : { ...EMPTY }
   );
@@ -57,7 +66,7 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
   const [deletingFingerprint, setDeletingFingerprint] = useState<"ssh" | "ftps" | null>(null);
   const fileInputRef                = useRef<HTMLInputElement>(null);
 
-  const set = (key: keyof DeviceCreate, value: string | number) =>
+  const set = (key: keyof DeviceCreate, value: string | number | null) =>
     setForm((f) => {
       const updated = { ...f, [key]: value };
       // When switching connection type, auto-update port and force password auth for FTP/FTPS
@@ -234,6 +243,23 @@ export function DeviceForm({ device, onSave, onCancel }: Props) {
               )}
             </select>
           </Field>
+
+          {folders && folders.length > 0 && (
+            <Field label="Folder (optional)">
+              <select
+                className="input"
+                value={form.folder_id ?? ""}
+                onChange={(e) => set("folder_id", e.target.value ? parseInt(e.target.value) : null)}
+              >
+                <option value="">Root</option>
+                {folders.map(({ folder, path }) => (
+                  <option key={folder.id} value={folder.id}>
+                    {path}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
 
           {form.auth_type === "password" ? (
             <Field label="Password">

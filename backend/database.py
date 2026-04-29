@@ -19,8 +19,8 @@ class Base(DeclarativeBase):
 
 # Import all models here so SQLAlchemy knows about them before create_all()
 def _import_models():
-    from backend.models import device, auth, audit  # noqa: F401
-    _ = device, auth, audit
+    from backend.models import device, auth, audit, folder  # noqa: F401
+    _ = device, auth, audit, folder
 
 
 def get_engine():
@@ -29,6 +29,8 @@ def get_engine():
     return create_async_engine(
         f"sqlite+aiosqlite:///{settings.db_path}",
         echo=False,
+        connect_args={"check_same_thread": False},
+        pool_pre_ping=True,
     )
 
 
@@ -44,6 +46,7 @@ _MIGRATIONS: list[tuple[str, str, str, str, bool]] = [
     ("devices", "connection_type", "VARCHAR(4)", "'ssh'", False),
     ("devices", "ssh_host_fingerprint", "VARCHAR(128)", "NULL", True),
     ("devices", "ftps_cert_thumbprint", "VARCHAR(128)", "NULL", True),
+    ("devices", "folder_id", "INTEGER", "NULL", True),
 ]
 
 
@@ -100,6 +103,8 @@ async def init_db():
     """Create all tables on startup, then run incremental column migrations."""
     _import_models()
     async with engine.begin() as conn:
+        # Enable foreign keys for SQLite
+        await conn.execute(text("PRAGMA foreign_keys = ON"))
         await conn.run_sync(Base.metadata.create_all)
         await _run_migrations(conn)
         await _encrypt_legacy_totp_secrets(conn)
