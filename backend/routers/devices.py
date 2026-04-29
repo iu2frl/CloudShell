@@ -8,13 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models.device import AuthType, ConnectionType, Device
-from backend.models.folder import Folder
 from backend.routers.auth import get_current_user
 from backend.services.crypto import (
     delete_key_file,
     encrypt,
     save_encrypted_key,
 )
+from backend.services.folder import validate_folder_exists
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -92,11 +92,8 @@ async def create_device(
     from backend.config import get_settings
     settings = get_settings()
 
-    # Validate folder exists if specified
     if payload.folder_id is not None:
-        folder = await db.get(Folder, payload.folder_id)
-        if not folder:
-            raise HTTPException(status_code=404, detail="Folder not found")
+        await validate_folder_exists(db, payload.folder_id)
 
     device = Device(
         name=payload.name,
@@ -172,9 +169,7 @@ async def update_device(
             continue
         if field == "folder_id":
             if val is not None and "folder_id" in provided_fields:
-                folder = await db.get(Folder, val)
-                if not folder:
-                    raise HTTPException(status_code=404, detail="Folder not found")
+                await validate_folder_exists(db, val)
                 device.folder_id = val
             continue
         if val is not None:

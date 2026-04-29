@@ -3,16 +3,20 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
-from sqlalchemy import select, and_, func, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, contains_eager
 
 from backend.database import get_db
 from backend.models.device import Device
 from backend.models.folder import Folder
 from backend.routers.auth import get_current_user
+from backend.services.folder import (
+    build_folder_tree,
+    get_folder_or_404,
+    validate_parent_folder,
+)
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -67,11 +71,8 @@ async def create_folder(
     _: str = Depends(get_current_user),
 ):
     """Create a new folder for organizing devices."""
-    # Validate parent folder exists if specified
     if payload.parent_folder_id is not None:
-        parent = await db.get(Folder, payload.parent_folder_id)
-        if not parent:
-            raise HTTPException(status_code=404, detail="Parent folder not found")
+        await validate_parent_folder(db, payload.parent_folder_id)
 
     folder = Folder(
         name=payload.name,
@@ -89,14 +90,14 @@ async def list_root_folders(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    """List all root-level folders (folders with no parent) with their hierarchical structure."""
+    """List all root-level folders with their hierarchical structure."""
     result = await db.execute(
         select(Folder)
         .where(Folder.parent_folder_id.is_(None))
         .order_by(Folder.name)
     )
     folders = result.scalars().all()
-    return [await _folder_to_dict_with_children_async(folder, db) for folder in folders]
+    return [await build_folder_tree(folder, db) for folder in folders]
 
 
 @router.get("/{folder_id}", response_model=FolderWithChildrenOut)
@@ -106,13 +107,8 @@ async def get_folder(
     _: str = Depends(get_current_user),
 ):
     """Get a specific folder with its complete hierarchy."""
-    result = await db.execute(
-        select(Folder).where(Folder.id == folder_id)
-    )
-    folder = result.scalars().first()
-    if not folder:
-        raise HTTPException(status_code=404, detail="Folder not found")
-    return await _folder_to_dict_with_children_async(folder, db)
+    folder = await get_folder_or_404(db, folder_id)
+    return await build_folder_tree(folder, db)
 
 
 @router.put("/{folder_id}", response_model=FolderOut)
@@ -123,20 +119,11 @@ async def update_folder(
     _: str = Depends(get_current_user),
 ):
     """Update a folder's details."""
-    folder = await db.get(Folder, folder_id)
-    if not folder:
-        raise HTTPException(status_code=404, detail="Folder not found")
+    folder = await get_folder_or_404(db, folder_id)
 
-    # Validate new parent folder if specified
     if payload.parent_folder_id is not None:
-        if payload.parent_folder_id == folder_id:
-            raise HTTPException(status_code=400, detail="Cannot move folder into itself")
+        await validate_parent_folder(db, payload.parent_folder_id, folder_id)
 
-        parent = await db.get(Folder, payload.parent_folder_id)
-        if not parent:
-            raise HTTPException(status_code=404, detail="Parent folder not found")
-
-    # Update fields
     if payload.name is not None:
         folder.name = payload.name
     if payload.description is not None:
@@ -157,10 +144,7 @@ async def delete_folder(
     _: str = Depends(get_current_user),
 ):
     """Delete a folder and move its direct contents to the parent folder."""
-    folder = await db.get(Folder, folder_id)
-    if not folder:
-        raise HTTPException(status_code=404, detail="Folder not found")
-
+    folder = await get_folder_or_404(db, folder_id)
     target_parent_id = folder.parent_folder_id
 
     # Move devices to the parent folder (or root when deleting a root folder)
@@ -177,57 +161,6 @@ async def delete_folder(
         .values(parent_folder_id=target_parent_id)
     )
 
-    # Flush changes to ensure devices and subfolders are updated before deleting folder
     await db.flush()
-    
-    # Now delete the folder
     await db.delete(folder)
     await db.commit()
-
-
-# -- Helpers ------------------------------------------------------------------
-
-async def _folder_to_dict_with_children_async(folder: Folder, db: AsyncSession) -> dict:
-    """Convert a folder instance to a dictionary with nested children, loading them from DB."""
-    from backend.models.device import Device
-    
-    # Query for direct children
-    children_result = await db.execute(
-        select(Folder).where(Folder.parent_folder_id == folder.id).order_by(Folder.name)
-    )
-    children = children_result.scalars().all()
-    
-    # Query for device count in this folder
-    device_count_result = await db.execute(
-        select(func.count(Device.id)).where(Device.folder_id == folder.id)
-    )
-    device_count = device_count_result.scalar() or 0
-    
-    return {
-        "id": folder.id,
-        "name": folder.name,
-        "description": folder.description,
-        "parent_folder_id": folder.parent_folder_id,
-        "created_at": folder.created_at,
-        "updated_at": folder.updated_at,
-        "children": [
-            await _folder_to_dict_with_children_async(child, db) 
-            for child in children
-        ],
-        "device_count": device_count,
-    }
-
-
-def _folder_to_dict_with_children(folder: Folder) -> dict:
-    """Convert a folder instance to a dictionary with nested children."""
-    children_list = folder.children if folder.children is not None else []
-    return {
-        "id": folder.id,
-        "name": folder.name,
-        "description": folder.description,
-        "parent_folder_id": folder.parent_folder_id,
-        "created_at": folder.created_at,
-        "updated_at": folder.updated_at,
-        "children": [_folder_to_dict_with_children(child) for child in sorted(children_list, key=lambda f: f.name)],
-        "device_count": len(folder.devices) if folder.devices is not None else 0,
-    }

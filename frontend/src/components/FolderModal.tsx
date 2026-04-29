@@ -91,9 +91,14 @@ export function FolderModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-slate-800 rounded-lg shadow-xl w-96 p-6 border border-slate-700">
-        <h2 className="text-lg font-semibold text-white mb-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="folder-modal-title"
+        className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-800 p-6 shadow-xl"
+      >
+        <h2 id="folder-modal-title" className="text-lg font-semibold text-white mb-4">
           {editingFolder ? "Edit Folder" : "New Folder"}
         </h2>
 
@@ -155,14 +160,14 @@ export function FolderModal({
         <div className="flex gap-3 mt-6">
           <button
             onClick={() => handleOpenChange(false)}
-            className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded transition-colors disabled:opacity-50"
+            className="btn-secondary flex-1"
             disabled={loading}
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:opacity-50"
+            className="btn-primary flex-1"
             disabled={loading}
           >
             {loading ? "Saving..." : "Save"}

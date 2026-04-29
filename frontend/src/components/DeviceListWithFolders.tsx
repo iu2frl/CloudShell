@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { Device, FolderWithChildren, deleteDevice, listFolders, updateDevice } from "../api/client";
-import { Monitor, Trash2, PencilLine, Plus, RefreshCw, KeyRound, Lock, ChevronsLeft, ChevronsRight, FolderPlus, Folder as FolderIcon, FolderOpen } from "lucide-react";
+import { Monitor, Plus, RefreshCw, ChevronsLeft, ChevronsRight, FolderPlus, HardDrive } from "lucide-react";
 import { useToast } from "./Toast";
 import { FolderTreeItem } from "./FolderTreeItem";
 import { FolderModal } from "./FolderModal";
+import { DeviceRow } from "./DeviceRow";
 
 interface Props {
   devices: Device[];
@@ -167,234 +168,33 @@ export function DeviceListWithFolders({
     ));
   };
 
-  const renderDeviceInFolder = (folderId: number) => {
+  const renderDevices = (deviceList: Device[], level: number) => {
+    return deviceList.map((d) => (
+      <DeviceRow
+        key={d.id}
+        device={d}
+        isActive={activeDeviceId === d.id}
+        isDeleting={deletingId === d.id}
+        isConfirm={confirmId === d.id}
+        level={level}
+        onConnect={onConnect}
+        onEdit={onEdit}
+        onMove={handleMoveDevice}
+        onDeleteClick={handleDeleteClick}
+        onDeleteConfirm={handleDeleteConfirm}
+        onDeleteCancel={() => setConfirmId(null)}
+      />
+    ));
+  };
+
+  const renderDeviceInFolder = (folderId: number, level: number) => {
     const devicesInFolder = devices.filter((d) => d.folder_id === folderId);
-    return devicesInFolder.map((d) => {
-      const isActive = activeDeviceId === d.id;
-      const isDeleting = deletingId === d.id;
-      const isConfirm = confirmId === d.id;
-
-      return (
-        <div key={d.id} className="relative">
-          <div
-            onClick={() => !isConfirm && onConnect(d)}
-            className={`group flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors select-none ml-12
-              ${isActive ? "bg-blue-600/20 border-l-2 border-blue-500" : "hover:bg-slate-800 border-l-2 border-transparent"}
-              ${isConfirm ? "opacity-40 pointer-events-none" : ""}`}
-          >
-            {/* Status dot - only show when connected */}
-            {isActive && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />}
-
-            {/* Info */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5">
-                <p className={`text-sm font-medium group-hover:truncate ${isActive ? "text-white" : "text-slate-200"}`}>
-                  {d.name}
-                </p>
-                {d.auth_type === "key" ? (
-                  <KeyRound size={10} className="text-slate-500 flex-shrink-0" aria-label="SSH key" />
-                ) : (
-                  <Lock size={10} className="text-slate-600 flex-shrink-0" aria-label="Password" />
-                )}
-                {d.connection_type === "ssh" && (
-                  <span className="text-[9px] bg-green-900/60 text-green-300 border border-green-700/50 rounded px-1 leading-4 flex-shrink-0">
-                    SSH
-                  </span>
-                )}
-                {d.connection_type === "sftp" && (
-                  <span className="text-[9px] bg-purple-900/60 text-purple-300 border border-purple-700/50 rounded px-1 leading-4 flex-shrink-0">
-                    SFTP
-                  </span>
-                )}
-                {d.connection_type === "ftp" && (
-                  <span className="text-[9px] bg-orange-900/60 text-orange-300 border border-orange-700/50 rounded px-1 leading-4 flex-shrink-0">
-                    FTP
-                  </span>
-                )}
-                {d.connection_type === "ftps" && (
-                  <span className="text-[9px] bg-orange-900/60 text-orange-300 border border-orange-700/50 rounded px-1 leading-4 flex-shrink-0">
-                    FTPS
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-500 truncate">
-                {d.username}@{d.hostname}:{d.port}
-              </p>
-            </div>
-
-            {/* Action icons */}
-            {!isDeleting && (
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 rounded pl-1">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMoveDevice(d);
-                  }}
-                  className="icon-btn"
-                  aria-label="Move to folder"
-                >
-                  <FolderOpen size={12} />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit(d);
-                  }}
-                  className="icon-btn"
-                  aria-label="Edit"
-                >
-                  <PencilLine size={12} />
-                </button>
-                <button
-                  onClick={(e) => handleDeleteClick(e, d.id)}
-                  className="icon-btn text-red-400 hover:text-red-300"
-                  aria-label="Delete"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            )}
-            {isDeleting && <RefreshCw size={12} className="text-slate-500 animate-spin flex-shrink-0" />}
-          </div>
-
-          {/* Inline confirm prompt */}
-          {isConfirm && (
-            <div className="absolute inset-0 bg-slate-900/95 flex items-center justify-between px-4 gap-2 z-10">
-              <span className="text-xs text-slate-300 truncate">Delete "{d.name}"?</span>
-              <div className="flex gap-1.5 flex-shrink-0">
-                <button
-                  onClick={() => setConfirmId(null)}
-                  className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => handleDeleteConfirm(d.id)}
-                  className="text-xs px-2 py-1 rounded bg-red-700 hover:bg-red-600 text-white transition-colors"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    });
+    return renderDevices(devicesInFolder, level + 1);
   };
 
   const renderRootDevices = () => {
     const rootDevices = devices.filter((d) => !d.folder_id);
-    return rootDevices.map((d) => {
-      const isActive = activeDeviceId === d.id;
-      const isDeleting = deletingId === d.id;
-      const isConfirm = confirmId === d.id;
-
-      return (
-        <div key={d.id} className="relative">
-          <div
-            onClick={() => !isConfirm && onConnect(d)}
-            className={`group flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors select-none
-              ${isActive ? "bg-blue-600/20 border-l-2 border-blue-500" : "hover:bg-slate-800 border-l-2 border-transparent"}
-              ${isConfirm ? "opacity-40 pointer-events-none" : ""}`}
-          >
-            {/* Status dot - only show when connected */}
-            {isActive && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />}
-
-            {/* Info */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5">
-                <p className={`text-sm font-medium group-hover:truncate ${isActive ? "text-white" : "text-slate-200"}`}>
-                  {d.name}
-                </p>
-                {d.auth_type === "key" ? (
-                  <KeyRound size={10} className="text-slate-500 flex-shrink-0" aria-label="SSH key" />
-                ) : (
-                  <Lock size={10} className="text-slate-600 flex-shrink-0" aria-label="Password" />
-                )}
-                {d.connection_type === "ssh" && (
-                  <span className="text-[9px] bg-green-900/60 text-green-300 border border-green-700/50 rounded px-1 leading-4 flex-shrink-0">
-                    SSH
-                  </span>
-                )}
-                {d.connection_type === "sftp" && (
-                  <span className="text-[9px] bg-purple-900/60 text-purple-300 border border-purple-700/50 rounded px-1 leading-4 flex-shrink-0">
-                    SFTP
-                  </span>
-                )}
-                {d.connection_type === "ftp" && (
-                  <span className="text-[9px] bg-orange-900/60 text-orange-300 border border-orange-700/50 rounded px-1 leading-4 flex-shrink-0">
-                    FTP
-                  </span>
-                )}
-                {d.connection_type === "ftps" && (
-                  <span className="text-[9px] bg-orange-900/60 text-orange-300 border border-orange-700/50 rounded px-1 leading-4 flex-shrink-0">
-                    FTPS
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-500 truncate">
-                {d.username}@{d.hostname}:{d.port}
-              </p>
-            </div>
-
-            {/* Action icons */}
-            {!isDeleting && (
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 rounded pl-1">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMoveDevice(d);
-                  }}
-                  className="icon-btn"
-                  aria-label="Move to folder"
-                >
-                  <FolderOpen size={12} />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit(d);
-                  }}
-                  className="icon-btn"
-                  aria-label="Edit"
-                >
-                  <PencilLine size={12} />
-                </button>
-                <button
-                  onClick={(e) => handleDeleteClick(e, d.id)}
-                  className="icon-btn text-red-400 hover:text-red-300"
-                  aria-label="Delete"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            )}
-            {isDeleting && <RefreshCw size={12} className="text-slate-500 animate-spin flex-shrink-0" />}
-          </div>
-
-          {/* Inline confirm prompt */}
-          {isConfirm && (
-            <div className="absolute inset-0 bg-slate-900/95 flex items-center justify-between px-4 gap-2 z-10">
-              <span className="text-xs text-slate-300 truncate">Delete "{d.name}"?</span>
-              <div className="flex gap-1.5 flex-shrink-0">
-                <button
-                  onClick={() => setConfirmId(null)}
-                  className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => handleDeleteConfirm(d.id)}
-                  className="text-xs px-2 py-1 rounded bg-red-700 hover:bg-red-600 text-white transition-colors"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    });
+    return renderDevices(rootDevices, 0);
   };
 
   return (
@@ -429,7 +229,7 @@ export function DeviceListWithFolders({
                   ${activeDeviceId === d.id ? "bg-blue-600/30 text-blue-300" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
               >
                 {d.connection_type === "sftp" || d.connection_type === "ftp" || d.connection_type === "ftps" ? (
-                  <FolderIcon size={14} />
+                  <HardDrive size={14} />
                 ) : (
                   <Monitor size={14} />
                 )}
@@ -475,7 +275,7 @@ export function DeviceListWithFolders({
 
           {/* List */}
           <div className="flex-1 overflow-y-auto py-1">
-            {devices.length === 0 && !loading && (
+            {devices.length === 0 && folders.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full text-center px-4 pb-8">
                 <Monitor size={32} className="text-slate-700 mb-3" />
                 <p className="text-slate-500 text-xs leading-relaxed">
@@ -527,9 +327,14 @@ export function DeviceListWithFolders({
 
       {/* Move Device Modal */}
       {showMoveModal && movingDevice && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 w-96 max-w-[90vw]">
-            <h3 className="text-lg font-semibold text-white mb-4">Move Device</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="move-device-title"
+            className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-800 p-6 shadow-xl"
+          >
+            <h3 id="move-device-title" className="text-lg font-semibold text-white mb-4">Move Device</h3>
             <p className="text-slate-300 mb-4">
               Move "{movingDevice.name}" to a folder:
             </p>
@@ -550,7 +355,7 @@ export function DeviceListWithFolders({
                   setShowMoveModal(false);
                   setMovingDevice(null);
                 }}
-                className="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+                className="btn-secondary"
               >
                 Cancel
               </button>

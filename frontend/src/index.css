@@ -27,6 +27,16 @@ body {
            rounded-lg px-4 py-2 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  .btn-danger {
+    @apply bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-medium
+           rounded-lg px-4 py-2 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-100 font-medium
+           rounded-lg px-4 py-2 text-sm border border-slate-600 transition-colors;
+  }
+
   .btn-ghost {
     @apply bg-transparent hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-medium
            rounded-lg px-4 py-2 text-sm border border-slate-700 transition-colors;
