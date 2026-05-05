@@ -44,7 +44,7 @@ from backend.services.ftp import (
     probe_ftps_thumbprint,
     read_file_bytes,
     rename_remote,
-    upload_stream_from_async_iter,
+    write_file_bytes,
 )
 
 log = logging.getLogger(__name__)
@@ -351,23 +351,8 @@ async def upload_file(
     async def uploader_task():
         """Upload buffered chunks to FTP (runs in background)."""
         try:
-            def chunk_generator():
-                chunk_size = 1024 * 1024  # 1MB chunks
-                offset = 0
-                while offset < file_size:
-                    yield file_data[offset:offset + chunk_size]
-                    offset += chunk_size
-
-            async def async_chunk_generator():
-                for chunk in chunk_generator():
-                    yield chunk
-
-            await upload_stream_from_async_iter(
-                session_id,
-                remote_path,
-                async_chunk_generator(),
-                progress_callback,
-            )
+            await write_file_bytes(session_id, remote_path, file_data)
+            progress_callback(file_size)
             _upload_status[upload_id]["status"] = "completed"
             log.info(
                 "FTP upload completed: filename=%s, upload_id=%s, session=%s",
@@ -399,7 +384,9 @@ async def upload_file(
 
     return {
         "upload_id": upload_id,
+        "uploaded": remote_path,
         "filename": file.filename or "upload",
+        "size": file_size,
         "size_bytes": file_size,
         "size_mb": file_size_mb,
         "status": "queued",
