@@ -36,6 +36,10 @@ on:
         options: ["20", "22"]
         default: "20"
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unit-tests:
     name: Unit Tests
