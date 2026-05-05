@@ -395,6 +395,27 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
         </button>
       </div>
 
+      {/* -- Upload progress bar -- */}
+      {uploadPct !== null && (
+        <div className="flex items-center gap-3 px-3 py-2 bg-slate-900/50 border-b border-slate-800 flex-shrink-0">
+          <div className="flex-1 flex items-center gap-2">
+            <Loader size={14} className="animate-spin text-blue-400 flex-shrink-0" />
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-slate-400">Uploading...</span>
+                <span className="text-xs font-semibold text-blue-400">{uploadPct}%</span>
+              </div>
+              <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-blue-500 to-blue-400 h-full transition-all ease-out"
+                  style={{ width: `${uploadPct}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* -- File table -- */}
       <div className="flex-1 overflow-auto">
         {loadingDir && entries.length === 0 ? (

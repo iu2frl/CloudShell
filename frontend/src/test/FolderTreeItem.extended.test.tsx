@@ -127,11 +127,10 @@ describe('FolderTreeItem extended', () => {
     expect(onEdit).toHaveBeenCalledWith(defaultProps.folder);
   });
 
-  it('renders at nested level with console.log', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    renderItem({ ...defaultProps, level: 1 });
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining('Nested folder'));
-    spy.mockRestore();
+  it('renders data attribute for nested level', () => {
+    const { container } = renderItem({ ...defaultProps, level: 1 });
+    const item = container.querySelector('[data-test-folder]');
+    expect(item?.getAttribute('data-test-folder')).toContain('level-1');
   });
 
   it('shows spacer div when folder has no children', () => {
