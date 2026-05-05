@@ -48,6 +48,9 @@ class _FtpSession:
     source_ip: str | None = None
     use_tls: bool = False
     _cwd: str = field(default="/", init=False)
+    # Per-session lock to serialize control/data channel operations. Lazily
+    # created to avoid creating an asyncio.Lock at import time.
+    lock: asyncio.Lock | None = field(default=None, init=False)
 
 
 _ftp_sessions: dict[str, _FtpSession] = {}
@@ -234,28 +237,32 @@ async def list_directory(session_id: str, remote_path: str) -> list[dict]:
         raise ValueError("FTP session not found")
 
     result = []
-    async for path_obj, info in entry.client.list(remote_path, recursive=False):
-        name = path_obj.name
-        if name in (".", ".."):
-            continue
-        is_dir = info.get("type") == "dir"
-        # Build a clean joined path without double-slashes
-        parent = remote_path.rstrip("/")
-        full_path = f"{parent}/{name}" if parent else f"/{name}"
-        size = int(info.get("size", 0) or 0)
-        modify = info.get("modify", "")
-        # modify is a 14-char timestamp: YYYYMMDDHHMMSS
-        modified_ts = _parse_ftp_mtime(modify)
-        result.append(
-            {
-                "name": name,
-                "path": full_path,
-                "size": size,
-                "is_dir": is_dir,
-                "permissions": info.get("unix.mode", None),
-                "modified": modified_ts,
-            }
-        )
+    # Ensure a per-session lock exists and serialize the listing operation.
+    if entry.lock is None:
+        entry.lock = asyncio.Lock()
+    async with entry.lock:
+        async for path_obj, info in entry.client.list(remote_path, recursive=False):
+            name = path_obj.name
+            if name in (".", ".."):
+                continue
+            is_dir = info.get("type") == "dir"
+            # Build a clean joined path without double-slashes
+            parent = remote_path.rstrip("/")
+            full_path = f"{parent}/{name}" if parent else f"/{name}"
+            size = int(info.get("size", 0) or 0)
+            modify = info.get("modify", "")
+            # modify is a 14-char timestamp: YYYYMMDDHHMMSS
+            modified_ts = _parse_ftp_mtime(modify)
+            result.append(
+                {
+                    "name": name,
+                    "path": full_path,
+                    "size": size,
+                    "is_dir": is_dir,
+                    "permissions": info.get("unix.mode", None),
+                    "modified": modified_ts,
+                }
+            )
 
     result.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
     return result
@@ -295,10 +302,13 @@ async def read_file_bytes(session_id: str, remote_path: str) -> bytes:
     
     try:
         chunks: list[bytes] = []
-        async with entry.client.download_stream(remote_path) as stream:
-            chunk_count = 0
-            async for chunk in stream.iter_by_block():
-                chunks.append(chunk)
+        if entry.lock is None:
+            entry.lock = asyncio.Lock()
+        async with entry.lock:
+            async with entry.client.download_stream(remote_path) as stream:
+                chunk_count = 0
+                async for chunk in stream.iter_by_block():
+                    chunks.append(chunk)
                 chunk_count += 1
         
         total_size = len(b"".join(chunks))
@@ -339,55 +349,58 @@ async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> No
     )
     
     try:
-        async with entry.client.upload_stream(remote_path) as stream:
-            log.debug(
-                "FTP upload stream opened for %s (session %s)",
-                remote_path,
-                session_id[:8],
-            )
-            
-            # Write in chunks to avoid timeout and allow progress monitoring
-            chunk_size = 1024 * 1024  # 1 MB chunks
-            bytes_written = 0
-            chunk_num = 0
-            
-            while bytes_written < file_size:
-                chunk_num += 1
-                end = min(bytes_written + chunk_size, file_size)
-                chunk = data[bytes_written:end]
-                
-                try:
-                    # Each chunk has 10-minute timeout
-                    await asyncio.wait_for(stream.write(chunk), timeout=600)
-                except asyncio.TimeoutError as exc:
-                    log.error(
-                        "FTP upload timeout at chunk %d (%.2f MB of %.2f MB), session=%s",
+        if entry.lock is None:
+            entry.lock = asyncio.Lock()
+        async with entry.lock:
+            async with entry.client.upload_stream(remote_path) as stream:
+                log.debug(
+                    "FTP upload stream opened for %s (session %s)",
+                    remote_path,
+                    session_id[:8],
+                )
+
+                # Write in chunks to avoid timeout and allow progress monitoring
+                chunk_size = 1024 * 1024  # 1 MB chunks
+                bytes_written = 0
+                chunk_num = 0
+
+                while bytes_written < file_size:
+                    chunk_num += 1
+                    end = min(bytes_written + chunk_size, file_size)
+                    chunk = data[bytes_written:end]
+
+                    try:
+                        # Each chunk has 10-minute timeout
+                        await asyncio.wait_for(stream.write(chunk), timeout=600)
+                    except asyncio.TimeoutError as exc:
+                        log.error(
+                            "FTP upload timeout at chunk %d (%.2f MB of %.2f MB), session=%s",
+                            chunk_num,
+                            bytes_written / (1024 * 1024),
+                            file_size_mb,
+                            session_id[:8],
+                        )
+                        raise TimeoutError(
+                            f"FTP upload timed out at chunk {chunk_num} after {bytes_written} bytes"
+                        ) from exc
+
+                    bytes_written = end
+
+                    progress_mb = bytes_written / (1024 * 1024)
+                    log.debug(
+                        "FTP upload progress: path=%s, chunk=%d, progress=%.2f MB / %.2f MB, session=%s",
+                        remote_path,
                         chunk_num,
-                        bytes_written / (1024 * 1024),
+                        progress_mb,
                         file_size_mb,
                         session_id[:8],
                     )
-                    raise TimeoutError(
-                        f"FTP upload timed out at chunk {chunk_num} after {bytes_written} bytes"
-                    ) from exc
-                
-                bytes_written = end
-                
-                progress_mb = bytes_written / (1024 * 1024)
+
                 log.debug(
-                    "FTP upload progress: path=%s, chunk=%d, progress=%.2f MB / %.2f MB, session=%s",
+                    "FTP upload stream write completed for %s (session %s)",
                     remote_path,
-                    chunk_num,
-                    progress_mb,
-                    file_size_mb,
                     session_id[:8],
                 )
-            
-            log.debug(
-                "FTP upload stream write completed for %s (session %s)",
-                remote_path,
-                session_id[:8],
-            )
     except Exception as exc:
         log.error(
             "FTP upload failed for %s (%.2f MB): %s (session %s)",
@@ -406,21 +419,24 @@ async def delete_remote(session_id: str, remote_path: str, is_dir: bool) -> None
         raise ValueError("FTP session not found")
     
     try:
-        if is_dir:
-            log.debug(
-                "FTP delete directory: path=%s, session=%s",
-                remote_path,
-                session_id[:8],
-            )
-            await entry.client.remove_directory(remote_path)
-        else:
-            log.debug(
-                "FTP delete file: path=%s, session=%s",
-                remote_path,
-                session_id[:8],
-            )
-            await entry.client.remove_file(remote_path)
-        
+        if entry.lock is None:
+            entry.lock = asyncio.Lock()
+        async with entry.lock:
+            if is_dir:
+                log.debug(
+                    "FTP delete directory: path=%s, session=%s",
+                    remote_path,
+                    session_id[:8],
+                )
+                await entry.client.remove_directory(remote_path)
+            else:
+                log.debug(
+                    "FTP delete file: path=%s, session=%s",
+                    remote_path,
+                    session_id[:8],
+                )
+                await entry.client.remove_file(remote_path)
+
         log.info(
             "FTP delete successful: %s (%s), session=%s",
             remote_path,
@@ -444,13 +460,17 @@ async def rename_remote(session_id: str, old_path: str, new_path: str) -> None:
         raise ValueError("FTP session not found")
     
     try:
-        log.debug(
-            "FTP rename: %s -> %s, session=%s",
-            old_path,
-            new_path,
-            session_id[:8],
-        )
-        await entry.client.rename(old_path, new_path)
+        if entry.lock is None:
+            entry.lock = asyncio.Lock()
+        async with entry.lock:
+            log.debug(
+                "FTP rename: %s -> %s, session=%s",
+                old_path,
+                new_path,
+                session_id[:8],
+            )
+            await entry.client.rename(old_path, new_path)
+
         log.info(
             "FTP rename successful: %s -> %s, session=%s",
             old_path,
@@ -475,12 +495,16 @@ async def mkdir_remote(session_id: str, remote_path: str) -> None:
         raise ValueError("FTP session not found")
     
     try:
-        log.debug(
-            "FTP mkdir: path=%s, session=%s",
-            remote_path,
-            session_id[:8],
-        )
-        await entry.client.make_directory(remote_path)
+        if entry.lock is None:
+            entry.lock = asyncio.Lock()
+        async with entry.lock:
+            log.debug(
+                "FTP mkdir: path=%s, session=%s",
+                remote_path,
+                session_id[:8],
+            )
+            await entry.client.make_directory(remote_path)
+
         log.info(
             "FTP mkdir successful: path=%s, session=%s",
             remote_path,

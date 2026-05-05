@@ -16,7 +16,7 @@ import logging
 import os
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,63 @@ from backend.services.ftp import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/ftp", tags=["ftp"])
+
+# Track active uploads for UI feedback
+_upload_status: dict[str, dict] = {}
+
+
+async def _perform_upload(
+    session_id: str,
+    remote_path: str,
+    data: bytes,
+    filename: str,
+    upload_id: str,
+) -> None:
+    """Background task to perform FTP upload and track status."""
+    try:
+        file_size_mb = len(data) / (1024 * 1024)
+        log.info(
+            "FTP background upload starting: %s (%.2f MB), upload_id=%s, session=%s",
+            filename,
+            file_size_mb,
+            upload_id,
+            session_id[:8],
+        )
+        _upload_status[upload_id] = {
+            "status": "uploading",
+            "filename": filename,
+            "size_bytes": len(data),
+            "size_mb": file_size_mb,
+        }
+        
+        await write_file_bytes(session_id, remote_path, data)
+        
+        _upload_status[upload_id] = {
+            "status": "completed",
+            "filename": filename,
+            "size_bytes": len(data),
+            "size_mb": file_size_mb,
+        }
+        log.info(
+            "FTP background upload completed: %s (%.2f MB), upload_id=%s, session=%s",
+            filename,
+            file_size_mb,
+            upload_id,
+            session_id[:8],
+        )
+    except Exception as exc:
+        log.error(
+            "FTP background upload failed: %s, error=%s, upload_id=%s, session=%s",
+            filename,
+            exc,
+            upload_id,
+            session_id[:8],
+        )
+        _upload_status[upload_id] = {
+            "status": "failed",
+            "filename": filename,
+            "error": str(exc),
+        }
 
 
 # -- Session management --------------------------------------------------------
@@ -265,71 +322,83 @@ class UploadResponse(BaseModel):
     size: int
 
 
-@router.post("/{session_id}/upload", response_model=UploadResponse)
+@router.post("/{session_id}/upload")
 async def upload_file(
     session_id: str,
     path: str,
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     _: str = Depends(get_current_user),
 ):
     """
-    Upload a file to the remote server.
+    Upload a file to the remote server (returns immediately, processes in background).
 
     ``path`` is the target directory; the remote file will be placed at
     ``{path}/{file.filename}``.
+    
+    Returns upload_id for status tracking via GET /ftp/{session_id}/upload/{upload_id}
     """
+    import uuid
+    
     target_dir = unquote(path)
     if target_dir.endswith("/"):
         remote_path = target_dir + (file.filename or "upload")
     else:
         remote_path = target_dir + "/" + (file.filename or "upload")
 
+    upload_id = str(uuid.uuid4())
+
     log.debug(
-        "FTP upload request: filename=%s, target_path=%s, session=%s",
+        "FTP upload request: filename=%s, target_path=%s, upload_id=%s, session=%s",
         file.filename,
         remote_path,
+        upload_id[:8],
         session_id[:8],
     )
 
-    # Read file in chunks to avoid loading entire file into memory
+    # Read file into memory
     data = await file.read()
     file_size_mb = len(data) / (1024 * 1024)
     log.info(
-        "FTP upload file buffered: filename=%s, size=%s bytes (%.2f MB), session=%s",
+        "FTP upload file buffered: filename=%s, size=%s bytes (%.2f MB), upload_id=%s, session=%s",
         file.filename,
         len(data),
         file_size_mb,
+        upload_id[:8],
         session_id[:8],
     )
     
-    try:
-        await write_file_bytes(session_id, remote_path, data)
-    except ValueError as exc:
-        log.error(
-            "FTP upload failed (session not found): %s, session=%s",
-            str(exc),
-            session_id[:8],
-        )
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        log.error(
-            "FTP upload failed: filename=%s, size=%.2f MB, error=%s, session=%s",
-            file.filename,
-            file_size_mb,
-            exc,
-            session_id[:8],
-        )
-        raise HTTPException(status_code=500, detail=f"Upload failed: {exc}")
-
-    log.info(
-        "FTP upload successful: %s -> %s, size=%s bytes (%.2f MB), session=%s",
-        file.filename,
-        remote_path,
-        len(data),
-        file_size_mb,
-        session_id[:8],
+    # Schedule background upload
+    background_tasks.add_task(
+        _perform_upload,
+        session_id=session_id,
+        remote_path=remote_path,
+        data=data,
+        filename=file.filename or "upload",
+        upload_id=upload_id,
     )
-    return UploadResponse(uploaded=remote_path, size=len(data))
+    
+    # Return immediately with upload_id
+    return {
+        "upload_id": upload_id,
+        "filename": file.filename or "upload",
+        "size_bytes": len(data),
+        "size_mb": file_size_mb,
+        "status": "queued",
+    }
+
+
+@router.get("/{session_id}/upload/{upload_id}")
+async def get_upload_status(
+    session_id: str,
+    upload_id: str,
+    _: str = Depends(get_current_user),
+):
+    """Check status of a background upload."""
+    status_info = _upload_status.get(upload_id)
+    if not status_info:
+        raise HTTPException(status_code=404, detail=f"Upload {upload_id[:8]} not found")
+    return status_info
 
 
 class DeleteRequest(BaseModel):
