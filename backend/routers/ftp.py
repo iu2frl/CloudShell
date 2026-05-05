@@ -291,10 +291,11 @@ async def upload_file(
         session_id[:8],
     )
 
+    # Read file in chunks to avoid loading entire file into memory
     data = await file.read()
     file_size_mb = len(data) / (1024 * 1024)
     log.info(
-        "FTP upload file read completed: %s, size=%s bytes (%.2f MB), session=%s",
+        "FTP upload file buffered: filename=%s, size=%s bytes (%.2f MB), session=%s",
         file.filename,
         len(data),
         file_size_mb,

@@ -24,6 +24,7 @@ Note on encoding:
   We default to ``latin-1`` because it is a strict superset of ASCII and
   never raises a decode error (every byte 0x00–0xFF is valid Latin-1).
 """
+import asyncio
 import logging
 import ssl
 import uuid
@@ -327,11 +328,12 @@ async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> No
     if entry is None:
         raise ValueError("FTP session not found")
     
-    file_size_mb = len(data) / (1024 * 1024)
+    file_size = len(data)
+    file_size_mb = file_size / (1024 * 1024)
     log.debug(
         "FTP upload starting: path=%s, size=%s bytes (%.2f MB), session=%s",
         remote_path,
-        len(data),
+        file_size,
         file_size_mb,
         session_id[:8],
     )
@@ -343,7 +345,44 @@ async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> No
                 remote_path,
                 session_id[:8],
             )
-            await stream.write(data)
+            
+            # Write in chunks to avoid timeout and allow progress monitoring
+            chunk_size = 1024 * 1024  # 1 MB chunks
+            bytes_written = 0
+            chunk_num = 0
+            
+            while bytes_written < file_size:
+                chunk_num += 1
+                end = min(bytes_written + chunk_size, file_size)
+                chunk = data[bytes_written:end]
+                
+                try:
+                    # Each chunk has 10-minute timeout
+                    await asyncio.wait_for(stream.write(chunk), timeout=600)
+                except asyncio.TimeoutError as exc:
+                    log.error(
+                        "FTP upload timeout at chunk %d (%.2f MB of %.2f MB), session=%s",
+                        chunk_num,
+                        bytes_written / (1024 * 1024),
+                        file_size_mb,
+                        session_id[:8],
+                    )
+                    raise TimeoutError(
+                        f"FTP upload timed out at chunk {chunk_num} after {bytes_written} bytes"
+                    ) from exc
+                
+                bytes_written = end
+                
+                progress_mb = bytes_written / (1024 * 1024)
+                log.debug(
+                    "FTP upload progress: path=%s, chunk=%d, progress=%.2f MB / %.2f MB, session=%s",
+                    remote_path,
+                    chunk_num,
+                    progress_mb,
+                    file_size_mb,
+                    session_id[:8],
+                )
+            
             log.debug(
                 "FTP upload stream write completed for %s (session %s)",
                 remote_path,
