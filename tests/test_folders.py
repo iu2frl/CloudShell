@@ -355,3 +355,79 @@ async def test_create_folder_requires_auth(client: AsyncClient):
         json={"name": "Test"},
     )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_create_folder_invalid_parent_returns_404(auth_client: AsyncClient):
+    """Test that creating a folder with an invalid parent returns 404."""
+    response = await auth_client.post(
+        "/api/folders/",
+        json={"name": "Child", "parent_folder_id": 9999},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_root_folders_empty(auth_client: AsyncClient):
+    """Test listing root folders when none exist."""
+    response = await auth_client.get("/api/folders/")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_get_folder_not_found(auth_client: AsyncClient):
+    """Test getting a folder that does not exist returns 404."""
+    response = await auth_client.get("/api/folders/9999")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_folder_parent_change(auth_client: AsyncClient):
+    """Test updating a folder parent to another folder."""
+    root_resp = await auth_client.post("/api/folders/", json={"name": "Root"})
+    root_id = root_resp.json()["id"]
+
+    new_parent_resp = await auth_client.post("/api/folders/", json={"name": "New Parent"})
+    new_parent_id = new_parent_resp.json()["id"]
+
+    response = await auth_client.put(
+        f"/api/folders/{root_id}",
+        json={"parent_folder_id": new_parent_id},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["parent_folder_id"] == new_parent_id
+
+
+@pytest.mark.asyncio
+async def test_update_folder_invalid_parent_returns_404(auth_client: AsyncClient):
+    """Test updating a folder with an invalid parent returns 404."""
+    root_resp = await auth_client.post("/api/folders/", json={"name": "Root"})
+    root_id = root_resp.json()["id"]
+
+    response = await auth_client.put(
+        f"/api/folders/{root_id}",
+        json={"parent_folder_id": 9999},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_root_folder_moves_children_to_root(auth_client: AsyncClient):
+    """Test deleting a root folder moves its direct children to root."""
+    root_resp = await auth_client.post("/api/folders/", json={"name": "Root"})
+    root_id = root_resp.json()["id"]
+
+    child_resp = await auth_client.post(
+        "/api/folders/",
+        json={"name": "Child", "parent_folder_id": root_id},
+    )
+    child_id = child_resp.json()["id"]
+
+    response = await auth_client.delete(f"/api/folders/{root_id}")
+    assert response.status_code == 204
+
+    child_lookup = await auth_client.get(f"/api/folders/{child_id}")
+    assert child_lookup.status_code == 200
+    assert child_lookup.json()["parent_folder_id"] is None

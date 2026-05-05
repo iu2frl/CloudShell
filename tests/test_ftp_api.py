@@ -32,6 +32,7 @@ Tests cover:
   - calls mkdir on FTP service
 - FTPS connection type is accepted
 """
+import asyncio
 import io
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -363,6 +364,8 @@ async def test_upload_success(auth_client):
     data = resp.json()
     assert data["uploaded"].endswith("hello.txt")
     assert data["size"] == len(b"uploaded data")
+    status = await _wait_for_upload(auth_client, session_id, data["upload_id"])
+    assert status["status"] == "completed"
 
     await auth_client.delete(f"/api/ftp/session/{session_id}")
 
@@ -571,6 +574,20 @@ async def _open_session(auth_client, fake_client) -> str:
     return open_resp.json()["session_id"]
 
 
+async def _wait_for_upload(auth_client, session_id: str, upload_id: str) -> dict:
+    """Poll upload status until completion or failure."""
+    for _ in range(100):
+        status_resp = await auth_client.get(
+            f"/api/ftp/{session_id}/upload/{upload_id}"
+        )
+        if status_resp.status_code == 200:
+            status = status_resp.json()
+            if status.get("status") in ("completed", "failed"):
+                return status
+        await asyncio.sleep(0.05)
+    raise AssertionError("Upload did not complete in time")
+
+
 @pytest.mark.asyncio
 async def test_list_dir_generic_error_returns_500(auth_client):
     fake = _make_fake_ftp_client()
@@ -607,8 +624,10 @@ async def test_upload_generic_error_returns_500(auth_client):
             f"/api/ftp/{sid}/upload?path=/",
             files={"file": ("f.txt", io.BytesIO(b"data"), "text/plain")},
         )
-    assert resp.status_code == 500
-    assert "Upload failed" in resp.json()["detail"]
+    assert resp.status_code == 200
+    status = await _wait_for_upload(auth_client, sid, resp.json()["upload_id"])
+    assert status["status"] == "failed"
+    assert "boom" in status["error"]
 
     await auth_client.delete(f"/api/ftp/session/{sid}")
 
@@ -625,6 +644,8 @@ async def test_upload_with_trailing_slash_path(auth_client):
     )
     assert resp.status_code == 200
     assert resp.json()["uploaded"] == "/some/dir/hello.txt"
+    status = await _wait_for_upload(auth_client, sid, resp.json()["upload_id"])
+    assert status["status"] == "completed"
 
     await auth_client.delete(f"/api/ftp/session/{sid}")
 
@@ -711,7 +732,10 @@ async def test_upload_value_error_returns_404(auth_client):
             f"/api/ftp/{sid}/upload?path=/missing",
             files={"file": ("f.txt", io.BytesIO(b"d"), "text/plain")},
         )
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    status = await _wait_for_upload(auth_client, sid, resp.json()["upload_id"])
+    assert status["status"] == "failed"
+    assert "no such dir" in status["error"]
 
     await auth_client.delete(f"/api/ftp/session/{sid}")
 

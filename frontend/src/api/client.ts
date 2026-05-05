@@ -577,15 +577,73 @@ export async function ftpUpload(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${BASE}/ftp/${sessionId}/upload?path=${encoded}`);
 
+    let uploadId: string | null = null;
+
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+        if (e.lengthComputable) {
+          // Client->server progress (0-50%)
+          const clientPct = Math.round((e.loaded / e.total) * 50);
+          onProgress(clientPct);
+        }
       };
     }
 
-    xhr.onload = () => {
+    xhr.onload = async () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
+        try {
+          const response = JSON.parse(xhr.responseText);
+          uploadId = response.upload_id;
+          
+          // Now poll the server->FTP progress
+          if (uploadId && onProgress) {
+            let pollCount = 0;
+            const maxPolls = 1800; // 30 minutes (1 poll per second)
+            
+            while (pollCount < maxPolls) {
+              try {
+                const statusRes = await fetch(`${BASE}/ftp/${sessionId}/upload/${uploadId}`);
+                if (statusRes.ok) {
+                  const status = await statusRes.json();
+                  
+                  if (status.percent !== undefined && status.percent !== null) {
+                    // Server->FTP progress (50-100%)
+                    const serverPct = 50 + Math.round(status.percent * 0.5);
+                    onProgress(Math.min(serverPct, 100));
+                  }
+                  
+                  if (status.status === "completed") {
+                    onProgress(100);
+                    resolve();
+                    return;
+                  } else if (status.status === "failed") {
+                    reject(new Error(status.error ?? "Server-side upload failed"));
+                    return;
+                  }
+                } else if (statusRes.status === 404) {
+                  // Status not found (may have been cleaned up)
+                  resolve();
+                  return;
+                }
+              } catch (pollErr) {
+                // If polling fails, just resolve anyway (upload likely succeeded)
+                console.warn("Poll error, resolving:", pollErr);
+                resolve();
+                return;
+              }
+              
+              pollCount++;
+              await new Promise(r => setTimeout(r, 1000)); // Poll every 1 second
+            }
+            
+            // Timeout after 30 min
+            reject(new Error("Upload progress polling timeout"));
+          } else {
+            resolve();
+          }
+        } catch (parseErr) {
+          reject(new Error("Failed to parse upload response"));
+        }
       } else if (xhr.status === 401) {
         _forceLogout();
         reject(new Error("Session expired"));

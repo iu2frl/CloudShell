@@ -54,7 +54,6 @@ export function DeviceListWithFolders({
     const loadFolders = async () => {
       try {
         const data = await listFolders();
-        console.log("Folders data from API:", JSON.stringify(data, null, 2));
         setFolders(data);
       } catch (err) {
         // Folders might not exist yet, which is fine
