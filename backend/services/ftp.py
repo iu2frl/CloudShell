@@ -285,11 +285,40 @@ async def read_file_bytes(session_id: str, remote_path: str) -> bytes:
     entry = _ftp_sessions.get(session_id)
     if entry is None:
         raise ValueError("FTP session not found")
-    chunks: list[bytes] = []
-    async with entry.client.download_stream(remote_path) as stream:
-        async for chunk in stream.iter_by_block():
-            chunks.append(chunk)
-    return b"".join(chunks)
+    
+    log.debug(
+        "FTP download starting: path=%s, session=%s",
+        remote_path,
+        session_id[:8],
+    )
+    
+    try:
+        chunks: list[bytes] = []
+        async with entry.client.download_stream(remote_path) as stream:
+            chunk_count = 0
+            async for chunk in stream.iter_by_block():
+                chunks.append(chunk)
+                chunk_count += 1
+        
+        total_size = len(b"".join(chunks))
+        file_size_mb = total_size / (1024 * 1024)
+        log.info(
+            "FTP download completed: path=%s, size=%s bytes (%.2f MB), chunks=%d, session=%s",
+            remote_path,
+            total_size,
+            file_size_mb,
+            chunk_count,
+            session_id[:8],
+        )
+        return b"".join(chunks)
+    except Exception as exc:
+        log.error(
+            "FTP download failed for %s: %s (session %s)",
+            remote_path,
+            exc,
+            session_id[:8],
+        )
+        raise
 
 
 async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> None:
@@ -297,8 +326,38 @@ async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> No
     entry = _ftp_sessions.get(session_id)
     if entry is None:
         raise ValueError("FTP session not found")
-    async with entry.client.upload_stream(remote_path) as stream:
-        await stream.write(data)
+    
+    file_size_mb = len(data) / (1024 * 1024)
+    log.debug(
+        "FTP upload starting: path=%s, size=%s bytes (%.2f MB), session=%s",
+        remote_path,
+        len(data),
+        file_size_mb,
+        session_id[:8],
+    )
+    
+    try:
+        async with entry.client.upload_stream(remote_path) as stream:
+            log.debug(
+                "FTP upload stream opened for %s (session %s)",
+                remote_path,
+                session_id[:8],
+            )
+            await stream.write(data)
+            log.debug(
+                "FTP upload stream write completed for %s (session %s)",
+                remote_path,
+                session_id[:8],
+            )
+    except Exception as exc:
+        log.error(
+            "FTP upload failed for %s (%.2f MB): %s (session %s)",
+            remote_path,
+            file_size_mb,
+            exc,
+            session_id[:8],
+        )
+        raise
 
 
 async def delete_remote(session_id: str, remote_path: str, is_dir: bool) -> None:
@@ -306,10 +365,37 @@ async def delete_remote(session_id: str, remote_path: str, is_dir: bool) -> None
     entry = _ftp_sessions.get(session_id)
     if entry is None:
         raise ValueError("FTP session not found")
-    if is_dir:
-        await entry.client.remove_directory(remote_path)
-    else:
-        await entry.client.remove_file(remote_path)
+    
+    try:
+        if is_dir:
+            log.debug(
+                "FTP delete directory: path=%s, session=%s",
+                remote_path,
+                session_id[:8],
+            )
+            await entry.client.remove_directory(remote_path)
+        else:
+            log.debug(
+                "FTP delete file: path=%s, session=%s",
+                remote_path,
+                session_id[:8],
+            )
+            await entry.client.remove_file(remote_path)
+        
+        log.info(
+            "FTP delete successful: %s (%s), session=%s",
+            remote_path,
+            "directory" if is_dir else "file",
+            session_id[:8],
+        )
+    except Exception as exc:
+        log.error(
+            "FTP delete failed for %s: %s (session %s)",
+            remote_path,
+            exc,
+            session_id[:8],
+        )
+        raise
 
 
 async def rename_remote(session_id: str, old_path: str, new_path: str) -> None:
@@ -317,7 +403,30 @@ async def rename_remote(session_id: str, old_path: str, new_path: str) -> None:
     entry = _ftp_sessions.get(session_id)
     if entry is None:
         raise ValueError("FTP session not found")
-    await entry.client.rename(old_path, new_path)
+    
+    try:
+        log.debug(
+            "FTP rename: %s -> %s, session=%s",
+            old_path,
+            new_path,
+            session_id[:8],
+        )
+        await entry.client.rename(old_path, new_path)
+        log.info(
+            "FTP rename successful: %s -> %s, session=%s",
+            old_path,
+            new_path,
+            session_id[:8],
+        )
+    except Exception as exc:
+        log.error(
+            "FTP rename failed: %s -> %s, error=%s (session %s)",
+            old_path,
+            new_path,
+            exc,
+            session_id[:8],
+        )
+        raise
 
 
 async def mkdir_remote(session_id: str, remote_path: str) -> None:
@@ -325,4 +434,24 @@ async def mkdir_remote(session_id: str, remote_path: str) -> None:
     entry = _ftp_sessions.get(session_id)
     if entry is None:
         raise ValueError("FTP session not found")
-    await entry.client.make_directory(remote_path)
+    
+    try:
+        log.debug(
+            "FTP mkdir: path=%s, session=%s",
+            remote_path,
+            session_id[:8],
+        )
+        await entry.client.make_directory(remote_path)
+        log.info(
+            "FTP mkdir successful: path=%s, session=%s",
+            remote_path,
+            session_id[:8],
+        )
+    except Exception as exc:
+        log.error(
+            "FTP mkdir failed for %s: %s (session %s)",
+            remote_path,
+            exc,
+            session_id[:8],
+        )
+        raise

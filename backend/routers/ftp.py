@@ -184,11 +184,34 @@ async def list_dir(
     _: str = Depends(get_current_user),
 ):
     """List directory contents at the given remote path."""
+    log.debug(
+        "FTP list directory request: path=%s, session=%s",
+        path,
+        session_id[:8],
+    )
+    
     try:
         entries = await list_directory(session_id, path)
+        log.info(
+            "FTP list directory successful: path=%s, entries=%d, session=%s",
+            path,
+            len(entries),
+            session_id[:8],
+        )
     except ValueError as exc:
+        log.error(
+            "FTP list directory failed (session not found): path=%s, session=%s",
+            path,
+            session_id[:8],
+        )
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
+        log.error(
+            "FTP list directory failed: path=%s, error=%s, session=%s",
+            path,
+            exc,
+            session_id[:8],
+        )
         raise HTTPException(status_code=500, detail=f"Directory listing failed: {exc}")
     return {"path": path, "entries": entries}
 
@@ -202,11 +225,30 @@ async def download_file(
     """Download a remote file.  ``path`` must be URL-encoded."""
     remote_path = unquote(path)
     filename = os.path.basename(remote_path)
+    
+    log.debug(
+        "FTP download request: filename=%s, path=%s, session=%s",
+        filename,
+        remote_path,
+        session_id[:8],
+    )
+    
     try:
         data = await read_file_bytes(session_id, remote_path)
     except ValueError as exc:
+        log.error(
+            "FTP download failed (session not found): path=%s, session=%s",
+            remote_path,
+            session_id[:8],
+        )
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
+        log.error(
+            "FTP download failed: path=%s, error=%s, session=%s",
+            remote_path,
+            exc,
+            session_id[:8],
+        )
         raise HTTPException(status_code=500, detail=f"Download failed: {exc}")
 
     return Response(
@@ -242,18 +284,48 @@ async def upload_file(
     else:
         remote_path = target_dir + "/" + (file.filename or "upload")
 
+    log.debug(
+        "FTP upload request: filename=%s, target_path=%s, session=%s",
+        file.filename,
+        remote_path,
+        session_id[:8],
+    )
+
     data = await file.read()
+    file_size_mb = len(data) / (1024 * 1024)
+    log.info(
+        "FTP upload file read completed: %s, size=%s bytes (%.2f MB), session=%s",
+        file.filename,
+        len(data),
+        file_size_mb,
+        session_id[:8],
+    )
+    
     try:
         await write_file_bytes(session_id, remote_path, data)
     except ValueError as exc:
+        log.error(
+            "FTP upload failed (session not found): %s, session=%s",
+            str(exc),
+            session_id[:8],
+        )
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
+        log.error(
+            "FTP upload failed: filename=%s, size=%.2f MB, error=%s, session=%s",
+            file.filename,
+            file_size_mb,
+            exc,
+            session_id[:8],
+        )
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}")
 
     log.info(
-        "FTP uploaded %s bytes to %s (session %s)",
-        len(data),
+        "FTP upload successful: %s -> %s, size=%s bytes (%.2f MB), session=%s",
+        file.filename,
         remote_path,
+        len(data),
+        file_size_mb,
         session_id[:8],
     )
     return UploadResponse(uploaded=remote_path, size=len(data))
@@ -273,11 +345,29 @@ async def delete_path(
     _: str = Depends(get_current_user),
 ):
     """Delete a remote file or directory."""
+    log.debug(
+        "FTP delete request: path=%s, is_dir=%s, session=%s",
+        body.path,
+        body.is_dir,
+        session_id[:8],
+    )
+    
     try:
         await delete_remote(session_id, body.path, body.is_dir)
     except ValueError as exc:
+        log.error(
+            "FTP delete failed (session not found): path=%s, session=%s",
+            body.path,
+            session_id[:8],
+        )
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
+        log.error(
+            "FTP delete failed: path=%s, error=%s, session=%s",
+            body.path,
+            exc,
+            session_id[:8],
+        )
         raise HTTPException(status_code=500, detail=f"Delete failed: {exc}")
 
 
@@ -295,11 +385,31 @@ async def rename_path(
     _: str = Depends(get_current_user),
 ):
     """Rename or move a remote path."""
+    log.debug(
+        "FTP rename request: old_path=%s, new_path=%s, session=%s",
+        body.old_path,
+        body.new_path,
+        session_id[:8],
+    )
+    
     try:
         await rename_remote(session_id, body.old_path, body.new_path)
     except ValueError as exc:
+        log.error(
+            "FTP rename failed (session not found): old_path=%s, new_path=%s, session=%s",
+            body.old_path,
+            body.new_path,
+            session_id[:8],
+        )
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
+        log.error(
+            "FTP rename failed: old_path=%s, new_path=%s, error=%s, session=%s",
+            body.old_path,
+            body.new_path,
+            exc,
+            session_id[:8],
+        )
         raise HTTPException(status_code=500, detail=f"Rename failed: {exc}")
 
 
@@ -316,9 +426,26 @@ async def make_directory(
     _: str = Depends(get_current_user),
 ):
     """Create a remote directory."""
+    log.debug(
+        "FTP mkdir request: path=%s, session=%s",
+        body.path,
+        session_id[:8],
+    )
+    
     try:
         await mkdir_remote(session_id, body.path)
     except ValueError as exc:
+        log.error(
+            "FTP mkdir failed (session not found): path=%s, session=%s",
+            body.path,
+            session_id[:8],
+        )
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
+        log.error(
+            "FTP mkdir failed: path=%s, error=%s, session=%s",
+            body.path,
+            exc,
+            session_id[:8],
+        )
         raise HTTPException(status_code=500, detail=f"Mkdir failed: {exc}")
