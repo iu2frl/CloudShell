@@ -12,8 +12,10 @@ POST /ftp/{session_id}/rename    → rename / move
 POST /ftp/{session_id}/mkdir     → create directory
 DELETE /ftp/{session_id}         → close session
 """
+import asyncio
 import logging
 import os
+import uuid
 from urllib.parse import unquote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File
@@ -44,6 +46,7 @@ from backend.services.ftp import (
     read_file_bytes,
     rename_remote,
     write_file_bytes,
+    upload_stream_from_async_iter,
 )
 
 log = logging.getLogger(__name__)
@@ -51,60 +54,6 @@ router = APIRouter(prefix="/ftp", tags=["ftp"])
 
 # Track active uploads for UI feedback
 _upload_status: dict[str, dict] = {}
-
-
-async def _perform_upload(
-    session_id: str,
-    remote_path: str,
-    data: bytes,
-    filename: str,
-    upload_id: str,
-) -> None:
-    """Background task to perform FTP upload and track status."""
-    try:
-        file_size_mb = len(data) / (1024 * 1024)
-        log.info(
-            "FTP background upload starting: %s (%.2f MB), upload_id=%s, session=%s",
-            filename,
-            file_size_mb,
-            upload_id,
-            session_id[:8],
-        )
-        _upload_status[upload_id] = {
-            "status": "uploading",
-            "filename": filename,
-            "size_bytes": len(data),
-            "size_mb": file_size_mb,
-        }
-        
-        await write_file_bytes(session_id, remote_path, data)
-        
-        _upload_status[upload_id] = {
-            "status": "completed",
-            "filename": filename,
-            "size_bytes": len(data),
-            "size_mb": file_size_mb,
-        }
-        log.info(
-            "FTP background upload completed: %s (%.2f MB), upload_id=%s, session=%s",
-            filename,
-            file_size_mb,
-            upload_id,
-            session_id[:8],
-        )
-    except Exception as exc:
-        log.error(
-            "FTP background upload failed: %s, error=%s, upload_id=%s, session=%s",
-            filename,
-            exc,
-            upload_id,
-            session_id[:8],
-        )
-        _upload_status[upload_id] = {
-            "status": "failed",
-            "filename": filename,
-            "error": str(exc),
-        }
 
 
 # -- Session management --------------------------------------------------------
@@ -327,6 +276,7 @@ async def upload_file(
     session_id: str,
     path: str,
     file: UploadFile = File(...),
+    request: Request = None,
     background_tasks: BackgroundTasks = BackgroundTasks(),
     _: str = Depends(get_current_user),
 ):
@@ -338,8 +288,6 @@ async def upload_file(
     
     Returns upload_id for status tracking via GET /ftp/{session_id}/upload/{upload_id}
     """
-    import uuid
-    
     target_dir = unquote(path)
     if target_dir.endswith("/"):
         remote_path = target_dir + (file.filename or "upload")
@@ -356,33 +304,80 @@ async def upload_file(
         session_id[:8],
     )
 
-    # Read file into memory
-    data = await file.read()
-    file_size_mb = len(data) / (1024 * 1024)
+    # Try to read declared content length for progress reporting
+    try:
+        content_length = int(request.headers.get("content-length", "0") or 0)
+    except Exception:
+        content_length = 0
+
+    # Initialize status entry
+    _upload_status[upload_id] = {
+        "status": "uploading",
+        "filename": file.filename or "upload",
+        "size_bytes": content_length,
+        "transferred_bytes": 0,
+    }
+
+    # Queue to stream chunks from request reader to FTP uploader
+    q: asyncio.Queue = asyncio.Queue(maxsize=8)
+
+    async def queue_iter():
+        while True:
+            chunk = await q.get()
+            if chunk is None:
+                break
+            yield chunk
+
+    def progress_callback(bytes_written: int) -> None:
+        sts = _upload_status.get(upload_id)
+        if sts is None:
+            return
+        sts["transferred_bytes"] = bytes_written
+        if sts.get("size_bytes"):
+            try:
+                sts["percent"] = round(bytes_written / sts["size_bytes"] * 100, 2)
+            except Exception:
+                sts["percent"] = None
+
+    async def uploader_task():
+        try:
+            await upload_stream_from_async_iter(session_id, remote_path, queue_iter(), progress_callback)
+            _upload_status[upload_id]["status"] = "completed"
+        except Exception as exc:
+            log.error("Background streaming upload failed: %s", exc)
+            _upload_status[upload_id] = {"status": "failed", "error": str(exc)}
+
+    # Start background uploader
+    asyncio.create_task(uploader_task())
+
+    # Read the incoming file in small chunks and push to the queue
+    bytes_received = 0
+    try:
+        while True:
+            chunk = await file.read(64 * 1024)
+            if not chunk:
+                break
+            bytes_received += len(chunk)
+            # Flow-control: will await if queue full
+            await q.put(chunk)
+    finally:
+        # Signal EOF to uploader
+        await q.put(None)
+
+    file_size_mb = bytes_received / (1024 * 1024)
     log.info(
-        "FTP upload file buffered: filename=%s, size=%s bytes (%.2f MB), upload_id=%s, session=%s",
+        "FTP upload buffered (streamed to queue): filename=%s, recv_bytes=%s (%.2f MB), upload_id=%s, session=%s",
         file.filename,
-        len(data),
+        bytes_received,
         file_size_mb,
         upload_id[:8],
         session_id[:8],
     )
-    
-    # Schedule background upload
-    background_tasks.add_task(
-        _perform_upload,
-        session_id=session_id,
-        remote_path=remote_path,
-        data=data,
-        filename=file.filename or "upload",
-        upload_id=upload_id,
-    )
-    
-    # Return immediately with upload_id
+
     return {
         "upload_id": upload_id,
         "filename": file.filename or "upload",
-        "size_bytes": len(data),
+        "size_bytes": bytes_received,
         "size_mb": file_size_mb,
         "status": "queued",
     }

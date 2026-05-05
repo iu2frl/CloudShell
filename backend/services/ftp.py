@@ -29,6 +29,7 @@ import logging
 import ssl
 import uuid
 import hashlib
+from typing import Callable, Optional, AsyncIterable
 from dataclasses import dataclass, field
 
 import aioftp
@@ -406,6 +407,73 @@ async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> No
             "FTP upload failed for %s (%.2f MB): %s (session %s)",
             remote_path,
             file_size_mb,
+            exc,
+            session_id[:8],
+        )
+        raise
+
+
+async def upload_stream_from_async_iter(
+    session_id: str,
+    remote_path: str,
+    async_iterable: AsyncIterable[bytes],
+    progress_callback: Optional[Callable[[int], None]] = None,
+) -> None:
+    """Upload data provided by an async iterable of bytes to `remote_path`.
+
+    The `async_iterable` should yield bytes objects. The function writes each
+    chunk to the FTP upload stream and calls `progress_callback(bytes_written)`
+    (if provided) after each successful write.
+    """
+    entry = _ftp_sessions.get(session_id)
+    if entry is None:
+        raise ValueError("FTP session not found")
+
+    log.debug(
+        "FTP streaming upload starting: path=%s, session=%s",
+        remote_path,
+        session_id[:8],
+    )
+
+    try:
+        if entry.lock is None:
+            entry.lock = asyncio.Lock()
+        async with entry.lock:
+            async with entry.client.upload_stream(remote_path) as stream:
+                bytes_written = 0
+                chunk_num = 0
+                async for chunk in async_iterable:
+                    chunk_num += 1
+                    # Per-chunk timeout to avoid hangs
+                    try:
+                        await asyncio.wait_for(stream.write(chunk), timeout=600)
+                    except asyncio.TimeoutError as exc:
+                        log.error(
+                            "FTP streaming upload timeout at chunk %d (session=%s)",
+                            chunk_num,
+                            session_id[:8],
+                        )
+                        raise TimeoutError("FTP upload timed out") from exc
+
+                    bytes_written += len(chunk)
+                    if progress_callback:
+                        try:
+                            progress_callback(bytes_written)
+                        except Exception:  # don't let callback break upload
+                            log.debug("FTP progress callback raised, ignoring")
+
+                    log.debug(
+                        "FTP streaming upload progress: path=%s, chunk=%d, bytes=%d, session=%s",
+                        remote_path,
+                        chunk_num,
+                        bytes_written,
+                        session_id[:8],
+                    )
+
+    except Exception as exc:
+        log.error(
+            "FTP streaming upload failed for %s: %s (session %s)",
+            remote_path,
             exc,
             session_id[:8],
         )
