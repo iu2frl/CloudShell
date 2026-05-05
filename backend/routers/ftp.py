@@ -12,7 +12,6 @@ POST /ftp/{session_id}/rename    → rename / move
 POST /ftp/{session_id}/mkdir     → create directory
 DELETE /ftp/{session_id}         → close session
 """
-import asyncio
 import logging
 import os
 import uuid
@@ -45,7 +44,6 @@ from backend.services.ftp import (
     probe_ftps_thumbprint,
     read_file_bytes,
     rename_remote,
-    write_file_bytes,
     upload_stream_from_async_iter,
 )
 
@@ -275,8 +273,8 @@ class UploadResponse(BaseModel):
 async def upload_file(
     session_id: str,
     path: str,
+    request: Request,
     file: UploadFile = File(...),
-    request: Request = None,
     background_tasks: BackgroundTasks = BackgroundTasks(),
     _: str = Depends(get_current_user),
 ):
@@ -304,25 +302,22 @@ async def upload_file(
         session_id[:8],
     )
 
-    # Read the entire file into memory (must do this before returning,
-    # as UploadFile becomes unavailable after the response is sent)
+    # Try to read content length for progress reporting
+    try:
+        content_length = int(request.headers.get("content-length", "0") or 0)
+    except Exception:
+        content_length = 0
+
+    # Read the full request body before returning. This is required to
+    # avoid losing the upload when the request ends.
     try:
         file_data = await file.read()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         log.error("Failed to read upload file: %s", exc)
-        raise HTTPException(status_code=400, detail=f"Failed to read file: {exc}")
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {exc}") from exc
 
     file_size = len(file_data)
     file_size_mb = file_size / (1024 * 1024)
-    
-    log.info(
-        "FTP upload file buffered: filename=%s, size=%s bytes (%.2f MB), upload_id=%s, session=%s",
-        file.filename,
-        file_size,
-        file_size_mb,
-        upload_id[:8],
-        session_id[:8],
-    )
 
     # Initialize status entry
     _upload_status[upload_id] = {
@@ -332,21 +327,30 @@ async def upload_file(
         "transferred_bytes": 0,
     }
 
+    log.info(
+        "FTP upload buffered: filename=%s, size=%s bytes (%.2f MB), upload_id=%s, session=%s",
+        file.filename,
+        file_size,
+        file_size_mb,
+        upload_id[:8],
+        session_id[:8],
+    )
+
     def progress_callback(bytes_written: int) -> None:
+        """Update progress status."""
         sts = _upload_status.get(upload_id)
         if sts is None:
             return
         sts["transferred_bytes"] = bytes_written
-        if sts.get("size_bytes"):
+        if sts.get("size_bytes") and sts["size_bytes"] > 0:
             try:
                 sts["percent"] = round(bytes_written / sts["size_bytes"] * 100, 2)
             except Exception:
                 sts["percent"] = None
 
     async def uploader_task():
-        """Upload buffered file data to FTP."""
+        """Upload buffered chunks to FTP (runs in background)."""
         try:
-            # Create an async generator from the buffered data
             def chunk_generator():
                 chunk_size = 1024 * 1024  # 1MB chunks
                 offset = 0
@@ -366,21 +370,33 @@ async def upload_file(
             )
             _upload_status[upload_id]["status"] = "completed"
             log.info(
-                "FTP upload completed: filename=%s, size=%.2f MB, upload_id=%s, session=%s",
+                "FTP upload completed: filename=%s, upload_id=%s, session=%s",
                 file.filename,
-                file_size_mb,
                 upload_id[:8],
                 session_id[:8],
             )
         except Exception as exc:
-            log.error("FTP upload failed: filename=%s, error=%s, upload_id=%s, session=%s",
-                file.filename, exc, upload_id[:8], session_id[:8])
+            log.error(
+                "FTP upload failed: filename=%s, error=%s, upload_id=%s, session=%s",
+                file.filename,
+                exc,
+                upload_id[:8],
+                session_id[:8],
+            )
             _upload_status[upload_id] = {"status": "failed", "error": str(exc)}
 
     # Schedule the uploader task as a background task
     background_tasks.add_task(uploader_task)
 
     # Return immediately with upload_id
+    log.info(
+        "FTP upload scheduled in background: filename=%s, size=%.2f MB, upload_id=%s, session=%s",
+        file.filename,
+        file_size_mb,
+        upload_id[:8],
+        session_id[:8],
+    )
+
     return {
         "upload_id": upload_id,
         "filename": file.filename or "upload",
