@@ -304,29 +304,33 @@ async def upload_file(
         session_id[:8],
     )
 
-    # Try to read declared content length for progress reporting
+    # Read the entire file into memory (must do this before returning,
+    # as UploadFile becomes unavailable after the response is sent)
     try:
-        content_length = int(request.headers.get("content-length", "0") or 0)
-    except Exception:
-        content_length = 0
+        file_data = await file.read()
+    except Exception as exc:
+        log.error("Failed to read upload file: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {exc}")
+
+    file_size = len(file_data)
+    file_size_mb = file_size / (1024 * 1024)
+    
+    log.info(
+        "FTP upload file buffered: filename=%s, size=%s bytes (%.2f MB), upload_id=%s, session=%s",
+        file.filename,
+        file_size,
+        file_size_mb,
+        upload_id[:8],
+        session_id[:8],
+    )
 
     # Initialize status entry
     _upload_status[upload_id] = {
         "status": "uploading",
         "filename": file.filename or "upload",
-        "size_bytes": content_length,
+        "size_bytes": file_size,
         "transferred_bytes": 0,
     }
-
-    # Queue to stream chunks from request reader to FTP uploader
-    q: asyncio.Queue = asyncio.Queue(maxsize=8)
-
-    async def queue_iter():
-        while True:
-            chunk = await q.get()
-            if chunk is None:
-                break
-            yield chunk
 
     def progress_callback(bytes_written: int) -> None:
         sts = _upload_status.get(upload_id)
@@ -340,44 +344,47 @@ async def upload_file(
                 sts["percent"] = None
 
     async def uploader_task():
+        """Upload buffered file data to FTP."""
         try:
-            await upload_stream_from_async_iter(session_id, remote_path, queue_iter(), progress_callback)
+            # Create an async generator from the buffered data
+            def chunk_generator():
+                chunk_size = 1024 * 1024  # 1MB chunks
+                offset = 0
+                while offset < file_size:
+                    yield file_data[offset:offset + chunk_size]
+                    offset += chunk_size
+
+            async def async_chunk_generator():
+                for chunk in chunk_generator():
+                    yield chunk
+
+            await upload_stream_from_async_iter(
+                session_id,
+                remote_path,
+                async_chunk_generator(),
+                progress_callback,
+            )
             _upload_status[upload_id]["status"] = "completed"
+            log.info(
+                "FTP upload completed: filename=%s, size=%.2f MB, upload_id=%s, session=%s",
+                file.filename,
+                file_size_mb,
+                upload_id[:8],
+                session_id[:8],
+            )
         except Exception as exc:
-            log.error("Background streaming upload failed: %s", exc)
+            log.error("FTP upload failed: filename=%s, error=%s, upload_id=%s, session=%s",
+                file.filename, exc, upload_id[:8], session_id[:8])
             _upload_status[upload_id] = {"status": "failed", "error": str(exc)}
 
-    # Start background uploader
-    asyncio.create_task(uploader_task())
+    # Schedule the uploader task as a background task
+    background_tasks.add_task(uploader_task)
 
-    # Read the incoming file in small chunks and push to the queue
-    bytes_received = 0
-    try:
-        while True:
-            chunk = await file.read(64 * 1024)
-            if not chunk:
-                break
-            bytes_received += len(chunk)
-            # Flow-control: will await if queue full
-            await q.put(chunk)
-    finally:
-        # Signal EOF to uploader
-        await q.put(None)
-
-    file_size_mb = bytes_received / (1024 * 1024)
-    log.info(
-        "FTP upload buffered (streamed to queue): filename=%s, recv_bytes=%s (%.2f MB), upload_id=%s, session=%s",
-        file.filename,
-        bytes_received,
-        file_size_mb,
-        upload_id[:8],
-        session_id[:8],
-    )
-
+    # Return immediately with upload_id
     return {
         "upload_id": upload_id,
         "filename": file.filename or "upload",
-        "size_bytes": bytes_received,
+        "size_bytes": file_size,
         "size_mb": file_size_mb,
         "status": "queued",
     }
