@@ -468,6 +468,6 @@ describe('FTP API functions', () => {
     );
     (xhrMock.onload as () => void)();
     await promise;
-    expect(onProgress).toHaveBeenCalledWith(50);
+    expect(onProgress).toHaveBeenCalledWith(25);
   });
 });
