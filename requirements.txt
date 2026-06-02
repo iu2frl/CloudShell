@@ -1,12 +1,12 @@
 fastapi==0.129.0
 uvicorn[standard]==0.34.0
-asyncssh==2.22.0
+asyncssh==2.23.0
 aioftp>=0.22
 sqlalchemy==2.0.46
 aiosqlite==0.22.1
 python-jose[cryptography]==3.5.0
 bcrypt==4.0.1
-python-multipart==0.0.26
+python-multipart==0.0.27
 cryptography==46.0.7
 pydantic-settings==2.9.1
 pyotp==2.9.0
