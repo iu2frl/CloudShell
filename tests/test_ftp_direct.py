@@ -13,7 +13,7 @@ Covers all lines missed by the ASGI-based test suite:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from starlette.datastructures import Headers
 
 from backend.models.device import AuthType, ConnectionType, Device
@@ -402,3 +402,60 @@ async def test_list_directory_sort_dirs_before_files():
     assert names[0] == "alpha"
     assert names[1] == "beta.txt"
     assert names[2] == "gamma.txt"
+
+
+# -- upload_file ---------------------------------------------------------------
+
+async def test_upload_file_read_error_returns_400():
+    """upload_file returns HTTP 400 when file.read() fails."""
+    class _BadUpload:
+        filename = "bad.txt"
+
+        async def read(self):
+            raise RuntimeError("bad read")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_file(
+            session_id="sess-1",
+            path="/",
+            file=_BadUpload(),
+            background_tasks=BackgroundTasks(),
+            _="admin",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Failed to read file" in exc_info.value.detail
+
+
+async def test_upload_file_progress_callback_handles_missing_and_bad_percent():
+    """upload_file progress callback tolerates missing status and percent failures."""
+    import backend.routers.ftp as ftp_router
+
+    class _GoodUpload:
+        filename = "ok.txt"
+
+        async def read(self):
+            return b"data"
+
+    async def _fake_write(session_id, remote_path, file_data, progress_callback):
+        upload_id = next(iter(ftp_router._upload_status))
+        progress_callback("bad")
+        ftp_router._upload_status.pop(upload_id, None)
+        progress_callback(10)
+
+    background_tasks = BackgroundTasks()
+
+    with patch("backend.routers.ftp.write_file_bytes", new=AsyncMock(side_effect=_fake_write)):
+        await upload_file(
+            session_id="sess-2",
+            path="/",
+            file=_GoodUpload(),
+            background_tasks=background_tasks,
+            _="admin",
+        )
+
+    try:
+        for task in background_tasks.tasks:
+            await task()
+    finally:
+        ftp_router._upload_status.clear()

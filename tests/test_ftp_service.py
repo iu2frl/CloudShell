@@ -14,6 +14,7 @@ Tests cover:
 - rename_remote / mkdir_remote
 - unknown session → ValueError for all operations
 """
+import asyncio
 from pathlib import PurePosixPath
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -343,6 +344,21 @@ async def test_read_file_bytes_unknown_session():
         await read_file_bytes("no-such-session", "/file.txt")
 
 
+@pytest.mark.asyncio
+async def test_read_file_bytes_stream_error_propagates():
+    fake = _make_fake_client()
+    bad_stream = MagicMock()
+    bad_stream.__aenter__ = AsyncMock(side_effect=RuntimeError("stream error"))
+    bad_stream.__aexit__ = AsyncMock(return_value=False)
+    fake.download_stream = MagicMock(return_value=bad_stream)
+
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    with pytest.raises(RuntimeError, match="stream error"):
+        await read_file_bytes(sid, "/file.txt")
+
+
 # -- write_file_bytes ----------------------------------------------------------
 
 
@@ -380,6 +396,35 @@ async def test_write_file_bytes_progress_callback():
     assert progress_calls[0] == 1024 * 1024
     assert progress_calls[1] == 2 * 1024 * 1024
     assert progress_calls[2] == len(data)
+
+
+@pytest.mark.asyncio
+async def test_write_file_bytes_timeout_raises():
+    fake = _make_fake_client()
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    async def _fake_wait_for(awaitable, timeout):
+        await awaitable
+        raise asyncio.TimeoutError()
+
+    with patch("backend.services.ftp.asyncio.wait_for", new=_fake_wait_for):
+        with pytest.raises(TimeoutError):
+            await write_file_bytes(sid, "/slow.bin", b"abc")
+
+
+@pytest.mark.asyncio
+async def test_write_file_bytes_progress_callback_error_is_ignored():
+    fake = _make_fake_client()
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    def _bad_callback(_: int) -> None:
+        raise RuntimeError("bad progress")
+
+    await write_file_bytes(sid, "/small.bin", b"payload", progress_callback=_bad_callback)
+    upload_stream_ctx = fake.upload_stream.return_value
+    upload_stream_ctx.write.assert_awaited()
 
 
 # -- delete_remote -------------------------------------------------------------
@@ -446,6 +491,54 @@ async def test_delete_directory_recursive():
 
 
 @pytest.mark.asyncio
+async def test_delete_directory_progress_callback_error_and_dot_entries():
+    fake = _make_fake_client()
+
+    async def _tree_list(path, recursive=False):
+        if path == "/root":
+            yield PurePosixPath("."), {"type": "dir", "size": "0"}
+            yield PurePosixPath(".."), {"type": "dir", "size": "0"}
+            yield PurePosixPath("child.txt"), {"type": "file", "size": "1"}
+
+    fake.list = _tree_list
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    def _bad_callback(_: int) -> None:
+        raise RuntimeError("progress boom")
+
+    count = await delete_remote(sid, "/root", is_dir=True, progress_callback=_bad_callback)
+
+    assert count == 3
+    fake.remove_file.assert_any_await("/root/child.txt")
+    fake.remove_directory.assert_any_await("/root")
+
+
+@pytest.mark.asyncio
+async def test_delete_file_progress_callback_error_is_ignored():
+    fake = _make_fake_client()
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    def _bad_callback(_: int) -> None:
+        raise RuntimeError("progress boom")
+
+    count = await delete_remote(sid, "/test.txt", is_dir=False, progress_callback=_bad_callback)
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_file_error_propagates():
+    fake = _make_fake_client()
+    fake.remove_file = AsyncMock(side_effect=RuntimeError("disk error"))
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    with pytest.raises(RuntimeError, match="disk error"):
+        await delete_remote(sid, "/test.txt", is_dir=False)
+
+
+@pytest.mark.asyncio
 async def test_delete_unknown_session():
     with pytest.raises(ValueError, match="FTP session not found"):
         await delete_remote("no-such-session", "/x", is_dir=False)
@@ -469,6 +562,17 @@ async def test_rename_unknown_session():
         await rename_remote("no-such-session", "/a", "/b")
 
 
+@pytest.mark.asyncio
+async def test_rename_remote_error_propagates():
+    fake = _make_fake_client()
+    fake.rename = AsyncMock(side_effect=RuntimeError("rename failed"))
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    with pytest.raises(RuntimeError, match="rename failed"):
+        await rename_remote(sid, "/old.txt", "/new.txt")
+
+
 # -- mkdir_remote --------------------------------------------------------------
 
 
@@ -485,3 +589,14 @@ async def test_mkdir_remote():
 async def test_mkdir_unknown_session():
     with pytest.raises(ValueError, match="FTP session not found"):
         await mkdir_remote("no-such-session", "/newdir")
+
+
+@pytest.mark.asyncio
+async def test_mkdir_remote_error_propagates():
+    fake = _make_fake_client()
+    fake.make_directory = AsyncMock(side_effect=RuntimeError("mkdir failed"))
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    with pytest.raises(RuntimeError, match="mkdir failed"):
+        await mkdir_remote(sid, "/newdir")

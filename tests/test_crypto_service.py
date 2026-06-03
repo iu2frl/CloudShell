@@ -129,6 +129,43 @@ def test_save_key_filename_includes_device_id():
     assert "99" in filename
 
 
+def test_save_key_file_sets_o_binary_when_available(monkeypatch):
+    """save_encrypted_key must include O_BINARY in flags when available."""
+    import backend.services.crypto as crypto
+
+    calls = {}
+
+    def _fake_open(path, flags, mode):
+        calls["flags"] = flags
+        return 3
+
+    class _FakeFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def write(self, data):
+            calls["data"] = data
+
+    def _fake_fdopen(fd, mode):
+        return _FakeFile()
+
+    monkeypatch.setattr(os, "O_BINARY", 0x8000, raising=False)
+    monkeypatch.setattr(os, "open", _fake_open)
+    monkeypatch.setattr(os, "fdopen", _fake_fdopen)
+    monkeypatch.setattr(os, "chmod", lambda *args, **kwargs: None)
+    monkeypatch.setattr(os, "makedirs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crypto, "_encrypt_bytes", lambda _: "token")
+
+    filename = crypto.save_encrypted_key(device_id=1, pem="pem", keys_dir="/tmp")
+
+    assert "flags" in calls
+    assert calls["flags"] & os.O_BINARY
+    assert filename == "device_1.enc"
+
+
 def test_delete_key_file_removes_file():
     """delete_key_file must remove the file from disk."""
     private_pem, _ = generate_key_pair()
