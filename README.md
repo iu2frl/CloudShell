@@ -10,9 +10,9 @@
 
 ## Motivation
 
-I really liked the idea behind some existing tools like [ShellNGN](https://shellngn.com/), but I did not like having to pay to self host something, so CloudShell was built to be free and open.
+I really liked the idea behind some existing tools like [ShellHub](https://github.com/shellhub-io/shellhub), but I did not like having to install anything on the target machine, so CloudShell was built to be quick and simple.
 
-- Is it better than ShellNGN? Hell no!
+- Is it better than ShellHub? Maybe not.
 - Does it work? Yes!
 - Is it free? Absolutely!
 
@@ -45,6 +45,7 @@ Supports connections audit:
 - **Concurrent connections**: support multiple simultaneous SSH sessions
 - **SFTP file manager**: browse, upload, download, rename, and delete files on any device directly from the browser.
 - **FTP/FTPS file manager**: same convenient web-based file operations over plain FTP or explicit FTPS (AUTH TLS).
+- **Recursive FTP delete**: securely remove entire directories and their contents in one action, with confirmation prompts to prevent accidents.
 - **Configuration import/export**: easily import and export device configurations in standard JSON format.
 
 Please note: all sessions are initiated on the server side and not the client.

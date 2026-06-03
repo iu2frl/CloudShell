@@ -109,9 +109,17 @@ def save_encrypted_key(device_id: int, pem: str, keys_dir: str) -> str:
     os.makedirs(keys_dir, exist_ok=True)
     filename = f"device_{device_id}.enc"
     path = os.path.join(keys_dir, filename)
-    encrypted = _encrypt_bytes(pem.encode())
-    with open(path, "w") as fh:
+    encrypted = _encrypt_bytes(pem.encode()).encode("utf-8")
+
+    # Create the file with restrictive permissions from the start.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "wb") as fh:
         fh.write(encrypted)
+
+    # Enforce mode after write on platforms which honor POSIX permission bits.
     os.chmod(path, 0o600)
     log.info("Encrypted key saved: %s", path)
     return filename

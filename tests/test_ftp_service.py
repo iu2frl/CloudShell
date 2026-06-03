@@ -364,6 +364,24 @@ async def test_write_file_bytes_unknown_session():
         await write_file_bytes("no-such-session", "/x.txt", b"data")
 
 
+@pytest.mark.asyncio
+async def test_write_file_bytes_progress_callback():
+    """Progress callback is invoked with cumulative bytes after each chunk."""
+    fake = _make_fake_client()
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    # 2.5 MB payload -> 3 chunks (1 MB + 1 MB + 0.5 MB)
+    data = b"x" * (1024 * 1024 * 2 + 512 * 1024)
+    progress_calls: list[int] = []
+    await write_file_bytes(sid, "/big.bin", data, progress_callback=lambda b: progress_calls.append(b))
+
+    assert len(progress_calls) == 3
+    assert progress_calls[0] == 1024 * 1024
+    assert progress_calls[1] == 2 * 1024 * 1024
+    assert progress_calls[2] == len(data)
+
+
 # -- delete_remote -------------------------------------------------------------
 
 
@@ -379,10 +397,52 @@ async def test_delete_file():
 @pytest.mark.asyncio
 async def test_delete_directory():
     fake = _make_fake_client()
+    # Override list to return empty directory
+    async def _empty_list(path, recursive=False):
+        return
+        yield  # noqa: unreachable - makes this an async generator
+
+    fake.list = _empty_list
     with patch("backend.services.ftp.aioftp.Client", return_value=fake):
         sid = await open_ftp_session("host", 21, "u", "p")
-    await delete_remote(sid, "/mydir", is_dir=True)
+    count = await delete_remote(sid, "/mydir", is_dir=True)
     fake.remove_directory.assert_awaited_once_with("/mydir")
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_directory_recursive():
+    """Recursive delete walks depth-first and reports progress."""
+    fake = _make_fake_client()
+
+    # Tree: /parent/ -> file_a.txt, /parent/child/ -> file_b.txt
+    async def _tree_list(path, recursive=False):
+        if path == "/parent":
+            yield PurePosixPath("file_a.txt"), {"type": "file", "size": "10"}
+            yield PurePosixPath("child"), {"type": "dir", "size": "0"}
+        elif path == "/parent/child":
+            yield PurePosixPath("file_b.txt"), {"type": "file", "size": "20"}
+        # any other path yields nothing (empty dir)
+
+    fake.list = _tree_list
+    with patch("backend.services.ftp.aioftp.Client", return_value=fake):
+        sid = await open_ftp_session("host", 21, "u", "p")
+
+    progress_calls: list[int] = []
+    count = await delete_remote(
+        sid, "/parent", is_dir=True,
+        progress_callback=lambda n: progress_calls.append(n),
+    )
+
+    # 4 items: file_b.txt, child/, file_a.txt, parent/
+    assert count == 4
+    assert progress_calls == [1, 2, 3, 4]
+    # Files removed
+    fake.remove_file.assert_any_await("/parent/child/file_b.txt")
+    fake.remove_file.assert_any_await("/parent/file_a.txt")
+    # Dirs removed deepest first
+    fake.remove_directory.assert_any_await("/parent/child")
+    fake.remove_directory.assert_any_await("/parent")
 
 
 @pytest.mark.asyncio

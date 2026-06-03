@@ -669,11 +669,59 @@ export async function ftpDelete(
   sessionId: string,
   path: string,
   isDir: boolean,
+  onProgress?: (deletedItems: number) => void,
 ): Promise<void> {
-  await request<void>(`/ftp/${sessionId}/delete`, {
+  const res = await fetch(`${BASE}/ftp/${sessionId}/delete`, {
     method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ path, is_dir: isDir }),
   });
+
+  if (res.status === 401) {
+    _forceLogout();
+    throw new Error("Session expired");
+  }
+  if (res.status === 204) return; // file delete, done
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Delete failed");
+  }
+
+  // Directory delete returns a delete_id for polling
+  const data = await res.json();
+  const deleteId: string | undefined = data.delete_id;
+  if (!deleteId) return;
+
+  // Poll until completed or failed
+  const maxPolls = 1800;
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const statusRes = await fetch(
+        `${BASE}/ftp/${sessionId}/delete/${deleteId}`,
+        { headers: authHeaders() },
+      );
+      if (statusRes.status === 404) return;
+      if (!statusRes.ok) continue;
+      const status = await statusRes.json();
+
+      if (onProgress && typeof status.deleted_items === "number") {
+        onProgress(status.deleted_items);
+      }
+
+      if (status.status === "completed") return;
+      if (status.status === "failed") {
+        throw new Error(status.error ?? "Delete failed on server");
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message !== "Delete failed on server") {
+        continue; // transient poll error, retry
+      }
+      throw err;
+    }
+  }
+  throw new Error("Delete progress polling timeout");
 }
 
 export async function ftpRename(

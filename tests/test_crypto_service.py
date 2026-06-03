@@ -110,6 +110,9 @@ def test_save_key_file_is_encrypted_on_disk():
 
 def test_save_key_file_permissions():
     """The encrypted key file must have mode 0o600."""
+    if os.name == "nt":
+        pytest.skip("POSIX permission mode checks are not supported on Windows")
+
     private_pem, _ = generate_key_pair()
     with tempfile.TemporaryDirectory() as keys_dir:
         filename = save_encrypted_key(device_id=7, pem=private_pem, keys_dir=keys_dir)
