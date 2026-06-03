@@ -110,6 +110,9 @@ def test_save_key_file_is_encrypted_on_disk():
 
 def test_save_key_file_permissions():
     """The encrypted key file must have mode 0o600."""
+    if os.name == "nt":
+        pytest.skip("POSIX permission mode checks are not supported on Windows")
+
     private_pem, _ = generate_key_pair()
     with tempfile.TemporaryDirectory() as keys_dir:
         filename = save_encrypted_key(device_id=7, pem=private_pem, keys_dir=keys_dir)
@@ -124,6 +127,43 @@ def test_save_key_filename_includes_device_id():
     with tempfile.TemporaryDirectory() as keys_dir:
         filename = save_encrypted_key(device_id=99, pem=private_pem, keys_dir=keys_dir)
     assert "99" in filename
+
+
+def test_save_key_file_sets_o_binary_when_available(monkeypatch):
+    """save_encrypted_key must include O_BINARY in flags when available."""
+    import backend.services.crypto as crypto
+
+    calls = {}
+
+    def _fake_open(path, flags, mode):
+        calls["flags"] = flags
+        return 3
+
+    class _FakeFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def write(self, data):
+            calls["data"] = data
+
+    def _fake_fdopen(fd, mode):
+        return _FakeFile()
+
+    monkeypatch.setattr(os, "O_BINARY", 0x8000, raising=False)
+    monkeypatch.setattr(os, "open", _fake_open)
+    monkeypatch.setattr(os, "fdopen", _fake_fdopen)
+    monkeypatch.setattr(os, "chmod", lambda *args, **kwargs: None)
+    monkeypatch.setattr(os, "makedirs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crypto, "_encrypt_bytes", lambda _: "token")
+
+    filename = crypto.save_encrypted_key(device_id=1, pem="pem", keys_dir="/tmp")
+
+    assert "flags" in calls
+    assert calls["flags"] & os.O_BINARY
+    assert filename == "device_1.enc"
 
 
 def test_delete_key_file_removes_file():

@@ -22,14 +22,14 @@ Note on encoding:
   and directory listings in ISO-8859-1 / Latin-1 rather than UTF-8.  aioftp
   defaults to UTF-8 and will raise a UnicodeDecodeError on those servers.
   We default to ``latin-1`` because it is a strict superset of ASCII and
-  never raises a decode error (every byte 0x00–0xFF is valid Latin-1).
+  never raises a decode error (every byte 0x00-0xFF is valid Latin-1).
 """
 import asyncio
 import logging
 import ssl
 import uuid
 import hashlib
-from typing import Callable, Optional, AsyncIterable
+from typing import Callable, Optional
 from dataclasses import dataclass, field
 
 import aioftp
@@ -238,7 +238,7 @@ async def list_directory(session_id: str, remote_path: str) -> list[dict]:
         raise ValueError("FTP session not found")
 
     result = []
-    # Ensure a per-session lock exists and serialize the listing operation.
+
     if entry.lock is None:
         entry.lock = asyncio.Lock()
     async with entry.lock:
@@ -333,7 +333,12 @@ async def read_file_bytes(session_id: str, remote_path: str) -> bytes:
         raise
 
 
-async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> None:
+async def write_file_bytes(
+    session_id: str,
+    remote_path: str,
+    data: bytes,
+    progress_callback: Optional[Callable[[int], None]] = None,
+) -> None:
     """Upload raw bytes to a remote file (overwrites if it exists)."""
     entry = _ftp_sessions.get(session_id)
     if entry is None:
@@ -387,6 +392,12 @@ async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> No
 
                     bytes_written = end
 
+                    if progress_callback:
+                        try:
+                            progress_callback(bytes_written)
+                        except Exception:
+                            log.debug("FTP progress callback raised, ignoring")
+
                     progress_mb = bytes_written / (1024 * 1024)
                     log.debug(
                         "FTP upload progress: path=%s, chunk=%d, progress=%.2f MB / %.2f MB, session=%s",
@@ -413,90 +424,73 @@ async def write_file_bytes(session_id: str, remote_path: str, data: bytes) -> No
         raise
 
 
-async def upload_stream_from_async_iter(
+async def delete_remote(
     session_id: str,
     remote_path: str,
-    async_iterable: AsyncIterable[bytes],
+    is_dir: bool,
     progress_callback: Optional[Callable[[int], None]] = None,
-) -> None:
-    """Upload data provided by an async iterable of bytes to `remote_path`.
+) -> int:
+    """Delete a remote file or directory (recursively if non-empty).
 
-    The `async_iterable` should yield bytes objects. The function writes each
-    chunk to the FTP upload stream and calls `progress_callback(bytes_written)`
-    (if provided) after each successful write.
+    Returns the total number of items deleted.  For a single file this is 1.
+    For a directory tree the count includes every file and sub-directory plus
+    the root directory itself.
+
+    ``progress_callback(deleted_count)`` is called after each individual
+    item is removed so callers can report progress.
     """
     entry = _ftp_sessions.get(session_id)
     if entry is None:
         raise ValueError("FTP session not found")
 
-    log.debug(
-        "FTP streaming upload starting: path=%s, session=%s",
-        remote_path,
-        session_id[:8],
-    )
+    # Shared counter across all recursive calls so progress is cumulative
+    total_deleted = [0]
 
-    try:
-        if entry.lock is None:
-            entry.lock = asyncio.Lock()
-        async with entry.lock:
-            async with entry.client.upload_stream(remote_path) as stream:
-                bytes_written = 0
-                chunk_num = 0
-                async for chunk in async_iterable:
-                    chunk_num += 1
-                    # Per-chunk timeout to avoid hangs
+    async def _delete_tree(client: aioftp.Client, path: str) -> None:
+        """Depth-first recursive delete.  Must be called under the session lock."""
+        # List children
+        children: list[tuple[str, bool]] = []
+        async for child_path, info in client.list(path, recursive=False):
+            name = child_path.name
+            if name in (".", ".."):
+                continue
+            parent = path.rstrip("/")
+            full = f"{parent}/{name}" if parent else f"/{name}"
+            children.append((full, info.get("type") == "dir"))
+
+        # Recurse into sub-directories first, then delete files
+        for child_full, child_is_dir in children:
+            if child_is_dir:
+                await _delete_tree(client, child_full)
+            else:
+                await client.remove_file(child_full)
+                total_deleted[0] += 1
+                if progress_callback:
                     try:
-                        await asyncio.wait_for(stream.write(chunk), timeout=600)
-                    except asyncio.TimeoutError as exc:
-                        log.error(
-                            "FTP streaming upload timeout at chunk %d (session=%s)",
-                            chunk_num,
-                            session_id[:8],
-                        )
-                        raise TimeoutError("FTP upload timed out") from exc
+                        progress_callback(total_deleted[0])
+                    except Exception:
+                        pass
 
-                    bytes_written += len(chunk)
-                    if progress_callback:
-                        try:
-                            progress_callback(bytes_written)
-                        except Exception:  # don't let callback break upload
-                            log.debug("FTP progress callback raised, ignoring")
+        # Now the directory is empty -- remove it
+        await client.remove_directory(path)
+        total_deleted[0] += 1
+        if progress_callback:
+            try:
+                progress_callback(total_deleted[0])
+            except Exception:
+                pass
 
-                    log.debug(
-                        "FTP streaming upload progress: path=%s, chunk=%d, bytes=%d, session=%s",
-                        remote_path,
-                        chunk_num,
-                        bytes_written,
-                        session_id[:8],
-                    )
-
-    except Exception as exc:
-        log.error(
-            "FTP streaming upload failed for %s: %s (session %s)",
-            remote_path,
-            exc,
-            session_id[:8],
-        )
-        raise
-
-
-async def delete_remote(session_id: str, remote_path: str, is_dir: bool) -> None:
-    """Delete a remote file or directory."""
-    entry = _ftp_sessions.get(session_id)
-    if entry is None:
-        raise ValueError("FTP session not found")
-    
     try:
         if entry.lock is None:
             entry.lock = asyncio.Lock()
         async with entry.lock:
             if is_dir:
                 log.debug(
-                    "FTP delete directory: path=%s, session=%s",
+                    "FTP recursive delete directory: path=%s, session=%s",
                     remote_path,
                     session_id[:8],
                 )
-                await entry.client.remove_directory(remote_path)
+                await _delete_tree(entry.client, remote_path)
             else:
                 log.debug(
                     "FTP delete file: path=%s, session=%s",
@@ -504,11 +498,18 @@ async def delete_remote(session_id: str, remote_path: str, is_dir: bool) -> None
                     session_id[:8],
                 )
                 await entry.client.remove_file(remote_path)
+                total_deleted[0] = 1
+                if progress_callback:
+                    try:
+                        progress_callback(1)
+                    except Exception:
+                        pass
 
         log.info(
-            "FTP delete successful: %s (%s), session=%s",
+            "FTP delete successful: %s (%s, %d items), session=%s",
             remote_path,
             "directory" if is_dir else "file",
+            total_deleted[0],
             session_id[:8],
         )
     except Exception as exc:
@@ -519,6 +520,8 @@ async def delete_remote(session_id: str, remote_path: str, is_dir: bool) -> None
             session_id[:8],
         )
         raise
+
+    return total_deleted[0]
 
 
 async def rename_remote(session_id: str, old_path: str, new_path: str) -> None:

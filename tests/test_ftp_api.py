@@ -407,6 +407,12 @@ async def test_delete_dir_success(auth_client):
     device_id = resp.json()["id"]
 
     fake_client = _make_fake_ftp_client()
+    # Override list to return empty directory so recursive delete finishes fast
+    async def _empty_list(path, recursive=False):
+        return
+        yield  # noqa: unreachable - makes this an async generator
+
+    fake_client.list = _empty_list
     with patch("backend.services.ftp.aioftp.Client", return_value=fake_client):
         open_resp = await auth_client.post(f"/api/ftp/session/{device_id}")
     session_id = open_resp.json()["session_id"]
@@ -415,7 +421,11 @@ async def test_delete_dir_success(auth_client):
         f"/api/ftp/{session_id}/delete",
         json={"path": "/mydir", "is_dir": True},
     )
-    assert resp.status_code == 204
+    assert resp.status_code == 200
+    delete_id = resp.json()["delete_id"]
+    status = await _wait_for_delete(auth_client, session_id, delete_id)
+    assert status["status"] == "completed"
+    assert status["deleted_items"] == 1
     fake_client.remove_directory.assert_awaited_once_with("/mydir")
 
     await auth_client.delete(f"/api/ftp/session/{session_id}")
@@ -588,6 +598,20 @@ async def _wait_for_upload(auth_client, session_id: str, upload_id: str) -> dict
     raise AssertionError("Upload did not complete in time")
 
 
+async def _wait_for_delete(auth_client, session_id: str, delete_id: str) -> dict:
+    """Poll delete status until completion or failure."""
+    for _ in range(100):
+        status_resp = await auth_client.get(
+            f"/api/ftp/{session_id}/delete/{delete_id}"
+        )
+        if status_resp.status_code == 200:
+            status = status_resp.json()
+            if status.get("status") in ("completed", "failed"):
+                return status
+        await asyncio.sleep(0.05)
+    raise AssertionError("Delete did not complete in time")
+
+
 @pytest.mark.asyncio
 async def test_list_dir_generic_error_returns_500(auth_client):
     fake = _make_fake_ftp_client()
@@ -736,7 +760,7 @@ async def test_upload_value_error_returns_404(auth_client):
     status = await _wait_for_upload(auth_client, sid, resp.json()["upload_id"])
     assert status["status"] == "failed"
     assert "no such dir" in status["error"]
-
+    
     await auth_client.delete(f"/api/ftp/session/{sid}")
 
 
@@ -778,5 +802,122 @@ async def test_mkdir_value_error_returns_404(auth_client):
             f"/api/ftp/{sid}/mkdir", json={"path": "/missing/newdir"}
         )
     assert resp.status_code == 404
+
+    await auth_client.delete(f"/api/ftp/session/{sid}")
+
+
+# -- Upload status eviction ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upload_status_evicted_after_ttl(auth_client):
+    """Completed uploads are removed from _upload_status after TTL expires."""
+    fake = _make_fake_ftp_client()
+    sid = await _open_session(auth_client, fake)
+
+    resp = await auth_client.post(
+        f"/api/ftp/{sid}/upload?path=/",
+        files={"file": ("f.txt", io.BytesIO(b"data"), "text/plain")},
+    )
+    upload_id = resp.json()["upload_id"]
+    status = await _wait_for_upload(auth_client, sid, upload_id)
+    assert status["status"] == "completed"
+
+    # Still accessible right after completion
+    check = await auth_client.get(f"/api/ftp/{sid}/upload/{upload_id}")
+    assert check.status_code == 200
+
+    # Simulate TTL expiry by backdating completed_at
+    from backend.routers.ftp import _upload_status, _UPLOAD_STATUS_TTL
+    _upload_status[upload_id]["completed_at"] -= _UPLOAD_STATUS_TTL + 1
+
+    # Next poll triggers eviction
+    check = await auth_client.get(f"/api/ftp/{sid}/upload/{upload_id}")
+    assert check.status_code == 404
+
+    await auth_client.delete(f"/api/ftp/session/{sid}")
+
+
+# -- Delete background / recursive -------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_dir_recursive_via_api(auth_client):
+    """Directory delete runs in background and reports item count."""
+    fake = _make_fake_ftp_client()
+
+    # Tree: /parent/ -> child/ + file_a.txt; /parent/child/ -> (empty)
+    from pathlib import PurePosixPath
+
+    async def _tree_list(path, recursive=False):
+        if path == "/parent":
+            yield PurePosixPath("file_a.txt"), {"type": "file", "size": "10"}
+            yield PurePosixPath("child"), {"type": "dir", "size": "0"}
+        # /parent/child yields nothing (empty)
+
+    fake.list = _tree_list
+    sid = await _open_session(auth_client, fake)
+
+    resp = await auth_client.post(
+        f"/api/ftp/{sid}/delete", json={"path": "/parent", "is_dir": True},
+    )
+    assert resp.status_code == 200
+    delete_id = resp.json()["delete_id"]
+
+    status = await _wait_for_delete(auth_client, sid, delete_id)
+    assert status["status"] == "completed"
+    # file_a.txt + child/ + parent/ = 3 items
+    assert status["deleted_items"] == 3
+
+    await auth_client.delete(f"/api/ftp/session/{sid}")
+
+
+@pytest.mark.asyncio
+async def test_delete_dir_error_returns_failed_status(auth_client):
+    """Background directory delete that fails reports error via status."""
+    fake = _make_fake_ftp_client()
+    sid = await _open_session(auth_client, fake)
+
+    with patch("backend.routers.ftp.delete_remote", side_effect=RuntimeError("disk full")):
+        resp = await auth_client.post(
+            f"/api/ftp/{sid}/delete", json={"path": "/mydir", "is_dir": True},
+        )
+    assert resp.status_code == 200
+    status = await _wait_for_delete(auth_client, sid, resp.json()["delete_id"])
+    assert status["status"] == "failed"
+    assert "disk full" in status["error"]
+
+    await auth_client.delete(f"/api/ftp/session/{sid}")
+
+
+@pytest.mark.asyncio
+async def test_delete_status_evicted_after_ttl(auth_client):
+    """Completed deletes are removed from _delete_status after TTL expires."""
+    fake = _make_fake_ftp_client()
+
+    async def _empty_list(path, recursive=False):
+        return
+        yield  # noqa: unreachable
+
+    fake.list = _empty_list
+    sid = await _open_session(auth_client, fake)
+
+    resp = await auth_client.post(
+        f"/api/ftp/{sid}/delete", json={"path": "/mydir", "is_dir": True},
+    )
+    delete_id = resp.json()["delete_id"]
+    status = await _wait_for_delete(auth_client, sid, delete_id)
+    assert status["status"] == "completed"
+
+    # Still accessible right after completion
+    check = await auth_client.get(f"/api/ftp/{sid}/delete/{delete_id}")
+    assert check.status_code == 200
+
+    # Simulate TTL expiry
+    from backend.routers.ftp import _delete_status, _UPLOAD_STATUS_TTL
+    _delete_status[delete_id]["completed_at"] -= _UPLOAD_STATUS_TTL + 1
+
+    check = await auth_client.get(f"/api/ftp/{sid}/delete/{delete_id}")
+    assert check.status_code == 404
 
     await auth_client.delete(f"/api/ftp/session/{sid}")

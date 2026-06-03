@@ -224,6 +224,28 @@ async def test_update_device_scalar_fields():
     assert db.committed
 
 
+async def test_update_device_folder_id():
+    """update_device validates and sets folder_id when provided."""
+    dev = Device(
+        name="old",
+        hostname="1.1.1.1",
+        port=22,
+        username="root",
+        auth_type=AuthType.password,
+        connection_type=ConnectionType.ssh,
+    )
+    dev.id = 1
+    db = _FakeDB(device=dev)
+    payload = DeviceUpdate(folder_id=123)
+
+    with patch("backend.routers.devices.validate_folder_exists", new=AsyncMock()) as mock_validate:
+        device = await update_device(device_id=1, payload=payload, db=db, _="admin")
+
+    mock_validate.assert_awaited_once_with(db, 123)
+    assert device.folder_id == 123
+    assert db.committed
+
+
 async def test_update_device_password():
     """update_device encrypts and stores a new password when provided."""
     dev = Device(

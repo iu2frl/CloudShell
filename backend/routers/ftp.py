@@ -14,6 +14,7 @@ DELETE /ftp/{session_id}         → close session
 """
 import logging
 import os
+import time
 import uuid
 from urllib.parse import unquote
 
@@ -52,6 +53,20 @@ router = APIRouter(prefix="/ftp", tags=["ftp"])
 
 # Track active uploads for UI feedback
 _upload_status: dict[str, dict] = {}
+
+# How long (seconds) to keep completed/failed upload entries before eviction
+_UPLOAD_STATUS_TTL = 300
+
+
+def _evict_stale_uploads() -> None:
+    """Remove upload status entries that finished more than _UPLOAD_STATUS_TTL seconds ago."""
+    now = time.monotonic()
+    stale = [
+        uid for uid, info in _upload_status.items()
+        if info.get("completed_at") and now - info["completed_at"] > _UPLOAD_STATUS_TTL
+    ]
+    for uid in stale:
+        _upload_status.pop(uid, None)
 
 
 # -- Session management --------------------------------------------------------
@@ -188,6 +203,7 @@ async def list_dir(
     _: str = Depends(get_current_user),
 ):
     """List directory contents at the given remote path."""
+    
     log.debug(
         "FTP list directory request: path=%s, session=%s",
         path,
@@ -202,12 +218,14 @@ async def list_dir(
             len(entries),
             session_id[:8],
         )
+
     except ValueError as exc:
         log.error(
             "FTP list directory failed (session not found): path=%s, session=%s",
             path,
             session_id[:8],
         )
+
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         log.error(
@@ -216,6 +234,7 @@ async def list_dir(
             exc,
             session_id[:8],
         )
+
         raise HTTPException(status_code=500, detail=f"Directory listing failed: {exc}")
     return {"path": path, "entries": entries}
 
@@ -245,6 +264,7 @@ async def download_file(
             remote_path,
             session_id[:8],
         )
+
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         log.error(
@@ -253,6 +273,7 @@ async def download_file(
             exc,
             session_id[:8],
         )
+
         raise HTTPException(status_code=500, detail=f"Download failed: {exc}")
 
     return Response(
@@ -273,7 +294,6 @@ class UploadResponse(BaseModel):
 async def upload_file(
     session_id: str,
     path: str,
-    request: Request,
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     _: str = Depends(get_current_user),
@@ -301,12 +321,6 @@ async def upload_file(
         upload_id[:8],
         session_id[:8],
     )
-
-    # Try to read content length for progress reporting
-    try:
-        content_length = int(request.headers.get("content-length", "0") or 0)
-    except Exception:
-        content_length = 0
 
     # Read the full request body before returning. This is required to
     # avoid losing the upload when the request ends.
@@ -351,9 +365,9 @@ async def upload_file(
     async def uploader_task():
         """Upload buffered chunks to FTP (runs in background)."""
         try:
-            await write_file_bytes(session_id, remote_path, file_data)
-            progress_callback(file_size)
+            await write_file_bytes(session_id, remote_path, file_data, progress_callback)
             _upload_status[upload_id]["status"] = "completed"
+            _upload_status[upload_id]["completed_at"] = time.monotonic()
             log.info(
                 "FTP upload completed: filename=%s, upload_id=%s, session=%s",
                 file.filename,
@@ -368,7 +382,11 @@ async def upload_file(
                 upload_id[:8],
                 session_id[:8],
             )
-            _upload_status[upload_id] = {"status": "failed", "error": str(exc)}
+            _upload_status[upload_id] = {
+                "status": "failed",
+                "error": str(exc),
+                "completed_at": time.monotonic(),
+            }
 
     # Schedule the uploader task as a background task
     background_tasks.add_task(uploader_task)
@@ -400,10 +418,26 @@ async def get_upload_status(
     _: str = Depends(get_current_user),
 ):
     """Check status of a background upload."""
+    _evict_stale_uploads()
     status_info = _upload_status.get(upload_id)
     if not status_info:
         raise HTTPException(status_code=404, detail=f"Upload {upload_id[:8]} not found")
     return status_info
+
+
+# Track active directory deletions for UI feedback
+_delete_status: dict[str, dict] = {}
+
+
+def _evict_stale_deletes() -> None:
+    """Remove delete status entries that finished more than _UPLOAD_STATUS_TTL seconds ago."""
+    now = time.monotonic()
+    stale = [
+        uid for uid, info in _delete_status.items()
+        if info.get("completed_at") and now - info["completed_at"] > _UPLOAD_STATUS_TTL
+    ]
+    for uid in stale:
+        _delete_status.pop(uid, None)
 
 
 class DeleteRequest(BaseModel):
@@ -413,37 +447,103 @@ class DeleteRequest(BaseModel):
     is_dir: bool = False
 
 
-@router.post("/{session_id}/delete", status_code=204)
+@router.post("/{session_id}/delete")
 async def delete_path(
     session_id: str,
     body: DeleteRequest,
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     _: str = Depends(get_current_user),
 ):
-    """Delete a remote file or directory."""
+    """Delete a remote file or directory.
+
+    File deletes run synchronously and return 204.
+    Directory deletes run in the background and return a ``delete_id``
+    that can be polled via GET /ftp/{session_id}/delete/{delete_id}.
+    """
     log.debug(
         "FTP delete request: path=%s, is_dir=%s, session=%s",
         body.path,
         body.is_dir,
         session_id[:8],
     )
-    
-    try:
-        await delete_remote(session_id, body.path, body.is_dir)
-    except ValueError as exc:
-        log.error(
-            "FTP delete failed (session not found): path=%s, session=%s",
-            body.path,
-            session_id[:8],
-        )
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        log.error(
-            "FTP delete failed: path=%s, error=%s, session=%s",
-            body.path,
-            exc,
-            session_id[:8],
-        )
-        raise HTTPException(status_code=500, detail=f"Delete failed: {exc}")
+
+    # --- File delete: synchronous, return 204 ---
+    if not body.is_dir:
+        try:
+            await delete_remote(session_id, body.path, is_dir=False)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "FTP delete failed: path=%s, error=%s, session=%s",
+                body.path,
+                exc,
+                session_id[:8],
+            )
+            raise HTTPException(status_code=500, detail=f"Delete failed: {exc}")
+        return Response(status_code=204)
+
+    # --- Directory delete: background task with status tracking ---
+    delete_id = str(uuid.uuid4())
+
+    _delete_status[delete_id] = {
+        "status": "deleting",
+        "path": body.path,
+        "deleted_items": 0,
+    }
+
+    def progress_callback(deleted_count: int) -> None:
+        sts = _delete_status.get(delete_id)
+        if sts is not None:
+            sts["deleted_items"] = deleted_count
+
+    async def deleter_task():
+        try:
+            total = await delete_remote(
+                session_id, body.path, is_dir=True,
+                progress_callback=progress_callback,
+            )
+            _delete_status[delete_id].update({
+                "status": "completed",
+                "deleted_items": total,
+                "completed_at": time.monotonic(),
+            })
+            log.info(
+                "FTP recursive delete completed: path=%s, items=%d, session=%s",
+                body.path,
+                total,
+                session_id[:8],
+            )
+        except Exception as exc:
+            log.error(
+                "FTP recursive delete failed: path=%s, error=%s, session=%s",
+                body.path,
+                exc,
+                session_id[:8],
+            )
+            _delete_status[delete_id] = {
+                "status": "failed",
+                "error": str(exc),
+                "completed_at": time.monotonic(),
+            }
+
+    background_tasks.add_task(deleter_task)
+
+    return {"delete_id": delete_id, "status": "deleting", "path": body.path}
+
+
+@router.get("/{session_id}/delete/{delete_id}")
+async def get_delete_status(
+    session_id: str,
+    delete_id: str,
+    _: str = Depends(get_current_user),
+):
+    """Check status of a background directory deletion."""
+    _evict_stale_deletes()
+    status_info = _delete_status.get(delete_id)
+    if not status_info:
+        raise HTTPException(status_code=404, detail=f"Delete {delete_id[:8]} not found")
+    return status_info
 
 
 class RenameRequest(BaseModel):
@@ -460,6 +560,7 @@ async def rename_path(
     _: str = Depends(get_current_user),
 ):
     """Rename or move a remote path."""
+    
     log.debug(
         "FTP rename request: old_path=%s, new_path=%s, session=%s",
         body.old_path,
@@ -476,6 +577,7 @@ async def rename_path(
             body.new_path,
             session_id[:8],
         )
+
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         log.error(
@@ -501,6 +603,7 @@ async def make_directory(
     _: str = Depends(get_current_user),
 ):
     """Create a remote directory."""
+
     log.debug(
         "FTP mkdir request: path=%s, session=%s",
         body.path,
@@ -523,4 +626,5 @@ async def make_directory(
             exc,
             session_id[:8],
         )
+
         raise HTTPException(status_code=500, detail=f"Mkdir failed: {exc}")

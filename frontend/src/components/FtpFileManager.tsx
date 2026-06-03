@@ -73,6 +73,7 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
   const [loadingDir, setLoadingDir]   = useState(false);
   const [modal, setModal]             = useState<ModalState>(null);
   const [uploadPct, setUploadPct]     = useState<number | null>(null);
+  const [deletingInfo, setDeletingInfo] = useState<{ name: string; items: number } | null>(null);
   const fileInputRef                  = useRef<HTMLInputElement>(null);
   const sessionRef                    = useRef<string | null>(null);
   const challengeResolverRef          = useRef<((accepted: boolean) => void) | null>(null);
@@ -220,12 +221,19 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
   const handleDelete = async (entry: SftpEntry) => {
     if (!sessionId) return;
     setModal(null);
+    if (entry.is_dir) {
+      setDeletingInfo({ name: entry.name, items: 0 });
+    }
     try {
-      await ftpDelete(sessionId, entry.path, entry.is_dir);
+      await ftpDelete(sessionId, entry.path, entry.is_dir, (items) => {
+        setDeletingInfo((prev) => prev ? { ...prev, items } : null);
+      });
       toastRef.current.success(`Deleted ${entry.name}`);
       await loadDir(path);
     } catch (err) {
       toastRef.current.error(`Delete failed: ${err}`);
+    } finally {
+      setDeletingInfo(null);
     }
   };
 
@@ -416,6 +424,21 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
         </div>
       )}
 
+      {/* -- Delete progress bar -- */}
+      {deletingInfo && (
+        <div className="flex items-center gap-3 px-3 py-2 bg-slate-900/50 border-b border-slate-800 flex-shrink-0">
+          <div className="flex-1 flex items-center gap-2">
+            <Loader size={14} className="animate-spin text-red-400 flex-shrink-0" />
+            <span className="text-xs text-slate-400">
+              Deleting &quot;{deletingInfo.name}&quot;...{" "}
+              <span className="font-semibold text-red-400">
+                {deletingInfo.items} item{deletingInfo.items !== 1 ? "s" : ""} removed
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* -- File table -- */}
       <div className="flex-1 overflow-auto">
         {loadingDir && entries.length === 0 ? (
@@ -499,6 +522,7 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
                         onClick={() => confirmDelete(entry)}
                         className="icon-btn text-red-400 hover:text-red-300"
                         title="Delete"
+                        disabled={deletingInfo !== null}
                       >
                         <Trash2 size={12} />
                       </button>
@@ -516,6 +540,11 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
         <span>{entries.length} item{entries.length !== 1 ? "s" : ""}</span>
         {uploadPct !== null && (
           <span className="ml-3 text-blue-400">Uploading... {uploadPct}%</span>
+        )}
+        {deletingInfo && (
+          <span className="ml-3 text-red-400">
+            Deleting... {deletingInfo.items} item{deletingInfo.items !== 1 ? "s" : ""} removed
+          </span>
         )}
       </div>
 
@@ -572,7 +601,7 @@ export function FtpFileManager({ device }: FtpFileManagerProps) {
             <span className="font-semibold text-white">
               {modal.entry.is_dir ? "folder" : "file"} &quot;{modal.entry.name}&quot;
             </span>
-            ?{modal.entry.is_dir && " The directory must be empty."}
+            ?{modal.entry.is_dir && " This will delete all contents inside."}
           </p>
         </SimpleModal>
       )}
