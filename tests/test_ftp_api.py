@@ -760,7 +760,7 @@ async def test_upload_value_error_returns_404(auth_client):
     status = await _wait_for_upload(auth_client, sid, resp.json()["upload_id"])
     assert status["status"] == "failed"
     assert "no such dir" in status["error"]
-
+    
     await auth_client.delete(f"/api/ftp/session/{sid}")
 
 

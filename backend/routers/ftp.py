@@ -203,6 +203,7 @@ async def list_dir(
     _: str = Depends(get_current_user),
 ):
     """List directory contents at the given remote path."""
+    
     log.debug(
         "FTP list directory request: path=%s, session=%s",
         path,
@@ -217,12 +218,14 @@ async def list_dir(
             len(entries),
             session_id[:8],
         )
+
     except ValueError as exc:
         log.error(
             "FTP list directory failed (session not found): path=%s, session=%s",
             path,
             session_id[:8],
         )
+
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         log.error(
@@ -231,6 +234,7 @@ async def list_dir(
             exc,
             session_id[:8],
         )
+
         raise HTTPException(status_code=500, detail=f"Directory listing failed: {exc}")
     return {"path": path, "entries": entries}
 
@@ -260,6 +264,7 @@ async def download_file(
             remote_path,
             session_id[:8],
         )
+
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         log.error(
@@ -268,6 +273,7 @@ async def download_file(
             exc,
             session_id[:8],
         )
+
         raise HTTPException(status_code=500, detail=f"Download failed: {exc}")
 
     return Response(
@@ -554,6 +560,7 @@ async def rename_path(
     _: str = Depends(get_current_user),
 ):
     """Rename or move a remote path."""
+    
     log.debug(
         "FTP rename request: old_path=%s, new_path=%s, session=%s",
         body.old_path,
@@ -570,6 +577,7 @@ async def rename_path(
             body.new_path,
             session_id[:8],
         )
+
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         log.error(
@@ -595,6 +603,7 @@ async def make_directory(
     _: str = Depends(get_current_user),
 ):
     """Create a remote directory."""
+
     log.debug(
         "FTP mkdir request: path=%s, session=%s",
         body.path,
@@ -617,4 +626,5 @@ async def make_directory(
             exc,
             session_id[:8],
         )
+
         raise HTTPException(status_code=500, detail=f"Mkdir failed: {exc}")

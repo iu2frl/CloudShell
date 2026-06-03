@@ -22,7 +22,7 @@ Note on encoding:
   and directory listings in ISO-8859-1 / Latin-1 rather than UTF-8.  aioftp
   defaults to UTF-8 and will raise a UnicodeDecodeError on those servers.
   We default to ``latin-1`` because it is a strict superset of ASCII and
-  never raises a decode error (every byte 0x00–0xFF is valid Latin-1).
+  never raises a decode error (every byte 0x00-0xFF is valid Latin-1).
 """
 import asyncio
 import logging
@@ -238,7 +238,7 @@ async def list_directory(session_id: str, remote_path: str) -> list[dict]:
         raise ValueError("FTP session not found")
 
     result = []
-    # Ensure a per-session lock exists and serialize the listing operation.
+
     if entry.lock is None:
         entry.lock = asyncio.Lock()
     async with entry.lock:
