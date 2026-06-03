@@ -289,7 +289,9 @@ describe('FtpFileManager — delete flow', () => {
     const confirmDeleteBtns = screen.getAllByRole('button', { name: /^delete$/i });
     // Last one is the modal confirm button
     await userEvent.click(confirmDeleteBtns[confirmDeleteBtns.length - 1]);
-    await waitFor(() => expect(mockFtpDelete).toHaveBeenCalledWith('sess-ftp-1', '/readme.txt', false));
+    await waitFor(() =>
+      expect(mockFtpDelete).toHaveBeenCalledWith('sess-ftp-1', '/readme.txt', false, expect.any(Function)),
+    );
   });
 
   it('Cancel in delete modal closes without calling ftpDelete', async () => {
