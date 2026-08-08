@@ -47,6 +47,7 @@ Supports connections audit:
 - **FTP/FTPS file manager**: same convenient web-based file operations over plain FTP or explicit FTPS (AUTH TLS).
 - **Recursive FTP delete**: securely remove entire directories and their contents in one action, with confirmation prompts to prevent accidents.
 - **Configuration import/export**: easily import and export device configurations in standard JSON format.
+- **Quick commands**: define up to 8 per-terminal one-click buttons that instantly send a preset command to the active SSH session, persisted across page reloads.
 
 Please note: all sessions are initiated on the server side and not the client.
 
