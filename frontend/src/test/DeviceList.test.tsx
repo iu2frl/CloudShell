@@ -172,6 +172,19 @@ describe('DeviceList — delete flow', () => {
     await userEvent.click(screen.getByText('Delete'));
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith(1));
   });
+
+  it('shows error toast when deletion fails', async () => {
+    const { deleteDevice } = await import('../api/client');
+    (deleteDevice as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('delete exploded'));
+    setup();
+
+    await userEvent.click(screen.getByLabelText('Delete'));
+    await userEvent.click(screen.getByText('Delete'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Delete failed/i)).toBeInTheDocument();
+    });
+  });
 });
 
 describe('DeviceList — collapsed mode', () => {
@@ -213,6 +226,34 @@ describe('DeviceList — collapsed mode', () => {
   it('renders the collapse button in expanded mode', () => {
     setup({ collapsed: false });
     expect(screen.getByTitle('Collapse sidebar')).toBeInTheDocument();
+  });
+
+  it('shows spinning refresh icon in collapsed mode while loading', () => {
+    setup({ collapsed: true, loading: true });
+    const refreshBtn = screen.getByTitle('Refresh');
+    expect(refreshBtn.querySelector('.animate-spin')).toBeInTheDocument();
+  });
+});
+
+describe('DeviceList — active styling and loading states', () => {
+  it('shows spinning refresh icon in expanded mode while loading', () => {
+    setup({ loading: true });
+    const refreshBtn = screen.getByTitle('Refresh');
+    expect(refreshBtn.querySelector('.animate-spin')).toBeInTheDocument();
+  });
+
+  it('applies active row classes when activeDeviceId matches', () => {
+    setup({ activeDeviceId: 1 });
+    const name = screen.getByText('My Server');
+    const row = name.closest('div.group') as HTMLElement;
+    expect(row.className).toContain('bg-blue-600/20');
+    expect(row.className).toContain('border-blue-500');
+  });
+
+  it('applies active icon styles in collapsed mode', () => {
+    setup({ collapsed: true, activeDeviceId: 1 });
+    const btn = screen.getByTitle('My Server');
+    expect(btn.className).toContain('bg-blue-600/30');
   });
 });
 

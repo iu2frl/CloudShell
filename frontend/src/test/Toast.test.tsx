@@ -159,4 +159,55 @@ describe('ToastProvider', () => {
     expect(screen.queryByText('Boom!')).not.toBeInTheDocument(); // gone at 7s
     vi.useRealTimers();
   });
+
+  it('handles timeout callback after manual dismiss without crashing', async () => {
+    vi.useFakeTimers();
+    setup();
+    act(() => { fireEvent.click(screen.getByText('success')); });
+    expect(screen.getByText('Saved!')).toBeInTheDocument();
+
+    const dismissBtns = screen.getAllByRole('button').filter(
+      (b) => !['success', 'error', 'info'].includes(b.textContent ?? ''),
+    );
+    act(() => { fireEvent.click(dismissBtns[0]); });
+    expect(screen.queryByText('Saved!')).not.toBeInTheDocument();
+
+    act(() => { vi.advanceTimersByTime(4000); });
+    expect(screen.queryByText('Saved!')).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it('covers dismiss branch when timer entry is already missing', () => {
+    const timeoutCallbacks: Array<() => void> = [];
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((cb: TimerHandler) => {
+        timeoutCallbacks.push(cb as () => void);
+        return 111 as unknown as ReturnType<typeof setTimeout>;
+      }) as unknown as typeof setTimeout);
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(() => {});
+
+    setup();
+    act(() => {
+      fireEvent.click(screen.getByText('success'));
+    });
+
+    const dismissBtns = screen.getAllByRole('button').filter(
+      (b) => !['success', 'error', 'info'].includes(b.textContent ?? ''),
+    );
+    act(() => {
+      fireEvent.click(dismissBtns[0]);
+    });
+    expect(screen.queryByText('Saved!')).not.toBeInTheDocument();
+
+    // Simulate a stale timeout callback firing after the timer map entry was removed.
+    act(() => {
+      timeoutCallbacks[0]();
+    });
+    expect(screen.queryByText('Saved!')).not.toBeInTheDocument();
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+
+    setTimeoutSpy.mockRestore();
+    clearTimeoutSpy.mockRestore();
+  });
 });

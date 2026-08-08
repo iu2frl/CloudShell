@@ -58,6 +58,15 @@ describe('getTokenExpiry', () => {
     sessionStorage.clear();
     expect(getTokenExpiry()).toBeNull();
   });
+
+  it('returns null when parseInt throws unexpectedly', () => {
+    sessionStorage.setItem('cloudshell_token_expiry', '12345');
+    const parseIntSpy = vi.spyOn(globalThis, 'parseInt').mockImplementation(() => {
+      throw new Error('parse exploded');
+    });
+    expect(getTokenExpiry()).toBeNull();
+    parseIntSpy.mockRestore();
+  });
 });
 
 // -- isLoggedIn ----------------------------------------------------------------
@@ -469,5 +478,944 @@ describe('FTP API functions', () => {
     (xhrMock.onload as () => void)();
     await promise;
     expect(onProgress).toHaveBeenCalledWith(25);
+  });
+});
+
+describe('client additional coverage', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('getTokenExpiry returns null when storage throws', () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+    expect(getTokenExpiry()).toBeNull();
+    getItemSpy.mockRestore();
+  });
+
+  it('login throws 2FA_REQUIRED for 403 challenge', async () => {
+    const { login } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ detail: '2FA_REQUIRED' }),
+    }));
+    await expect(login('admin', 'pw')).rejects.toThrow('2FA_REQUIRED');
+  });
+
+  it('login throws Invalid 2FA code for 401 challenge', async () => {
+    const { login } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'Invalid 2FA code' }),
+    }));
+    await expect(login('admin', 'pw', '000000')).rejects.toThrow('Invalid 2FA code');
+  });
+
+  it('logout clears token even if API fails', async () => {
+    const { logout } = await import('../api/client');
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 60000).toString());
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Error',
+      json: async () => ({ detail: 'boom' }),
+    }));
+    await logout();
+    expect(sessionStorage.getItem('cloudshell_token_expiry')).toBeNull();
+  });
+
+  it('refreshToken logs out when refresh fails', async () => {
+    const { refreshToken } = await import('../api/client');
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 60000).toString());
+    const events: string[] = [];
+    window.addEventListener('cloudshell:session-expired', () => events.push('fired'));
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'expired' }),
+    }));
+
+    await refreshToken();
+    expect(events).toContain('fired');
+    expect(sessionStorage.getItem('cloudshell_token_expiry')).toBeNull();
+  });
+
+  it('refreshToken stores updated expiry on success', async () => {
+    const { refreshToken } = await import('../api/client');
+    const futureDate = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ expires_at: futureDate }),
+    }));
+    await refreshToken();
+    expect(getTokenExpiry()).toBeInstanceOf(Date);
+  });
+
+  it('changePassword posts expected payload', async () => {
+    const { changePassword } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: async () => undefined,
+    }));
+
+    await changePassword('old', 'new');
+
+    const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain('/auth/change-password');
+    const body = JSON.parse((options as RequestInit).body as string);
+    expect(body).toEqual({ current_password: 'old', new_password: 'new' });
+  });
+
+  it('covers basic device and folder endpoint wrappers', async () => {
+    const {
+      listDevices,
+      createDevice,
+      updateDevice,
+      deleteDevice,
+      listFolders,
+      getFolder,
+      createFolder,
+      updateFolder,
+      deleteFolder,
+      getMe,
+      listAuditLogs,
+      generateKeyPair,
+    } = await import('../api/client');
+
+    const responses = [
+      { ok: true, status: 200, json: async () => [] },
+      { ok: true, status: 200, json: async () => ({ id: 1 }) },
+      { ok: true, status: 200, json: async () => ({ id: 1 }) },
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 200, json: async () => [] },
+      { ok: true, status: 200, json: async () => ({ id: 7, children: [], device_count: 0 }) },
+      { ok: true, status: 200, json: async () => ({ id: 8 }) },
+      { ok: true, status: 200, json: async () => ({ id: 8 }) },
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 200, json: async () => ({ username: 'u', expires_at: 'x' }) },
+      { ok: true, status: 200, json: async () => ({ total: 0, page: 1, page_size: 50, entries: [] }) },
+      { ok: true, status: 200, json: async () => ({ private_key: 'a', public_key: 'b' }) },
+    ];
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(responses.shift())));
+
+    await listDevices();
+    await createDevice({ name: 'n', hostname: 'h', port: 22, username: 'u', auth_type: 'password', connection_type: 'ssh', password: 'p' });
+    await updateDevice(1, { name: 'x' });
+    await deleteDevice(1);
+    await listFolders();
+    await getFolder(7);
+    await createFolder({ name: 'f' });
+    await updateFolder(8, { description: 'd' });
+    await deleteFolder(8);
+    await getMe();
+    await listAuditLogs();
+    await generateKeyPair();
+
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(12);
+  });
+
+  it('covers SFTP wrappers and download fallback filename', async () => {
+    const { closeSftpSession, sftpList, sftpDownload, sftpDelete, sftpRename, sftpMkdir } = await import('../api/client');
+
+    const clickSpy = vi.fn();
+    const originalCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+      const el = originalCreate(tag);
+      if (tag === 'a') {
+        Object.defineProperty(el, 'click', { value: clickSpy });
+      }
+      return el;
+    });
+    const objectUrlSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    const responses = [
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 200, json: async () => ({ path: '/', entries: [] }) },
+      {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        blob: async () => new Blob(['abc']),
+      },
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 204, json: async () => undefined },
+    ];
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(responses.shift())));
+
+    await closeSftpSession('s1');
+    await sftpList('s1', '/');
+    await sftpDownload('s1', '/folder/file.txt');
+    await sftpDelete('s1', '/old.txt', false);
+    await sftpRename('s1', '/a', '/b');
+    await sftpMkdir('s1', '/new');
+
+    expect(clickSpy).toHaveBeenCalled();
+    expect(objectUrlSpy).toHaveBeenCalled();
+    expect(revokeSpy).toHaveBeenCalled();
+  });
+
+  it('sftpDownload throws session expired on 401', async () => {
+    const { sftpDownload } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'unauthorized' }),
+      headers: new Headers(),
+    }));
+    await expect(sftpDownload('sess', '/x')).rejects.toThrow('Session expired');
+  });
+
+  it('sftpUpload handles 401, parse error, and network error', async () => {
+    const { sftpUpload } = await import('../api/client');
+
+    const base = {
+      open: vi.fn(),
+      setRequestHeader: vi.fn(),
+      send: vi.fn(),
+      upload: { onprogress: null as unknown },
+      onload: null as unknown,
+      onerror: null as unknown,
+      status: 0,
+      responseText: '',
+    };
+
+    const runCase = async (status: number, responseText: string, event: 'load' | 'error') => {
+      const xhrMock = { ...base, status, responseText, onload: null as unknown, onerror: null as unknown };
+      class FakeXHR {
+        constructor() {
+          return xhrMock as unknown as FakeXHR;
+        }
+      }
+      vi.stubGlobal('XMLHttpRequest', FakeXHR);
+      const file = new File(['x'], 'x.txt');
+      const p = sftpUpload('sess', '/up', file);
+      if (event === 'load') {
+        (xhrMock.onload as () => void)();
+      } else {
+        (xhrMock.onerror as () => void)();
+      }
+      return p;
+    };
+
+    await expect(runCase(401, '{}', 'load')).rejects.toThrow('Session expired');
+    await expect(runCase(500, '{bad-json', 'load')).rejects.toThrow('Upload failed');
+    await expect(runCase(0, '', 'error')).rejects.toThrow('Network error during upload');
+  });
+
+  it('ftpDownload throws session expired on 401', async () => {
+    const { ftpDownload } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'unauthorized' }),
+      headers: new Headers(),
+    }));
+    await expect(ftpDownload('sess', '/x')).rejects.toThrow('Session expired');
+  });
+
+  it('openSession and openSftpSession surface non-challenge object detail', async () => {
+    const { openSession, openSftpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: { code: 'SSH_HOST_UNTRUSTED' } }) })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: { code: 'SSH_HOST_CHANGED' } }) }));
+
+    await expect(openSession(1)).rejects.toThrow('[object Object]');
+    await expect(openSftpSession(2)).rejects.toThrow('[object Object]');
+  });
+
+  it('exportConfig and importConfig cover success and errors', async () => {
+    const { exportConfig, importConfig } = await import('../api/client');
+
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        blob: async () => new Blob(['cfg']),
+        json: async () => ({}),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ imported: 1, skipped: 0, errors: 0, messages: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ detail: 'expired' }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Server Error',
+        json: async () => ({ detail: 'Import failed hard' }),
+      }));
+
+    const blob = await exportConfig();
+    expect(blob).toBeInstanceOf(Blob);
+
+    const result = await importConfig(new File(['{}'], 'config.json'));
+    expect(result.imported).toBe(1);
+
+    await expect(exportConfig()).rejects.toThrow('Session expired');
+    await expect(importConfig(new File(['{}'], 'bad.json'))).rejects.toThrow('Import failed hard');
+  });
+
+  it('2FA endpoints call expected routes', async () => {
+    const { get2FAStatus, setup2FA, enable2FA, disable2FA } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ enabled: true }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ qr_code: 'qr', backup_codes: ['a'] }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined })
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined }));
+
+    const status = await get2FAStatus();
+    expect(status.enabled).toBe(true);
+    const setup = await setup2FA();
+    expect(setup.qr_code).toBe('qr');
+    await enable2FA('111111');
+    await disable2FA('111111');
+
+    const urls = (fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
+    expect(urls.some((u) => u.includes('/auth/2fa/status'))).toBe(true);
+    expect(urls.some((u) => u.includes('/auth/2fa/setup'))).toBe(true);
+    expect(urls.some((u) => u.includes('/auth/2fa/enable'))).toBe(true);
+    expect(urls.some((u) => u.includes('/auth/2fa/disable'))).toBe(true);
+  });
+
+  it('exportConfig and importConfig use statusText fallback when error JSON parse fails', async () => {
+    const { exportConfig, importConfig } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Export Status Text',
+        json: async () => {
+          throw new Error('bad json');
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Import Status Text',
+        json: async () => {
+          throw new Error('bad json');
+        },
+      }));
+
+    await expect(exportConfig()).rejects.toThrow('Export Status Text');
+    await expect(importConfig(new File(['{}'], 'bad.json'))).rejects.toThrow('Import Status Text');
+  });
+
+  it('ftpDelete handles 401, non-ok, no delete_id, 404 poll, and failed poll branches', async () => {
+    const { ftpDelete } = await import('../api/client');
+
+    // 401
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      status: 401,
+      ok: false,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'unauthorized' }),
+    }));
+    await expect(ftpDelete('s', '/a', false)).rejects.toThrow('Session expired');
+
+    // non-ok + detail
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      status: 500,
+      ok: false,
+      statusText: 'Server Error',
+      json: async () => ({ detail: 'Delete exploded' }),
+    }));
+    await expect(ftpDelete('s', '/a', false)).rejects.toThrow('Delete exploded');
+
+    // non-ok + fallback detail
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      status: 500,
+      ok: false,
+      statusText: 'Delete Status Text',
+      json: async () => {
+        throw new Error('bad');
+      },
+    }));
+    await expect(ftpDelete('s', '/a', false)).rejects.toThrow('Delete Status Text');
+
+    // no delete_id returns
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      json: async () => ({}),
+    }));
+    await expect(ftpDelete('s', '/a', true)).resolves.toBeUndefined();
+
+    // poll 404 returns
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ delete_id: 'd1' }) })
+      .mockResolvedValueOnce({ status: 404, ok: false, json: async () => ({}) }));
+    const p404 = ftpDelete('s', '/a', true);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(p404).resolves.toBeUndefined();
+    vi.useRealTimers();
+
+    // poll failed branch (no explicit error uses terminal default message)
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ delete_id: 'd2' }) })
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ status: 'failed' }) }));
+    const pFailed = ftpDelete('s', '/a', true);
+    const failedExpectation = expect(pFailed).rejects.toThrow('Delete failed on server');
+    await vi.advanceTimersByTimeAsync(500);
+    await failedExpectation;
+    vi.useRealTimers();
+  });
+
+  it('ftpDelete polling supports progress callback and completion', async () => {
+    const { ftpDelete } = await import('../api/client');
+    const progress = vi.fn();
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ delete_id: 'd3' }) })
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        json: async () => ({ status: 'completed', deleted_items: 7 }),
+      }));
+
+    const p = ftpDelete('s', '/a', true, progress);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(p).resolves.toBeUndefined();
+    expect(progress).toHaveBeenCalledWith(7);
+    vi.useRealTimers();
+  });
+
+  it('ftpUpload covers polling completed, failed, 404, poll error, parse error and 401 branches', async () => {
+    const { ftpUpload } = await import('../api/client');
+    const file = new File(['content'], 'file.txt');
+
+    const makeXhr = (status: number, responseText: string) => {
+      const xhrMock = {
+        open: vi.fn(),
+        setRequestHeader: vi.fn(),
+        send: vi.fn(),
+        upload: { onprogress: null as unknown },
+        onload: null as unknown,
+        onerror: null as unknown,
+        status,
+        responseText,
+      };
+      class FakeXHR {
+        constructor() {
+          return xhrMock as unknown as FakeXHR;
+        }
+      }
+      vi.stubGlobal('XMLHttpRequest', FakeXHR);
+      return xhrMock;
+    };
+
+    // completed polling path
+    {
+      const onProgress = vi.fn();
+      const xhr = makeXhr(200, JSON.stringify({ upload_id: 'u1' }));
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'completed', percent: 50 }),
+      }));
+      const p = ftpUpload('s', '/p', file, onProgress);
+      (xhr.onload as () => void)();
+      await expect(p).resolves.toBeUndefined();
+      expect(onProgress).toHaveBeenCalledWith(75);
+      expect(onProgress).toHaveBeenCalledWith(100);
+    }
+
+    // failed polling path
+    {
+      const xhr = makeXhr(200, JSON.stringify({ upload_id: 'u2' }));
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'failed', error: 'server upload failed' }),
+      }));
+      const p = ftpUpload('s', '/p', file, vi.fn());
+      (xhr.onload as () => void)();
+      await expect(p).rejects.toThrow('server upload failed');
+    }
+
+    // 404 status polling resolves
+    {
+      const xhr = makeXhr(200, JSON.stringify({ upload_id: 'u3' }));
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      }));
+      const p = ftpUpload('s', '/p', file, vi.fn());
+      (xhr.onload as () => void)();
+      await expect(p).resolves.toBeUndefined();
+    }
+
+    // polling fetch throws and resolves
+    {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const xhr = makeXhr(200, JSON.stringify({ upload_id: 'u4' }));
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('poll exploded')));
+      const p = ftpUpload('s', '/p', file, vi.fn());
+      (xhr.onload as () => void)();
+      await expect(p).resolves.toBeUndefined();
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    }
+
+    // parse error branch
+    {
+      const xhr = makeXhr(200, '{bad-json');
+      const p = ftpUpload('s', '/p', file, vi.fn());
+      (xhr.onload as () => void)();
+      await expect(p).rejects.toThrow('Failed to parse upload response');
+    }
+
+    // xhr 401 branch
+    {
+      const xhr = makeXhr(401, '{}');
+      const p = ftpUpload('s', '/p', file, vi.fn());
+      (xhr.onload as () => void)();
+      await expect(p).rejects.toThrow('Session expired');
+    }
+
+    // xhr non-401 parse fallback branch
+    {
+      const xhr = makeXhr(500, '{broken-json');
+      const p = ftpUpload('s', '/p', file, vi.fn());
+      (xhr.onload as () => void)();
+      await expect(p).rejects.toThrow('Upload failed');
+    }
+  });
+
+  it('openSession/openSftpSession use statusText fallback when response json parsing fails', async () => {
+    const { openSession, openSftpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'terminal status text',
+        json: async () => {
+          throw new Error('bad json');
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'sftp status text',
+        json: async () => {
+          throw new Error('bad json');
+        },
+      }));
+
+    await expect(openSession(1)).rejects.toThrow('terminal status text');
+    await expect(openSftpSession(2)).rejects.toThrow('sftp status text');
+  });
+
+  it('openFtpSession handles 401 and generic non-ok error', async () => {
+    const { openFtpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ detail: 'unauthorized' }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Server Error',
+        json: async () => ({ detail: 'FTP failed generic' }),
+      }));
+
+    await expect(openFtpSession(7)).rejects.toThrow('Session expired');
+    await expect(openFtpSession(7)).rejects.toThrow('FTP failed generic');
+  });
+
+  it('sftpDownload falls back to basename when content-disposition filename is absent', async () => {
+    const { sftpDownload } = await import('../api/client');
+    const clickSpy = vi.fn();
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+      const el = origCreate(tag);
+      if (tag === 'a') {
+        Object.defineProperty(el, 'click', { value: clickSpy });
+      }
+      return el;
+    });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:sftp');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      blob: async () => new Blob(['x']),
+    }));
+
+    await sftpDownload('s', '/deep/path/name.txt');
+    expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it('sftpUpload reports progress when length is computable', async () => {
+    const { sftpUpload } = await import('../api/client');
+    const progress = vi.fn();
+    const xhrMock = {
+      open: vi.fn(), setRequestHeader: vi.fn(), send: vi.fn(),
+      upload: { onprogress: null as unknown },
+      onload: null as unknown, onerror: null as unknown,
+      status: 200, responseText: '{}',
+    };
+    class FakeXHR {
+      constructor() {
+        return xhrMock as unknown as FakeXHR;
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+    const p = sftpUpload('s', '/r', new File(['x'], 'x.txt'), progress);
+    (xhrMock.upload.onprogress as (e: ProgressEvent) => void)(
+      { lengthComputable: true, loaded: 25, total: 100 } as ProgressEvent,
+    );
+    (xhrMock.onload as () => void)();
+    await expect(p).resolves.toBeUndefined();
+    expect(progress).toHaveBeenCalledWith(25);
+  });
+
+  it('ftpUpload polling covers loop increment and timeout branch', async () => {
+    const { ftpUpload } = await import('../api/client');
+    const file = new File(['content'], 'file.txt');
+
+    const xhrMock = {
+      open: vi.fn(), setRequestHeader: vi.fn(), send: vi.fn(),
+      upload: { onprogress: null as unknown },
+      onload: null as unknown, onerror: null as unknown,
+      status: 200, responseText: JSON.stringify({ upload_id: 'u-timeout' }),
+    };
+    class FakeXHR {
+      constructor() {
+        return xhrMock as unknown as FakeXHR;
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'running' }),
+    }));
+
+    const p = ftpUpload('s', '/p', file, vi.fn());
+    const timeoutExpectation = expect(p).rejects.toThrow('Upload progress polling timeout');
+    (xhrMock.onload as () => void)();
+    await vi.advanceTimersByTimeAsync(1800 * 1000);
+    await timeoutExpectation;
+    vi.useRealTimers();
+  });
+
+  it('ftpDelete polling continues after transient error and can timeout', async () => {
+    const { ftpDelete } = await import('../api/client');
+
+    // Transient poll error then completed
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ delete_id: 'd-transient' }) })
+      .mockRejectedValueOnce(new Error('temporary poll error'))
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ status: 'completed' }) }));
+    const transient = ftpDelete('s', '/a', true);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(transient).resolves.toBeUndefined();
+    vi.useRealTimers();
+
+    // Timeout branch
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ delete_id: 'd-timeout' }) })
+      .mockResolvedValue({ status: 200, ok: true, json: async () => ({ status: 'running' }) }));
+    const timeout = ftpDelete('s', '/a', true);
+    const timeoutExpectation = expect(timeout).rejects.toThrow('Delete progress polling timeout');
+    await vi.advanceTimersByTimeAsync(1800 * 500);
+    await timeoutExpectation;
+    vi.useRealTimers();
+  });
+
+  it('openSession and openSftpSession throw Session expired on 401', async () => {
+    const { openSession, openSftpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ detail: 'unauthorized' }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ detail: 'unauthorized' }),
+      }));
+
+    await expect(openSession(1)).rejects.toThrow('Session expired');
+    await expect(openSftpSession(2)).rejects.toThrow('Session expired');
+  });
+
+  it('sftpDownload uses fallback error message when detail is missing', async () => {
+    const { sftpDownload } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'SFTP failed status',
+      json: async () => ({ detail: undefined }),
+      headers: new Headers(),
+    }));
+
+    await expect(sftpDownload('s', '/x')).rejects.toThrow('Download failed');
+  });
+
+  it('sftpUpload uses server detail when provided', async () => {
+    const { sftpUpload } = await import('../api/client');
+    const xhrMock = {
+      open: vi.fn(), setRequestHeader: vi.fn(), send: vi.fn(),
+      upload: { onprogress: null as unknown },
+      onload: null as unknown, onerror: null as unknown,
+      status: 500, responseText: JSON.stringify({ detail: 'detailed upload fail' }),
+    };
+    class FakeXHR {
+      constructor() {
+        return xhrMock as unknown as FakeXHR;
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+
+    const p = sftpUpload('s', '/p', new File(['x'], 'x.txt'));
+    (xhrMock.onload as () => void)();
+    await expect(p).rejects.toThrow('detailed upload fail');
+  });
+
+  it('importConfig throws Session expired on 401', async () => {
+    const { importConfig } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'expired' }),
+    }));
+
+    await expect(importConfig(new File(['{}'], 'cfg.json'))).rejects.toThrow('Session expired');
+  });
+
+  it('openSession/openSftpSession and openFtpSession fall back to "Request failed" when detail is missing', async () => {
+    const { openSession, openSftpSession, openFtpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'x', json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'x', json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'x', json: async () => ({}) }));
+
+    await expect(openSession(1)).rejects.toThrow('Request failed');
+    await expect(openSftpSession(2)).rejects.toThrow('Request failed');
+    await expect(openFtpSession(3)).rejects.toThrow('Request failed');
+  });
+
+  it('openFtpSession rejects non-object and invalid-code 409 details as generic errors', async () => {
+    const { openFtpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: null }) })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: { code: 'BAD', thumbprint: 'AA' } }) }));
+
+    await expect(openFtpSession(1)).rejects.toThrow('Request failed');
+    await expect(openFtpSession(1)).rejects.toThrow('[object Object]');
+  });
+
+  it('ftpDownload and sftpDownload use final filename fallback "download" for directory paths', async () => {
+    const { ftpDownload, sftpDownload } = await import('../api/client');
+    const clickSpy = vi.fn();
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+      const el = origCreate(tag);
+      if (tag === 'a') {
+        Object.defineProperty(el, 'click', { value: clickSpy });
+      }
+      return el;
+    });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:dl');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: new Headers(), blob: async () => new Blob(['x']) })
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: new Headers(), blob: async () => new Blob(['x']) }));
+
+    await ftpDownload('s', '/');
+    await sftpDownload('s', '/');
+    expect(clickSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('ftpDownload and ftpDelete use default failure message when detail is missing', async () => {
+    const { ftpDownload, ftpDelete } = await import('../api/client');
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: 'ignored',
+      json: async () => ({ detail: undefined }),
+      headers: new Headers(),
+    }));
+    await expect(ftpDownload('s', '/f')).rejects.toThrow('Download failed');
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: 'ignored',
+      json: async () => ({ detail: undefined }),
+    }));
+    await expect(ftpDelete('s', '/f', false)).rejects.toThrow('Delete failed');
+  });
+
+  it('ftpUpload and sftpUpload cover progress non-computable and default error fallback', async () => {
+    const { ftpUpload, sftpUpload } = await import('../api/client');
+    const progress = vi.fn();
+
+    // ftpUpload: non-computable progress and failed status without error
+    const ftpXhr = {
+      open: vi.fn(), setRequestHeader: vi.fn(), send: vi.fn(),
+      upload: { onprogress: null as unknown },
+      onload: null as unknown, onerror: null as unknown,
+      status: 200, responseText: JSON.stringify({ upload_id: 'u-fallback' }),
+    };
+    class FakeFtpXHR {
+      constructor() {
+        return ftpXhr as unknown as FakeFtpXHR;
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeFtpXHR);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'failed' }),
+    }));
+    const p1 = ftpUpload('s', '/p', new File(['x'], 'x.txt'), progress);
+    (ftpXhr.upload.onprogress as (e: ProgressEvent) => void)(
+      { lengthComputable: false, loaded: 1, total: 2 } as ProgressEvent,
+    );
+    (ftpXhr.onload as () => void)();
+    await expect(p1).rejects.toThrow('Server-side upload failed');
+    expect(progress).not.toHaveBeenCalled();
+
+    // sftpUpload: non-computable progress then response without detail
+    const sftpXhr = {
+      open: vi.fn(), setRequestHeader: vi.fn(), send: vi.fn(),
+      upload: { onprogress: null as unknown },
+      onload: null as unknown, onerror: null as unknown,
+      status: 500, responseText: JSON.stringify({ detail: undefined }),
+    };
+    class FakeSftpXHR {
+      constructor() {
+        return sftpXhr as unknown as FakeSftpXHR;
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeSftpXHR);
+    const p2 = sftpUpload('s', '/p', new File(['x'], 'x.txt'), progress);
+    (sftpXhr.upload.onprogress as (e: ProgressEvent) => void)(
+      { lengthComputable: false, loaded: 1, total: 2 } as ProgressEvent,
+    );
+    (sftpXhr.onload as () => void)();
+    await expect(p2).rejects.toThrow('Upload failed');
+  });
+
+  it('exportConfig and importConfig use default messages when detail is missing', async () => {
+    const { exportConfig, importConfig } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'x', json: async () => ({ detail: undefined }) })
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'x', json: async () => ({ detail: undefined }) }));
+
+    await expect(exportConfig()).rejects.toThrow('Export failed');
+    await expect(importConfig(new File(['{}'], 'cfg.json'))).rejects.toThrow('Import failed');
+  });
+
+  it('ftpDelete polling continues when status is non-ok and later completes', async () => {
+    const { ftpDelete } = await import('../api/client');
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ delete_id: 'd-nonok' }) })
+      .mockResolvedValueOnce({ status: 500, ok: false, json: async () => ({}) })
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ status: 'completed' }) }));
+
+    const p = ftpDelete('s', '/a', true);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(p).resolves.toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it('request helper uses default message when non-ok response has no detail', async () => {
+    const { listDevices } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: 'ignored',
+      json: async () => ({ detail: undefined }),
+    }));
+
+    await expect(listDevices()).rejects.toThrow('Request failed');
+  });
+
+  it('openSession and openSftpSession treat non-object and invalid-code 409 details as generic errors', async () => {
+    const { openSession, openSftpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: null }) })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: { code: 'BAD' } }) })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: null }) })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: { code: 'BAD' } }) }));
+
+    await expect(openSession(1)).rejects.toThrow('Request failed');
+    await expect(openSession(1)).rejects.toThrow('[object Object]');
+    await expect(openSftpSession(2)).rejects.toThrow('Request failed');
+    await expect(openSftpSession(2)).rejects.toThrow('[object Object]');
+  });
+
+  it('ftpUpload handles explicit non-ok upload response with missing detail and ftpDelete supports 204', async () => {
+    const { ftpUpload, ftpDelete } = await import('../api/client');
+
+    const xhr = {
+      open: vi.fn(),
+      setRequestHeader: vi.fn(),
+      send: vi.fn(),
+      upload: { onprogress: null as unknown },
+      onload: null as unknown,
+      onerror: null as unknown,
+      status: 500,
+      responseText: JSON.stringify({ detail: undefined }),
+    };
+    class FakeXHR {
+      constructor() {
+        return xhr as unknown as FakeXHR;
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+
+    const uploadPromise = ftpUpload('sess', '/p', new File(['x'], 'x.txt'));
+    (xhr.onload as () => void)();
+    await expect(uploadPromise).rejects.toThrow('Upload failed');
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ status: 204, ok: true }));
+    await expect(ftpDelete('sess', '/file.txt', false)).resolves.toBeUndefined();
   });
 });

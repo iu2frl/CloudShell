@@ -1,4 +1,4 @@
-fastapi==0.129.0
+fastapi==0.141.1
 uvicorn[standard]==0.34.0
 asyncssh==2.23.0
 aioftp>=0.22
@@ -11,7 +11,6 @@ cryptography==50.0.0
 pydantic-settings==2.9.1
 pyotp==2.9.0
 qrcode==7.4.2
-
 # -- Test dependencies ---------------------------------------------------------
 pytest>=9.0
 pytest-asyncio>=1.0

@@ -112,6 +112,32 @@ describe('FolderTreeItem', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete folder?' })).not.toBeInTheDocument());
   });
 
+  it('keeps delete popup open when pressing a non-Escape key', async () => {
+    render(
+      <ToastProvider>
+        <FolderTreeItem
+          folder={folder}
+          level={0}
+          activeDeviceId={null}
+          folderIdsWithDevices={new Set<number>()}
+          selectedFolderId={null}
+          expandedFolders={new Set<number>()}
+          onToggleExpand={vi.fn()}
+          onSelectFolder={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          renderDevices={() => null}
+        />
+      </ToastProvider>,
+    );
+
+    await userEvent.click(screen.getByTitle('Delete folder'));
+    expect(screen.getByRole('dialog', { name: 'Delete folder?' })).toBeInTheDocument();
+
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByRole('dialog', { name: 'Delete folder?' })).toBeInTheDocument();
+  });
+
   it('treats a folder with live assigned devices as expandable', () => {
     const { container } = render(
       <ToastProvider>

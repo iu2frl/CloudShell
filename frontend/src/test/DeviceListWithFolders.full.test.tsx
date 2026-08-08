@@ -68,7 +68,9 @@ const renderWithToast = (props = defaultProps) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(apiClient.listFolders).mockResolvedValue([]);
+  vi.mocked(apiClient.listFolders).mockImplementation(
+    () => new Promise<FolderWithChildren[]>(() => {}),
+  );
 });
 
 describe('DeviceListWithFolders', () => {
