@@ -177,6 +177,13 @@ describe('DeviceForm — FTP/FTPS connection type', () => {
     await userEvent.selectOptions(typeSelect, 'ftp');
     expect(screen.getByPlaceholderText('••••••••')).toBeInTheDocument();
   });
+
+  it('updates password field value', async () => {
+    setup();
+    const passwordInput = screen.getByPlaceholderText('••••••••') as HTMLInputElement;
+    await userEvent.type(passwordInput, 'secret123');
+    expect(passwordInput.value).toBe('secret123');
+  });
 });
 
 describe('DeviceForm — FTP connection type dropdown options', () => {
@@ -369,6 +376,28 @@ describe('DeviceForm — key auth flow', () => {
       expect(textarea.value).toContain(fileContent);
     });
   });
+
+  it('ignores loadKeyFile when no file is selected', async () => {
+    setup();
+    const authSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
+    await userEvent.selectOptions(authSelect, 'key');
+
+    const textarea = screen.getByPlaceholderText('-----BEGIN OPENSSH PRIVATE KEY-----') as HTMLTextAreaElement;
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [] } });
+    expect(textarea.value).toBe('');
+  });
+
+  it('clicking Load file triggers hidden file input click', async () => {
+    setup();
+    const authSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
+    await userEvent.selectOptions(authSelect, 'key');
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const clickSpy = vi.spyOn(fileInput, 'click');
+    await userEvent.click(screen.getByRole('button', { name: /Load file/i }));
+    expect(clickSpy).toHaveBeenCalled();
+  });
 });
 
 describe('DeviceForm — folder and numeric inputs', () => {
@@ -404,5 +433,33 @@ describe('DeviceForm — folder and numeric inputs', () => {
     const portInput = screen.getByDisplayValue('22') as HTMLInputElement;
     fireEvent.change(portInput, { target: { value: '2222' } });
     expect(portInput.value).toBe('2222');
+  });
+});
+
+describe('DeviceForm — fingerprint delete guard', () => {
+  it('does not start a second fingerprint delete while one is in progress', async () => {
+    const { updateDevice } = await import('../api/client');
+    let resolveDelete: ((value: unknown) => void) | null = null;
+    (updateDevice as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+
+    setup({
+      device: makeDevice({
+        ssh_host_fingerprint: 'SHA256:abc123',
+      }),
+    });
+
+    const btn = screen.getByRole('button', { name: 'Delete SSH fingerprint' });
+    await userEvent.click(btn);
+    await userEvent.click(btn);
+    expect(updateDevice).toHaveBeenCalledTimes(1);
+
+    resolveDelete?.(undefined);
+    await waitFor(() => {
+      expect(screen.queryByText('SHA256:abc123')).not.toBeInTheDocument();
+    });
   });
 });

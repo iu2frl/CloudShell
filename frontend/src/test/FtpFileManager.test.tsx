@@ -167,6 +167,19 @@ describe('FtpFileManager — connecting state', () => {
       expect(screen.getByText(/TLS handshake failed/i)).toBeInTheDocument();
     });
   });
+
+  it('unmounting while trust challenge is open resolves pending challenge safely', async () => {
+    const api = await import('../api/client');
+    const challenge = new api.FtpsCertificateChallengeError({
+      code: 'FTPS_CERT_UNTRUSTED',
+      thumbprint: 'AA:BB:CC',
+    });
+    mockOpenFtpSession.mockRejectedValueOnce(challenge);
+    const { unmount } = setup({ connection_type: 'ftps' });
+
+    await waitFor(() => expect(screen.getByText('Trust FTPS Certificate')).toBeInTheDocument());
+    expect(() => unmount()).not.toThrow();
+  });
 });
 
 // -- Error state ---------------------------------------------------------------
@@ -255,6 +268,27 @@ describe('FtpFileManager — directory listing', () => {
       expect(screen.getByText('3.0 GB')).toBeInTheDocument();
     });
   });
+
+  it('formats small file size, zero modified date, and missing permissions fallback', async () => {
+    mockFtpList.mockResolvedValue({
+      path: '/',
+      entries: [
+        {
+          ...FILE_ENTRY,
+          name: 'tiny.txt',
+          path: '/tiny.txt',
+          size: 12,
+          modified: 0,
+          permissions: null,
+        },
+      ],
+    });
+    setup();
+    await waitFor(() => {
+      expect(screen.getByText('12 B')).toBeInTheDocument();
+      expect(screen.getAllByText('-').length).toBeGreaterThanOrEqual(2);
+    });
+  });
 });
 
 // -- Protocol badge ------------------------------------------------------------
@@ -319,6 +353,15 @@ describe('FtpFileManager — navigation', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Go up' }));
     await waitFor(() => expect(mockFtpList).toHaveBeenLastCalledWith('sess-ftp-1', '/a'));
+  });
+
+  it('refresh button reloads current path', async () => {
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => {
+      expect(mockFtpList).toHaveBeenLastCalledWith('sess-ftp-1', '/');
+    });
   });
 });
 
@@ -387,6 +430,14 @@ describe('FtpFileManager — upload', () => {
     const clickSpy = vi.spyOn(input, 'click');
     await userEvent.click(screen.getByTitle('Upload file'));
     expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it('does nothing when upload change has no files selected', async () => {
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [] } });
+    expect(mockFtpUpload).not.toHaveBeenCalled();
   });
 });
 
@@ -503,6 +554,18 @@ describe('FtpFileManager — rename flow', () => {
       expect(screen.getByText(/Rename failed/i)).toBeInTheDocument();
     });
   });
+
+  it('closes rename modal when X is clicked', async () => {
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    await userEvent.click(screen.getAllByTitle('Rename')[0]);
+    expect(screen.getByText(/Rename "readme.txt"/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByText(/Rename "readme.txt"/i)).not.toBeInTheDocument();
+    });
+  });
 });
 
 // -- Mkdir ---------------------------------------------------------------------
@@ -538,6 +601,18 @@ describe('FtpFileManager — mkdir flow', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Create folder failed/i)).toBeInTheDocument();
+    });
+  });
+
+  it('closes mkdir modal when X is clicked', async () => {
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    await userEvent.click(screen.getByTitle('New folder'));
+    expect(screen.getByPlaceholderText('folder-name')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText('folder-name')).not.toBeInTheDocument();
     });
   });
 });
