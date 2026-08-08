@@ -268,6 +268,29 @@ async def test_update_device_password():
     assert db.committed
 
 
+async def test_update_device_blank_password_keeps_existing_value():
+    """update_device must not overwrite stored password when payload password is empty."""
+    dev = Device(
+        name="srv",
+        hostname="1.1.1.1",
+        port=22,
+        username="root",
+        auth_type=AuthType.password,
+        connection_type=ConnectionType.ssh,
+    )
+    dev.id = 1
+    dev.encrypted_password = "enc-existing"
+    db = _FakeDB(device=dev)
+    payload = DeviceUpdate(password="")
+
+    with patch("backend.routers.devices.encrypt") as mock_enc:
+        device = await update_device(device_id=1, payload=payload, db=db, _="admin")
+
+    mock_enc.assert_not_called()
+    assert device.encrypted_password == "enc-existing"
+    assert db.committed
+
+
 async def test_update_device_private_key():
     """update_device stores a new encrypted key file when private_key is provided."""
     pem, _ = generate_key_pair()

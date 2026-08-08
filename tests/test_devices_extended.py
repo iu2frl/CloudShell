@@ -60,6 +60,30 @@ async def test_update_device_password(auth_client):
     assert resp.json()["id"] == device_id
 
 
+async def test_update_device_blank_password_keeps_existing_password(auth_client):
+    """PUT /api/devices/{id} with blank password must preserve the existing stored password."""
+    payload = _password_payload(name="blank-pass-device", hostname="10.10.10.10")
+    create_resp = await auth_client.post("/api/devices/", json=payload)
+    assert create_resp.status_code == 201
+    device_id = create_resp.json()["id"]
+
+    update_resp = await auth_client.put(
+        f"/api/devices/{device_id}",
+        json={"password": ""},
+    )
+    assert update_resp.status_code == 200
+
+    export_resp = await auth_client.get("/api/config/export")
+    assert export_resp.status_code == 200
+    devices = export_resp.json()["devices"]
+    exported = next(
+        d
+        for d in devices
+        if d["name"] == "blank-pass-device" and d["hostname"] == "10.10.10.10"
+    )
+    assert exported["password"] == "original-secret"
+
+
 async def test_update_device_username(auth_client):
     """PUT /api/devices/{id} can update the SSH username."""
     create_resp = await auth_client.post("/api/devices/", json=_password_payload())
