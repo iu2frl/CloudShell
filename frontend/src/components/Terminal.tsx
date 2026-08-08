@@ -4,9 +4,16 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Device, SshHostChallengeDetail, SshHostChallengeError, createTerminalWsTicket, openSession, terminalWsUrl } from "../api/client";
-import { RefreshCw, Wifi, WifiOff, Loader, Copy } from "lucide-react";
+import { RefreshCw, Wifi, WifiOff, Loader, Copy, Plus, Settings2, Send, Trash2 } from "lucide-react";
 import { useToast } from "./Toast";
 import { FingerprintTrustModal } from "./FingerprintTrustModal";
+import {
+  MAX_QUICK_COMMANDS,
+  QuickCommand,
+  buildQuickCommandsStorageKey,
+  normalizeQuickCommands,
+  parseQuickCommands,
+} from "./terminalQuickCommands";
 
 type ConnState = "connecting" | "connected" | "disconnected" | "error" | "failed";
 
@@ -14,9 +21,10 @@ const MAX_RETRIES = 3;
 
 interface TerminalProps {
   device: Device;
+  terminalKey: number;
 }
 
-export function Terminal({ device }: TerminalProps) {
+export function Terminal({ device, terminalKey }: TerminalProps) {
   const containerRef   = useRef<HTMLDivElement>(null);
   const xtermRef       = useRef<XTerm | null>(null);
   const fitRef         = useRef<FitAddon | null>(null);
@@ -27,6 +35,9 @@ export function Terminal({ device }: TerminalProps) {
   const challengeResolverRef = useRef<((accepted: boolean) => void) | null>(null);
   const [connState, setConnState] = useState<ConnState>("connecting");
   const [sshChallenge, setSshChallenge] = useState<SshHostChallengeDetail | null>(null);
+  const [quickCommands, setQuickCommands] = useState<QuickCommand[]>([]);
+  const [showQuickEditor, setShowQuickEditor] = useState(false);
+  const [quickDrafts, setQuickDrafts] = useState<QuickCommand[]>([]);
   const toast = useToast();
   // Stable ref so connect() doesn't need toast in its dep array (prevents reconnect loop)
   const toastRef = useRef(toast);
@@ -45,6 +56,70 @@ export function Terminal({ device }: TerminalProps) {
     challengeResolverRef.current = null;
     resolver?.(accepted);
   }, []);
+
+  const nextQuickCommandId = () => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+
+  useEffect(() => {
+    const storageKey = buildQuickCommandsStorageKey(terminalKey);
+    let loaded: QuickCommand[] = [];
+    try {
+      loaded = parseQuickCommands(localStorage.getItem(storageKey));
+    } catch {
+      loaded = [];
+    }
+    setQuickCommands(loaded);
+    setQuickDrafts(loaded);
+    setShowQuickEditor(false);
+  }, [terminalKey]);
+
+  const persistQuickCommands = useCallback((commands: QuickCommand[]) => {
+    const storageKey = buildQuickCommandsStorageKey(terminalKey);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(commands));
+    } catch {
+      toastRef.current.error("Could not save quick commands");
+    }
+    setQuickCommands(commands);
+  }, [terminalKey]);
+
+  const addQuickDraft = () => {
+    setQuickDrafts((prev) => {
+      if (prev.length >= MAX_QUICK_COMMANDS) return prev;
+      return [...prev, { id: nextQuickCommandId(), label: "", command: "" }];
+    });
+  };
+
+  const updateQuickDraft = (id: string, field: "label" | "command", value: string) => {
+    setQuickDrafts((prev) => prev.map((item) => (
+      item.id === id ? { ...item, [field]: value } : item
+    )));
+  };
+
+  const removeQuickDraft = (id: string) => {
+    setQuickDrafts((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const saveQuickDrafts = () => {
+    const normalized = normalizeQuickCommands(quickDrafts);
+    persistQuickCommands(normalized);
+    setQuickDrafts(normalized);
+    setShowQuickEditor(false);
+  };
+
+  const runQuickCommand = (command: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      toastRef.current.error("Terminal is not connected");
+      return;
+    }
+    const payload = command.endsWith("\n") ? command : `${command}\n`;
+    ws.send(new TextEncoder().encode(payload));
+  };
 
   // -- Build the xterm instance once ------------------------------------------
   useEffect(() => {
@@ -337,8 +412,115 @@ export function Terminal({ device }: TerminalProps) {
           >
             <RefreshCw size={13} className={connState === "connecting" ? "animate-spin" : ""} />
           </button>
+
+          {/* Quick commands */}
+          <button
+            type="button"
+            onClick={() => {
+              setQuickDrafts(quickCommands);
+              setShowQuickEditor((prev) => !prev);
+            }}
+            title="Configure quick commands"
+            className={`icon-btn ${showQuickEditor ? "text-blue-300 bg-slate-700" : ""}`}
+          >
+            <Settings2 size={13} />
+          </button>
         </div>
       </div>
+
+      {(quickCommands.length > 0 || showQuickEditor) && (
+        <div className="border-x border-slate-700 bg-slate-900/70 px-2 py-2 space-y-2">
+          {quickCommands.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {quickCommands.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                  onClick={() => runQuickCommand(item.command)}
+                  disabled={connState !== "connected"}
+                  title={item.command}
+                >
+                  <Send size={11} />
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {showQuickEditor && (
+            <div className="rounded border border-slate-700 bg-slate-900 p-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                  Quick Commands ({quickDrafts.length}/{MAX_QUICK_COMMANDS})
+                </p>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={addQuickDraft}
+                  disabled={quickDrafts.length >= MAX_QUICK_COMMANDS}
+                  title="Add quick command"
+                >
+                  <Plus size={12} />
+                </button>
+              </div>
+
+              {quickDrafts.length === 0 && (
+                <p className="text-xs text-slate-500">Add buttons for common commands like apt update.</p>
+              )}
+
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {quickDrafts.map((item) => (
+                  <div key={item.id} className="grid grid-cols-[1fr_2fr_auto] gap-1.5 items-center">
+                    <input
+                      className="input !py-1.5 !text-xs"
+                      placeholder="Label"
+                      maxLength={24}
+                      value={item.label}
+                      onChange={(e) => updateQuickDraft(item.id, "label", e.target.value)}
+                    />
+                    <input
+                      className="input !py-1.5 !text-xs font-mono"
+                      placeholder="Command"
+                      maxLength={160}
+                      value={item.command}
+                      onChange={(e) => updateQuickDraft(item.id, "command", e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="icon-btn text-red-400 hover:text-red-300"
+                      onClick={() => removeQuickDraft(item.id)}
+                      aria-label="Remove quick command"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  className="btn-ghost !px-3 !py-1.5"
+                  onClick={() => {
+                    setQuickDrafts(quickCommands);
+                    setShowQuickEditor(false);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary !px-3 !py-1.5"
+                  onClick={saveQuickDrafts}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* xterm viewport */}
       <div
