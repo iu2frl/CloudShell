@@ -50,25 +50,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Compute lowercase image name
         id: image
         run: echo "name=$(echo '${{ env.REGISTRY }}/${{ github.repository }}-backend' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.2.0
 
       - name: Build and push digest (amd64)
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: Dockerfile.backend
@@ -94,25 +94,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Compute lowercase image name
         id: image
         run: echo "name=$(echo '${{ env.REGISTRY }}/${{ github.repository }}-backend' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.2.0
 
       - name: Build and push digest (arm64)
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: Dockerfile.backend
@@ -138,25 +138,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Compute lowercase image name
         id: image
         run: echo "name=$(echo '${{ env.REGISTRY }}/${{ github.repository }}-frontend' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.2.0
 
       - name: Build and push digest (amd64)
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: Dockerfile.frontend
@@ -181,25 +181,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Compute lowercase image name
         id: image
         run: echo "name=$(echo '${{ env.REGISTRY }}/${{ github.repository }}-frontend' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.2.0
 
       - name: Build and push digest (arm64)
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: Dockerfile.frontend
@@ -220,10 +220,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -267,10 +267,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}

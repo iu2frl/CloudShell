@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       # -- Python setup --------------------------------------------------------
       - name: Set up Python ${{ inputs.python-version }}
@@ -44,7 +44,7 @@ jobs:
 
       # -- Node setup (build frontend so FastAPI can serve static files) -------
       - name: Set up Node.js ${{ inputs.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm

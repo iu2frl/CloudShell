@@ -10,13 +10,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.2.0
 
       - name: Build backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: Dockerfile.backend
@@ -27,7 +27,7 @@ jobs:
           cache-to: type=gha,scope=backend,mode=max
 
       - name: Build frontend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: Dockerfile.frontend

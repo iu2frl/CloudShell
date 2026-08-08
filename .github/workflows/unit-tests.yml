@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python ${{ inputs.python-version }}
         uses: actions/setup-python@v5
@@ -86,7 +86,7 @@ jobs:
           python3 scripts/list_endpoints.py >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || python3 -m scripts.list_endpoints >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "Failed to enumerate endpoints" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish JUnit test results artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: junit-results-py${{ inputs.python-version }}
@@ -94,7 +94,7 @@ jobs:
           retention-days: 30
 
       - name: Publish coverage report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: coverage-report-py${{ inputs.python-version }}
