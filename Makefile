@@ -1,4 +1,4 @@
-.PHONY: help dev build build-backend build-frontend smoke-test up down logs restart shell test test-unit test-coverage test-all
+.PHONY: help dev build build-backend build-frontend smoke-test up down logs restart shell test test-unit test-coverage test-all full-ci
 
 COMPOSE = docker compose
 
@@ -20,6 +20,7 @@ help:
 	@echo "  make test-unit        Run tests without coverage reporting (fast)"
 	@echo "  make test-coverage    Run tests and open the HTML coverage report"
 	@echo "  make test-all         Run tests for Python 3.11, 3.12, and 3.13"
+	@echo "  make full-ci          Run full test suite then build Docker images"
 	@echo ""
 
 # -- Local development (no Docker) ---------------------------------------------
@@ -95,6 +96,9 @@ test-coverage:
 	@open reports/htmlcov/index.html 2>/dev/null \
 	  || xdg-open reports/htmlcov/index.html 2>/dev/null \
 	  || echo "HTML report is at reports/htmlcov/index.html"
+
+# Full CI gate: tests must pass before images are built
+full-ci: test build
 
 # Matrix run across all supported Python versions (requires pyenv or similar)
 test-all:
