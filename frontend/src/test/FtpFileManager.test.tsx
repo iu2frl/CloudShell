@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FtpFileManager } from '../components/FtpFileManager';
 import { ToastProvider } from '../components/Toast';
@@ -140,6 +140,33 @@ describe('FtpFileManager — connecting state', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Trust certificate' }));
     await waitFor(() => expect(mockOpenFtpSession).toHaveBeenNthCalledWith(2, 5, { trustCert: true }));
   });
+
+  it('shows changed-certificate modal and can cancel trust', async () => {
+    const api = await import('../api/client');
+    const challenge = new api.FtpsCertificateChallengeError({
+      code: 'FTPS_CERT_CHANGED',
+      thumbprint: 'AA:BB:NEW',
+      previous_thumbprint: 'AA:BB:OLD',
+    });
+    mockOpenFtpSession.mockRejectedValueOnce(challenge);
+
+    setup({ connection_type: 'ftps' });
+
+    await waitFor(() => expect(screen.getByText('FTPS Certificate Changed')).toBeInTheDocument());
+    expect(screen.getByText('AA:BB:OLD')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Connection cancelled/i)).toBeInTheDocument();
+    });
+  });
+
+  it('surfaces non-challenge FTPS connection errors', async () => {
+    mockOpenFtpSession.mockRejectedValueOnce(new Error('TLS handshake failed'));
+    setup({ connection_type: 'ftps' });
+    await waitFor(() => {
+      expect(screen.getByText(/TLS handshake failed/i)).toBeInTheDocument();
+    });
+  });
 });
 
 // -- Error state ---------------------------------------------------------------
@@ -205,6 +232,29 @@ describe('FtpFileManager — directory listing', () => {
       expect(screen.getByText('1 item')).toBeInTheDocument();
     });
   });
+
+  it('shows list error toast when ftpList fails', async () => {
+    mockFtpList.mockRejectedValueOnce(new Error('list failed'));
+    setup();
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to list directory/i)).toBeInTheDocument();
+    });
+  });
+
+  it('formats large file sizes in MB and GB', async () => {
+    mockFtpList.mockResolvedValue({
+      path: '/',
+      entries: [
+        { ...FILE_ENTRY, name: 'video.bin', path: '/video.bin', size: 5 * 1024 * 1024 },
+        { ...FILE_ENTRY, name: 'backup.img', path: '/backup.img', size: 3 * 1024 * 1024 * 1024 },
+      ],
+    });
+    setup();
+    await waitFor(() => {
+      expect(screen.getByText('5.0 MB')).toBeInTheDocument();
+      expect(screen.getByText('3.0 GB')).toBeInTheDocument();
+    });
+  });
 });
 
 // -- Protocol badge ------------------------------------------------------------
@@ -252,6 +302,24 @@ describe('FtpFileManager — navigation', () => {
     await userEvent.click(rootCrumb);
     await waitFor(() => expect(mockFtpList).toHaveBeenLastCalledWith('sess-ftp-1', '/'));
   });
+
+  it('go up button navigates to parent directory', async () => {
+    mockFtpList
+      .mockResolvedValueOnce({ path: '/', entries: [{ ...DIR_ENTRY, path: '/a', name: 'a' }] })
+      .mockResolvedValueOnce({ path: '/a', entries: [{ ...DIR_ENTRY, path: '/a/b', name: 'b' }] })
+      .mockResolvedValueOnce({ path: '/a/b', entries: [] })
+      .mockResolvedValueOnce({ path: '/a', entries: [] });
+
+    setup();
+    await waitFor(() => screen.getByText('a'));
+    await userEvent.click(screen.getByText('a'));
+    await waitFor(() => screen.getByText('b'));
+    await userEvent.click(screen.getByText('b'));
+    await waitFor(() => screen.getByRole('button', { name: 'Go up' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Go up' }));
+    await waitFor(() => expect(mockFtpList).toHaveBeenLastCalledWith('sess-ftp-1', '/a'));
+  });
 });
 
 // -- Download ------------------------------------------------------------------
@@ -264,6 +332,61 @@ describe('FtpFileManager — download', () => {
     const downloadBtn = screen.getByTitle('Download');
     await userEvent.click(downloadBtn);
     expect(mockFtpDownload).toHaveBeenCalledWith('sess-ftp-1', '/readme.txt');
+  });
+
+  it('shows toast when download fails', async () => {
+    mockFtpDownload.mockRejectedValueOnce(new Error('download boom'));
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    await userEvent.click(screen.getByTitle('Download'));
+    await waitFor(() => {
+      expect(screen.getByText(/Download failed/i)).toBeInTheDocument();
+    });
+  });
+});
+
+describe('FtpFileManager — upload', () => {
+  it('uploads selected files and refreshes directory', async () => {
+    mockFtpUpload.mockImplementation(async (_sid, _path, _file, onProgress) => {
+      onProgress?.(50);
+      onProgress?.(100);
+    });
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['abc'], 'upload.txt', { type: 'text/plain' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(mockFtpUpload).toHaveBeenCalledWith('sess-ftp-1', '/', expect.any(File), expect.any(Function));
+    });
+    await waitFor(() => {
+      expect(mockFtpList).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('shows upload error toast when upload fails', async () => {
+    mockFtpUpload.mockRejectedValueOnce(new Error('upload failed hard'));
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['abc'], 'upload.txt', { type: 'text/plain' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Upload failed/i)).toBeInTheDocument();
+    });
+  });
+
+  it('clicking upload button triggers hidden file input click', async () => {
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const clickSpy = vi.spyOn(input, 'click');
+    await userEvent.click(screen.getByTitle('Upload file'));
+    expect(clickSpy).toHaveBeenCalled();
   });
 });
 
@@ -292,6 +415,37 @@ describe('FtpFileManager — delete flow', () => {
     await waitFor(() =>
       expect(mockFtpDelete).toHaveBeenCalledWith('sess-ftp-1', '/readme.txt', false, expect.any(Function)),
     );
+  });
+
+  it('shows deleting progress for directory delete callback updates', async () => {
+    mockFtpList.mockResolvedValue({ path: '/', entries: [DIR_ENTRY] });
+    mockFtpDelete.mockImplementationOnce(async (_sid, _path, _isDir, onProgress) => {
+      onProgress?.(2);
+      onProgress?.(5);
+    });
+    setup();
+    await waitFor(() => screen.getByText('uploads'));
+    await userEvent.click(screen.getByTitle('Delete'));
+    const confirmDeleteBtns = screen.getAllByRole('button', { name: /^delete$/i });
+    await userEvent.click(confirmDeleteBtns[confirmDeleteBtns.length - 1]);
+
+    await waitFor(() => {
+      expect(mockFtpDelete).toHaveBeenCalledWith('sess-ftp-1', '/uploads', true, expect.any(Function));
+    });
+  });
+
+  it('shows delete error toast on failure', async () => {
+    mockFtpDelete.mockRejectedValueOnce(new Error('delete failed hard'));
+    mockFtpList.mockResolvedValue({ path: '/', entries: [FILE_ENTRY] });
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    await userEvent.click(screen.getByTitle('Delete'));
+    const confirmDeleteBtns = screen.getAllByRole('button', { name: /^delete$/i });
+    await userEvent.click(confirmDeleteBtns[confirmDeleteBtns.length - 1]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Delete failed/i)).toBeInTheDocument();
+    });
   });
 
   it('Cancel in delete modal closes without calling ftpDelete', async () => {
@@ -333,6 +487,22 @@ describe('FtpFileManager — rename flow', () => {
       expect(mockFtpRename).toHaveBeenCalledWith('sess-ftp-1', '/readme.txt', '/new.txt'),
     );
   });
+
+  it('submits rename on Enter key and handles failure', async () => {
+    mockFtpList.mockResolvedValue({ path: '/', entries: [FILE_ENTRY] });
+    mockFtpRename.mockRejectedValueOnce(new Error('rename fail'));
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    await userEvent.click(screen.getByTitle('Rename'));
+    const input = screen.getByDisplayValue('readme.txt');
+    await userEvent.clear(input);
+    await userEvent.type(input, 'x.txt');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Rename failed/i)).toBeInTheDocument();
+    });
+  });
 });
 
 // -- Mkdir ---------------------------------------------------------------------
@@ -355,6 +525,20 @@ describe('FtpFileManager — mkdir flow', () => {
     await waitFor(() =>
       expect(mockFtpMkdir).toHaveBeenCalledWith('sess-ftp-1', '/archive'),
     );
+  });
+
+  it('submits mkdir on Enter key and handles failure', async () => {
+    mockFtpMkdir.mockRejectedValueOnce(new Error('mkdir failed'));
+    setup();
+    await waitFor(() => screen.getByText('readme.txt'));
+    await userEvent.click(screen.getByTitle('New folder'));
+    const input = screen.getByPlaceholderText('folder-name');
+    await userEvent.type(input, 'tmp');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Create folder failed/i)).toBeInTheDocument();
+    });
   });
 });
 
