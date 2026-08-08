@@ -43,9 +43,13 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          xterm: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links'],
-          react: ['react', 'react-dom'],
+        manualChunks: (id: string) => {
+          if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-fit') || id.includes('@xterm/addon-web-links')) {
+            return 'xterm';
+          }
+          if (id.includes('react') || id.includes('react-dom')) {
+            return 'react';
+          }
         },
       },
     },
