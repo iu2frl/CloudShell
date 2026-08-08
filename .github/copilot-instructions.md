@@ -37,6 +37,8 @@
 - Ensure smoke tests are available for all private and public APIs
 - Ensure all tests (both frontend and backend) are run in a consistent environment (e.g. using Docker)
 - Ensure all tests (both frontend and backend) are run at every pull request creation or update
+- Never reduce the test coverage of any existing code, even if the code is being refactored or rewritten
+- Never reduce the test scope by removing any existing tests
 
 ## Security considerations
 
