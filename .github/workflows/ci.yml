@@ -33,8 +33,8 @@ on:
       node-version:
         description: Node.js version
         type: choice
-        options: ["21", "22"]
-        default: "22"
+        options: ["22", "25", "26"]
+        default: "26"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -61,7 +61,7 @@ jobs:
       contents: read
       pull-requests: write
     with:
-      node-version: ${{ inputs.node-version || '22' }}
+      node-version: ${{ inputs.node-version || '26' }}
 
   integration-tests:
     name: Integration Tests
@@ -73,7 +73,7 @@ jobs:
       pull-requests: write
     with:
       python-version: ${{ inputs.python-version || '3.12' }}
-      node-version: ${{ inputs.node-version || '22' }}
+      node-version: ${{ inputs.node-version || '26' }}
 
   docker-build:
     name: Docker Build
