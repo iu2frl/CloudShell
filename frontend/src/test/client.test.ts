@@ -471,3 +471,323 @@ describe('FTP API functions', () => {
     expect(onProgress).toHaveBeenCalledWith(25);
   });
 });
+
+describe('client additional coverage', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('getTokenExpiry returns null when storage throws', () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+    expect(getTokenExpiry()).toBeNull();
+    getItemSpy.mockRestore();
+  });
+
+  it('login throws 2FA_REQUIRED for 403 challenge', async () => {
+    const { login } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ detail: '2FA_REQUIRED' }),
+    }));
+    await expect(login('admin', 'pw')).rejects.toThrow('2FA_REQUIRED');
+  });
+
+  it('login throws Invalid 2FA code for 401 challenge', async () => {
+    const { login } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'Invalid 2FA code' }),
+    }));
+    await expect(login('admin', 'pw', '000000')).rejects.toThrow('Invalid 2FA code');
+  });
+
+  it('logout clears token even if API fails', async () => {
+    const { logout } = await import('../api/client');
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 60000).toString());
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Error',
+      json: async () => ({ detail: 'boom' }),
+    }));
+    await logout();
+    expect(sessionStorage.getItem('cloudshell_token_expiry')).toBeNull();
+  });
+
+  it('refreshToken logs out when refresh fails', async () => {
+    const { refreshToken } = await import('../api/client');
+    sessionStorage.setItem('cloudshell_token_expiry', (Date.now() + 60000).toString());
+    const events: string[] = [];
+    window.addEventListener('cloudshell:session-expired', () => events.push('fired'));
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'expired' }),
+    }));
+
+    await refreshToken();
+    expect(events).toContain('fired');
+    expect(sessionStorage.getItem('cloudshell_token_expiry')).toBeNull();
+  });
+
+  it('refreshToken stores updated expiry on success', async () => {
+    const { refreshToken } = await import('../api/client');
+    const futureDate = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ expires_at: futureDate }),
+    }));
+    await refreshToken();
+    expect(getTokenExpiry()).toBeInstanceOf(Date);
+  });
+
+  it('changePassword posts expected payload', async () => {
+    const { changePassword } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: async () => undefined,
+    }));
+
+    await changePassword('old', 'new');
+
+    const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain('/auth/change-password');
+    const body = JSON.parse((options as RequestInit).body as string);
+    expect(body).toEqual({ current_password: 'old', new_password: 'new' });
+  });
+
+  it('covers basic device and folder endpoint wrappers', async () => {
+    const {
+      listDevices,
+      createDevice,
+      updateDevice,
+      deleteDevice,
+      listFolders,
+      getFolder,
+      createFolder,
+      updateFolder,
+      deleteFolder,
+      getMe,
+      listAuditLogs,
+      generateKeyPair,
+    } = await import('../api/client');
+
+    const responses = [
+      { ok: true, status: 200, json: async () => [] },
+      { ok: true, status: 200, json: async () => ({ id: 1 }) },
+      { ok: true, status: 200, json: async () => ({ id: 1 }) },
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 200, json: async () => [] },
+      { ok: true, status: 200, json: async () => ({ id: 7, children: [], device_count: 0 }) },
+      { ok: true, status: 200, json: async () => ({ id: 8 }) },
+      { ok: true, status: 200, json: async () => ({ id: 8 }) },
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 200, json: async () => ({ username: 'u', expires_at: 'x' }) },
+      { ok: true, status: 200, json: async () => ({ total: 0, page: 1, page_size: 50, entries: [] }) },
+      { ok: true, status: 200, json: async () => ({ private_key: 'a', public_key: 'b' }) },
+    ];
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(responses.shift())));
+
+    await listDevices();
+    await createDevice({ name: 'n', hostname: 'h', port: 22, username: 'u', auth_type: 'password', connection_type: 'ssh', password: 'p' });
+    await updateDevice(1, { name: 'x' });
+    await deleteDevice(1);
+    await listFolders();
+    await getFolder(7);
+    await createFolder({ name: 'f' });
+    await updateFolder(8, { description: 'd' });
+    await deleteFolder(8);
+    await getMe();
+    await listAuditLogs();
+    await generateKeyPair();
+
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(12);
+  });
+
+  it('covers SFTP wrappers and download fallback filename', async () => {
+    const { closeSftpSession, sftpList, sftpDownload, sftpDelete, sftpRename, sftpMkdir } = await import('../api/client');
+
+    const clickSpy = vi.fn();
+    const originalCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+      const el = originalCreate(tag);
+      if (tag === 'a') {
+        Object.defineProperty(el, 'click', { value: clickSpy });
+      }
+      return el;
+    });
+    const objectUrlSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    const responses = [
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 200, json: async () => ({ path: '/', entries: [] }) },
+      {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        blob: async () => new Blob(['abc']),
+      },
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 204, json: async () => undefined },
+      { ok: true, status: 204, json: async () => undefined },
+    ];
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(responses.shift())));
+
+    await closeSftpSession('s1');
+    await sftpList('s1', '/');
+    await sftpDownload('s1', '/folder/file.txt');
+    await sftpDelete('s1', '/old.txt', false);
+    await sftpRename('s1', '/a', '/b');
+    await sftpMkdir('s1', '/new');
+
+    expect(clickSpy).toHaveBeenCalled();
+    expect(objectUrlSpy).toHaveBeenCalled();
+    expect(revokeSpy).toHaveBeenCalled();
+  });
+
+  it('sftpDownload throws session expired on 401', async () => {
+    const { sftpDownload } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'unauthorized' }),
+      headers: new Headers(),
+    }));
+    await expect(sftpDownload('sess', '/x')).rejects.toThrow('Session expired');
+  });
+
+  it('sftpUpload handles 401, parse error, and network error', async () => {
+    const { sftpUpload } = await import('../api/client');
+
+    const base = {
+      open: vi.fn(),
+      setRequestHeader: vi.fn(),
+      send: vi.fn(),
+      upload: { onprogress: null as unknown },
+      onload: null as unknown,
+      onerror: null as unknown,
+      status: 0,
+      responseText: '',
+    };
+
+    const runCase = async (status: number, responseText: string, event: 'load' | 'error') => {
+      const xhrMock = { ...base, status, responseText, onload: null as unknown, onerror: null as unknown };
+      class FakeXHR {
+        constructor() {
+          return xhrMock as unknown as FakeXHR;
+        }
+      }
+      vi.stubGlobal('XMLHttpRequest', FakeXHR);
+      const file = new File(['x'], 'x.txt');
+      const p = sftpUpload('sess', '/up', file);
+      if (event === 'load') {
+        (xhrMock.onload as () => void)();
+      } else {
+        (xhrMock.onerror as () => void)();
+      }
+      return p;
+    };
+
+    await expect(runCase(401, '{}', 'load')).rejects.toThrow('Session expired');
+    await expect(runCase(500, '{bad-json', 'load')).rejects.toThrow('Upload failed');
+    await expect(runCase(0, '', 'error')).rejects.toThrow('Network error during upload');
+  });
+
+  it('ftpDownload throws session expired on 401', async () => {
+    const { ftpDownload } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'unauthorized' }),
+      headers: new Headers(),
+    }));
+    await expect(ftpDownload('sess', '/x')).rejects.toThrow('Session expired');
+  });
+
+  it('openSession and openSftpSession surface non-challenge object detail', async () => {
+    const { openSession, openSftpSession } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: { code: 'SSH_HOST_UNTRUSTED' } }) })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: { code: 'SSH_HOST_CHANGED' } }) }));
+
+    await expect(openSession(1)).rejects.toThrow('[object Object]');
+    await expect(openSftpSession(2)).rejects.toThrow('[object Object]');
+  });
+
+  it('exportConfig and importConfig cover success and errors', async () => {
+    const { exportConfig, importConfig } = await import('../api/client');
+
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        blob: async () => new Blob(['cfg']),
+        json: async () => ({}),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ imported: 1, skipped: 0, errors: 0, messages: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ detail: 'expired' }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Server Error',
+        json: async () => ({ detail: 'Import failed hard' }),
+      }));
+
+    const blob = await exportConfig();
+    expect(blob).toBeInstanceOf(Blob);
+
+    const result = await importConfig(new File(['{}'], 'config.json'));
+    expect(result.imported).toBe(1);
+
+    await expect(exportConfig()).rejects.toThrow('Session expired');
+    await expect(importConfig(new File(['{}'], 'bad.json'))).rejects.toThrow('Import failed hard');
+  });
+
+  it('2FA endpoints call expected routes', async () => {
+    const { get2FAStatus, setup2FA, enable2FA, disable2FA } = await import('../api/client');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ enabled: true }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ qr_code: 'qr', backup_codes: ['a'] }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined })
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined }));
+
+    const status = await get2FAStatus();
+    expect(status.enabled).toBe(true);
+    const setup = await setup2FA();
+    expect(setup.qr_code).toBe('qr');
+    await enable2FA('111111');
+    await disable2FA('111111');
+
+    const urls = (fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
+    expect(urls.some((u) => u.includes('/auth/2fa/status'))).toBe(true);
+    expect(urls.some((u) => u.includes('/auth/2fa/setup'))).toBe(true);
+    expect(urls.some((u) => u.includes('/auth/2fa/enable'))).toBe(true);
+    expect(urls.some((u) => u.includes('/auth/2fa/disable'))).toBe(true);
+  });
+});

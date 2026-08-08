@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DeviceForm } from '../components/DeviceForm';
 import { ToastProvider } from '../components/Toast';
@@ -29,6 +29,10 @@ vi.mock('../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/client')>();
   return {
     ...actual,
+    generateKeyPair: vi.fn().mockResolvedValue({
+      private_key: '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----',
+      public_key: 'ssh-ed25519 AAAATEST key@example',
+    }),
     createDevice: vi.fn().mockResolvedValue({
       id: 99,
       name: 'Test',
@@ -243,5 +247,162 @@ describe('DeviceForm — trusted fingerprint management', () => {
 
     expect(screen.queryByText('SHA256:abc123')).not.toBeInTheDocument();
     expect(screen.queryByText('AA:BB:CC:DD')).not.toBeInTheDocument();
+  });
+
+  it('shows error when fingerprint delete fails', async () => {
+    const { updateDevice } = await import('../api/client');
+    (updateDevice as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('delete fingerprint failed'));
+
+    setup({
+      device: makeDevice({
+        ssh_host_fingerprint: 'SHA256:abc123',
+      }),
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete SSH fingerprint' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/delete fingerprint failed/i)).toBeInTheDocument();
+    });
+  });
+});
+
+describe('DeviceForm — submit flows', () => {
+  it('creates a device and calls onSave', async () => {
+    const { onSave } = setup();
+    await userEvent.type(screen.getByPlaceholderText('My Server'), 'Created');
+    await userEvent.type(screen.getByPlaceholderText('192.168.1.1'), '10.0.0.2');
+    await userEvent.type(screen.getByPlaceholderText('root'), 'ubuntu');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalled();
+    });
+  });
+
+  it('updates existing device and calls onSave', async () => {
+    const { onSave } = setup({ device: makeDevice() });
+    await userEvent.clear(screen.getByPlaceholderText('My Server'));
+    await userEvent.type(screen.getByPlaceholderText('My Server'), 'Edited');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('DeviceForm — key auth flow', () => {
+  it('renders key auth inputs and updates private key textarea', async () => {
+    setup();
+    const authSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
+    await userEvent.selectOptions(authSelect, 'key');
+
+    expect(screen.getByText('Private Key (PEM)')).toBeInTheDocument();
+    const textarea = screen.getByPlaceholderText('-----BEGIN OPENSSH PRIVATE KEY-----') as HTMLTextAreaElement;
+    await userEvent.type(textarea, 'line1');
+    expect(textarea.value).toContain('line1');
+  });
+
+  it('generates key pair, shows public key, and copies it', async () => {
+    const { generateKeyPair } = await import('../api/client');
+    const clipboardWrite = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: clipboardWrite },
+      configurable: true,
+    });
+
+    setup();
+    const authSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
+    await userEvent.selectOptions(authSelect, 'key');
+
+    await userEvent.click(screen.getByRole('button', { name: /Generate key pair/i }));
+
+    await waitFor(() => {
+      expect(generateKeyPair).toHaveBeenCalled();
+      expect(screen.getByText(/authorized_keys/)).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    expect(clipboardWrite).toHaveBeenCalledWith('ssh-ed25519 AAAATEST key@example');
+    expect(screen.getByText('Copied!')).toBeInTheDocument();
+  });
+
+  it('shows error when key generation fails', async () => {
+    const { generateKeyPair } = await import('../api/client');
+    (generateKeyPair as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('gen failed'));
+
+    setup();
+    const authSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
+    await userEvent.selectOptions(authSelect, 'key');
+    await userEvent.click(screen.getByRole('button', { name: /Generate key pair/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Key generation failed/i)).toBeInTheDocument();
+    });
+  });
+
+  it('loads private key from uploaded file', async () => {
+    setup();
+    const authSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
+    await userEvent.selectOptions(authSelect, 'key');
+
+    const fileContent = 'PRIVATE KEY CONTENT';
+    const readAsText = vi.fn(function mockReadAsText(this: FileReader) {
+      Object.defineProperty(this, 'result', { value: fileContent, configurable: true });
+      if (this.onload) this.onload(new ProgressEvent('load'));
+    });
+    class MockFileReader {
+      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
+      result: string | ArrayBuffer | null = null;
+      readAsText = readAsText;
+    }
+    vi.stubGlobal('FileReader', MockFileReader as unknown as typeof FileReader);
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([fileContent], 'id_rsa', { type: 'text/plain' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    const textarea = screen.getByPlaceholderText('-----BEGIN OPENSSH PRIVATE KEY-----') as HTMLTextAreaElement;
+    await waitFor(() => {
+      expect(textarea.value).toContain(fileContent);
+    });
+  });
+});
+
+describe('DeviceForm — folder and numeric inputs', () => {
+  it('renders folder select and allows selecting root', async () => {
+    const folders = [
+      {
+        folder: {
+          id: 10,
+          name: 'Prod',
+          description: null,
+          parent_folder_id: null,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          device_count: 0,
+          children: [],
+        },
+        path: 'Prod',
+      },
+    ];
+    setup({ folders });
+
+    expect(screen.getByText('Folder (optional)')).toBeInTheDocument();
+    const selects = screen.getAllByRole('combobox');
+    const folderSelect = selects[2] as HTMLSelectElement;
+    await userEvent.selectOptions(folderSelect, '10');
+    expect(folderSelect.value).toBe('10');
+    await userEvent.selectOptions(folderSelect, '');
+    expect(folderSelect.value).toBe('');
+  });
+
+  it('updates port field with numeric input', async () => {
+    setup();
+    const portInput = screen.getByDisplayValue('22') as HTMLInputElement;
+    fireEvent.change(portInput, { target: { value: '2222' } });
+    expect(portInput.value).toBe('2222');
   });
 });
