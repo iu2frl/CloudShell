@@ -10,7 +10,7 @@ on:
       node-version:
         description: Node.js version to use
         type: string
-        default: "20"
+        default: "26"
 
 jobs:
   api-tests:
