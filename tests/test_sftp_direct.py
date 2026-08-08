@@ -476,8 +476,10 @@ async def test_open_session_direct_host_key_not_verifiable_returns_502():
 async def test_open_session_direct_oserror_returns_502():
     """OSError maps to 502."""
     device = _password_device()
+    device.ssh_host_fingerprint = "SHA256:TEST"
     with (
         patch("backend.routers.sftp.decrypt", return_value="pw"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=OSError("refused"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -488,8 +490,10 @@ async def test_open_session_direct_oserror_returns_502():
 async def test_open_session_direct_asyncssh_error_returns_502():
     """Generic asyncssh.Error maps to 502."""
     device = _password_device()
+    device.ssh_host_fingerprint = "SHA256:TEST"
     with (
         patch("backend.routers.sftp.decrypt", return_value="pw"),
+        patch("backend.routers.sftp.probe_ssh_host_fingerprint", new=AsyncMock(return_value="SHA256:TEST")),
         patch("backend.routers.sftp.open_sftp_session", new=AsyncMock(side_effect=asyncssh.Error(code=0, reason="err"))),
     ):
         with pytest.raises(HTTPException) as exc_info:
