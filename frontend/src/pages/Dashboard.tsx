@@ -356,7 +356,7 @@ export function Dashboard({ onLogout }: Props) {
                     ? <FileManager device={tab.device} />
                     : tab.device.connection_type === "ftp" || tab.device.connection_type === "ftps"
                     ? <FtpFileManager device={tab.device} />
-                    : <Terminal device={tab.device} />
+                    : <Terminal device={tab.device} terminalKey={tab.key} />
                   }
                 </div>
               ))}
