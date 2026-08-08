@@ -175,7 +175,8 @@ async def update_device(
         if val is not None:
             setattr(device, field, val)
 
-    if payload.password is not None:
+    if payload.password is not None and payload.password != "":
+        # Empty string means "leave existing password unchanged".
         device.encrypted_password = encrypt(payload.password)
     if payload.private_key is not None:
         device.key_filename = _store_key(device.id, payload.private_key, settings.keys_dir)
