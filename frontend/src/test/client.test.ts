@@ -91,7 +91,7 @@ describe('terminalWsUrl', () => {
 
   afterEach(() => {
     Object.defineProperty(window, 'location', { value: originalLocation, writable: true });
-    localStorage.clear();
+    sessionStorage.clear();
   });
 
   function mockProtocol(protocol: 'http:' | 'https:') {
@@ -130,7 +130,7 @@ describe('terminalWsUrl', () => {
 // -- request (via global fetch mock) ------------------------------------------
 
 describe('request (via login helper)', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
   afterEach(() => vi.restoreAllMocks());
 
   it('stores the token expiry in sessionStorage on successful login', async () => {

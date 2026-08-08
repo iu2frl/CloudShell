@@ -379,3 +379,4 @@ frontend/dist/
 **/reports/*.xml
 audit-output.txt
 coverage-output.txt
+.nvmrc
