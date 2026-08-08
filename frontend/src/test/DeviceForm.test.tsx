@@ -358,7 +358,7 @@ describe('DeviceForm — key auth flow', () => {
     const fileContent = 'PRIVATE KEY CONTENT';
     const readAsText = vi.fn(function mockReadAsText(this: FileReader) {
       Object.defineProperty(this, 'result', { value: fileContent, configurable: true });
-      if (this.onload) this.onload(new ProgressEvent('load'));
+      if (this.onload) this.onload(new ProgressEvent('load') as ProgressEvent<FileReader>);
     });
     class MockFileReader {
       onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
@@ -457,7 +457,7 @@ describe('DeviceForm — fingerprint delete guard', () => {
     await userEvent.click(btn);
     expect(updateDevice).toHaveBeenCalledTimes(1);
 
-    resolveDelete?.(undefined);
+    if (resolveDelete) (resolveDelete as (v: unknown) => void)(undefined);
     await waitFor(() => {
       expect(screen.queryByText('SHA256:abc123')).not.toBeInTheDocument();
     });

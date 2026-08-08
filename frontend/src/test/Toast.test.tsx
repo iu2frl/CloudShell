@@ -184,7 +184,7 @@ describe('ToastProvider', () => {
       .mockImplementation(((cb: TimerHandler) => {
         timeoutCallbacks.push(cb as () => void);
         return 111 as unknown as ReturnType<typeof setTimeout>;
-      }) as typeof setTimeout);
+      }) as unknown as typeof setTimeout);
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(() => {});
 
     setup();
