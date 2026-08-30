@@ -33,6 +33,8 @@ When `OIDC_ENABLED=true`, CloudShell exposes:
 The frontend login page will show a **Sign in with Pocket ID** button if OIDC is enabled and reachable.
 Local username/password login remains available in this phase.
 If `OIDC_ALLOWED_GROUP` is set, users outside that group are denied at callback.
+Configuration transfer scope:
+Local `ADMIN_USER` can export all devices. Other users can import/export only their own devices.
 
 ## Secret key generation
 

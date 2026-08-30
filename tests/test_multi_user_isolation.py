@@ -89,6 +89,22 @@ async def test_config_export_is_scoped_per_user(client):
     assert names_b == {"user-b-device"}
 
 
+async def test_config_export_local_admin_sees_all_devices(client):
+    user_a = _auth_headers("oidc:https://issuer.example:user-a")
+    user_b = _auth_headers("oidc:https://issuer.example:user-b")
+    admin = _auth_headers("admin")
+
+    create_a = await client.post("/api/devices/", json=_device_payload("a-device"), headers=user_a)
+    create_b = await client.post("/api/devices/", json=_device_payload("b-device"), headers=user_b)
+    assert create_a.status_code == 201
+    assert create_b.status_code == 201
+
+    export_admin = await client.get("/api/config/export", headers=admin)
+    assert export_admin.status_code == 200
+    names_admin = {d["name"] for d in export_admin.json()["devices"]}
+    assert {"a-device", "b-device"}.issubset(names_admin)
+
+
 async def test_terminal_session_open_rejects_cross_user_device(client):
     user_a = _auth_headers("oidc:https://issuer.example:user-a")
     user_b = _auth_headers("oidc:https://issuer.example:user-b")

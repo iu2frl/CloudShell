@@ -140,7 +140,9 @@ async def export_config(
     The returned file contains plaintext credentials and must be kept secure.
     """
     settings = get_settings()
-    owner_user_id = await get_owner_user_id(db, current_user)
+    owner_user_id = None
+    if current_user != settings.admin_user:
+        owner_user_id = await get_owner_user_id(db, current_user)
     return await _build_export_response(db, settings.keys_dir, owner_user_id)
 
 
