@@ -58,6 +58,9 @@ async def _run_migrations(conn) -> None:
         # PRAGMA table_info returns one row per column
         result = await conn.execute(text(f"PRAGMA table_info({table})"))
         columns = {row[1] for row in result.fetchall()}
+        if not columns:
+            # Table may not exist on very old/partial schemas used by unit tests.
+            continue
         if column not in columns:
             nullable_sql = "" if nullable else "NOT NULL "
             sql = (

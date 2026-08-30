@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -163,7 +163,12 @@ async def delete_folder(
     await db.execute(
         update(Device)
         .where(Device.folder_id == folder.id)
-        .where(Device.owner_user_id == owner_user_id)
+        .where(
+            or_(
+                Device.owner_user_id == owner_user_id,
+                Device.owner_user_id.is_(None),
+            )
+        )
         .values(folder_id=target_parent_id)
     )
 
@@ -171,7 +176,12 @@ async def delete_folder(
     await db.execute(
         update(Folder)
         .where(Folder.parent_folder_id == folder.id)
-        .where(Folder.owner_user_id == owner_user_id)
+        .where(
+            or_(
+                Folder.owner_user_id == owner_user_id,
+                Folder.owner_user_id.is_(None),
+            )
+        )
         .values(parent_folder_id=target_parent_id)
     )
 

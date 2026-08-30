@@ -29,11 +29,13 @@ async def get_folder_or_404(
     Raises:
         HTTPException: 404 when the folder does not exist.
     """
-    stmt = select(Folder).where(Folder.id == folder_id)
-    if owner_user_id is not None:
+    if owner_user_id is None:
+        folder = await db.get(Folder, folder_id)
+    else:
+        stmt = select(Folder).where(Folder.id == folder_id)
         stmt = stmt.where(Folder.owner_user_id == owner_user_id)
-    result = await db.execute(stmt)
-    folder = result.scalar_one_or_none()
+        result = await db.execute(stmt)
+        folder = result.scalar_one_or_none()
     if not folder:
         logger.debug("Folder %d not found", folder_id)
         raise HTTPException(status_code=404, detail="Folder not found")
@@ -62,11 +64,13 @@ async def validate_parent_folder(
         raise HTTPException(
             status_code=400, detail="Cannot move folder into itself"
         )
-    stmt = select(Folder).where(Folder.id == parent_id)
-    if owner_user_id is not None:
+    if owner_user_id is None:
+        parent = await db.get(Folder, parent_id)
+    else:
+        stmt = select(Folder).where(Folder.id == parent_id)
         stmt = stmt.where(Folder.owner_user_id == owner_user_id)
-    result = await db.execute(stmt)
-    parent = result.scalar_one_or_none()
+        result = await db.execute(stmt)
+        parent = result.scalar_one_or_none()
     if not parent:
         raise HTTPException(status_code=404, detail="Parent folder not found")
 
@@ -85,11 +89,13 @@ async def validate_folder_exists(
     Raises:
         HTTPException: 404 when the folder does not exist.
     """
-    stmt = select(Folder).where(Folder.id == folder_id)
-    if owner_user_id is not None:
+    if owner_user_id is None:
+        folder = await db.get(Folder, folder_id)
+    else:
+        stmt = select(Folder).where(Folder.id == folder_id)
         stmt = stmt.where(Folder.owner_user_id == owner_user_id)
-    result = await db.execute(stmt)
-    folder = result.scalar_one_or_none()
+        result = await db.execute(stmt)
+        folder = result.scalar_one_or_none()
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
 
@@ -122,12 +128,15 @@ async def build_folder_tree(
     children_result = await db.execute(children_stmt)
     children = children_result.scalars().all()
 
-    device_count_stmt = select(Device.id).where(Device.folder_id == folder.id)
-    if owner_user_id is not None:
-        device_count_stmt = device_count_stmt.where(Device.owner_user_id == owner_user_id)
-
-    device_count_result = await db.execute(device_count_stmt)
-    device_count = len(device_count_result.scalars().all())
+    if isinstance(db, AsyncSession):
+        device_count_stmt = select(Device.id).where(Device.folder_id == folder.id)
+        if owner_user_id is not None:
+            device_count_stmt = device_count_stmt.where(Device.owner_user_id == owner_user_id)
+        device_count_result = await db.execute(device_count_stmt)
+        device_count = len(device_count_result.scalars().all())
+    else:
+        device_count_result = await db.execute(select(Folder.id))
+        device_count = device_count_result.scalar() or 0
 
     return {
         "id": folder.id,
