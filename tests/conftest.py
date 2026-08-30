@@ -17,6 +17,13 @@ os.environ.setdefault("ADMIN_PASSWORD",       "admin")
 os.environ.setdefault("TOKEN_TTL_HOURS",      "1")
 os.environ.setdefault("DATA_DIR",             "/tmp/cloudshell-pytest")
 os.environ.setdefault("AUDIT_RETENTION_DAYS", "7")
+# Keep OIDC disabled by default in tests so local .env does not change behavior.
+os.environ["OIDC_ENABLED"] = "false"
+os.environ.pop("OIDC_ISSUER_URL", None)
+os.environ.pop("OIDC_CLIENT_ID", None)
+os.environ.pop("OIDC_CLIENT_SECRET", None)
+os.environ.pop("OIDC_REDIRECT_URI", None)
+os.environ.pop("OIDC_ALLOWED_GROUP", None)
 
 # -- Backend imports (after env vars are set) ----------------------------------
 from backend.config import get_settings  # noqa: E402
