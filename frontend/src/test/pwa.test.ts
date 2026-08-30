@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { initPwa, type RegisterSW } from '../pwa';
+import {
+  initPwa,
+  PWA_UPDATE_READY_EVENT,
+  type PwaUpdateReadyDetail,
+  type RegisterSW,
+} from '../pwa';
 
 describe('initPwa', () => {
   it('registers service worker in production when supported', () => {
@@ -41,5 +46,31 @@ describe('initPwa', () => {
 
     expect(enabled).toBe(false);
     expect(registerSW).not.toHaveBeenCalled();
+  });
+
+  it('dispatches update-ready event and applies update callback', () => {
+    let capturedOnNeedRefresh: (() => void) | undefined;
+    const updateSW = vi.fn();
+    const registerSW: RegisterSW = (options) => {
+      capturedOnNeedRefresh = options?.onNeedRefresh;
+      return updateSW;
+    };
+
+    initPwa(registerSW, {
+      isProd: true,
+      hasServiceWorker: true,
+    });
+
+    let eventDetail: PwaUpdateReadyDetail | undefined;
+    window.addEventListener(PWA_UPDATE_READY_EVENT, ((event: Event) => {
+      eventDetail = (event as CustomEvent<PwaUpdateReadyDetail>).detail;
+    }) as EventListener, { once: true });
+
+    expect(capturedOnNeedRefresh).toBeTypeOf('function');
+    capturedOnNeedRefresh?.();
+
+    expect(eventDetail).toBeTruthy();
+    eventDetail?.applyUpdate();
+    expect(updateSW).toHaveBeenCalledWith(true);
   });
 });
