@@ -1,5 +1,9 @@
 # React + TypeScript + Vite
 
+## Runtime requirement
+
+Use Node.js 22 or newer for this frontend (Vite/Vitest toolchain). If you use `nvm`, run `nvm use` in the repository root.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

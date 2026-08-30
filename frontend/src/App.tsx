@@ -94,6 +94,25 @@ function App() {
     };
   }, [probeBackend]);
 
+  // On first load, try to recover session from cookie-based auth (OIDC callback flow).
+  useEffect(() => {
+    if (authed) {
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const recovered = await recoverSession();
+      if (!cancelled && recovered) {
+        setAuthed(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authed, recoverSession]);
+
   // If the app was authenticated when connection drops, request recovery on reconnect.
   useEffect(() => {
     if (connectionLost && authed) {

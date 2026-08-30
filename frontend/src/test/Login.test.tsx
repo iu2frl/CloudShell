@@ -8,6 +8,8 @@ vi.mock('../api/client', async (importOriginal) => {
   return {
     ...actual,
     login: vi.fn().mockResolvedValue(undefined),
+    getOidcStatus: vi.fn().mockResolvedValue({ enabled: false }),
+    startOidcLogin: vi.fn(),
   };
 });
 
@@ -35,5 +37,19 @@ describe('Login', () => {
       expect(login).toHaveBeenCalledWith('admin', 'secret', undefined, false);
       expect(onLogin).toHaveBeenCalledOnce();
     });
+  });
+
+  it('starts OIDC flow when Pocket ID button is clicked', async () => {
+    const onLogin = vi.fn();
+    const { getOidcStatus, startOidcLogin } = await import('../api/client');
+
+    vi.mocked(getOidcStatus).mockResolvedValueOnce({ enabled: true });
+    render(<Login onLogin={onLogin} />);
+
+    const button = await screen.findByRole('button', { name: /sign in with pocket id/i });
+    await userEvent.click(button);
+
+    expect(startOidcLogin).toHaveBeenCalledTimes(1);
+    expect(startOidcLogin).toHaveBeenCalledWith('/');
   });
 });

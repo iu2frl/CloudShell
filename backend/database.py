@@ -19,8 +19,8 @@ class Base(DeclarativeBase):
 
 # Import all models here so SQLAlchemy knows about them before create_all()
 def _import_models():
-    from backend.models import device, auth, audit, folder  # noqa: F401
-    _ = device, auth, audit, folder
+    from backend.models import device, auth, audit, folder, user  # noqa: F401
+    _ = device, auth, audit, folder, user
 
 
 def get_engine():
@@ -47,6 +47,8 @@ _MIGRATIONS: list[tuple[str, str, str, str, bool]] = [
     ("devices", "ssh_host_fingerprint", "VARCHAR(128)", "NULL", True),
     ("devices", "ftps_cert_thumbprint", "VARCHAR(128)", "NULL", True),
     ("devices", "folder_id", "INTEGER", "NULL", True),
+    ("devices", "owner_user_id", "INTEGER", "NULL", True),
+    ("folders", "owner_user_id", "INTEGER", "NULL", True),
 ]
 
 
@@ -56,6 +58,9 @@ async def _run_migrations(conn) -> None:
         # PRAGMA table_info returns one row per column
         result = await conn.execute(text(f"PRAGMA table_info({table})"))
         columns = {row[1] for row in result.fetchall()}
+        if not columns:
+            # Table may not exist on very old/partial schemas used by unit tests.
+            continue
         if column not in columns:
             nullable_sql = "" if nullable else "NOT NULL "
             sql = (
@@ -99,6 +104,47 @@ async def _encrypt_legacy_totp_secrets(conn) -> None:
         log.info("Migration: normalized %s TOTP secrets to versioned encryption", migrated_count)
 
 
+async def _ensure_user_ownership_backfill(conn) -> None:
+    """Ensure legacy rows receive an owner mapped to the configured admin user."""
+    settings = get_settings()
+    username = settings.admin_user
+
+    await conn.execute(
+        text(
+            """
+            INSERT INTO users (username, auth_provider, provider_issuer, provider_subject, is_admin, created_at, updated_at)
+            VALUES (:username, 'local', NULL, NULL, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(username) DO UPDATE SET
+                is_admin = 1,
+                updated_at = CURRENT_TIMESTAMP
+            """
+        ),
+        {"username": username},
+    )
+
+    result = await conn.execute(
+        text("SELECT id FROM users WHERE username = :username"),
+        {"username": username},
+    )
+    admin_row = result.fetchone()
+    if not admin_row:
+        return
+    admin_user_id = admin_row[0]
+
+    await conn.execute(
+        text(
+            "UPDATE devices SET owner_user_id = :owner_user_id WHERE owner_user_id IS NULL"
+        ),
+        {"owner_user_id": admin_user_id},
+    )
+    await conn.execute(
+        text(
+            "UPDATE folders SET owner_user_id = :owner_user_id WHERE owner_user_id IS NULL"
+        ),
+        {"owner_user_id": admin_user_id},
+    )
+
+
 async def init_db():
     """Create all tables on startup, then run incremental column migrations."""
     _import_models()
@@ -108,6 +154,7 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await _run_migrations(conn)
         await _encrypt_legacy_totp_secrets(conn)
+        await _ensure_user_ownership_backfill(conn)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

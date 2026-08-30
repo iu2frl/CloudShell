@@ -4,6 +4,36 @@
 
 Navigate to the CloudShell URL and log in with your `ADMIN_USER` / `ADMIN_PASSWORD` credentials. The session is valid for `TOKEN_TTL_HOURS` hours; the frontend silently refreshes the token 10 minutes before expiry. The remaining session time is shown in the top-left corner of the dashboard as **Session: Xh Ym**.
 
+CloudShell supports two login paths:
+
+- **Local admin login** with `ADMIN_USER` / `ADMIN_PASSWORD`
+- **Pocket ID (OIDC) login** for additional users when enabled by the administrator
+
+Local admin login is always available, even when Pocket ID login is enabled.
+
+## Multi-user login with Pocket ID
+
+When Pocket ID is enabled, users can click **Sign in with Pocket ID** on the login page.
+
+### Access control
+
+- CloudShell can restrict OIDC login to one allowed Pocket ID group (`OIDC_ALLOWED_GROUP`)
+- Users outside that group are denied during callback
+
+### User isolation
+
+- Each user has their own device and folder scope
+- Users cannot list, open, edit, or delete devices owned by another user
+- Terminal/SFTP/FTP session open checks are owner-scoped
+
+### Configuration export/import scope
+
+- **Local admin** export includes all users' devices
+- **Pocket ID users** export includes only their own devices
+- Imports are scoped to the current user owner
+
+Treat exported JSON as sensitive because it can include plaintext credentials for exported devices.
+
 ## Two-factor authentication (2FA)
 
 CloudShell supports one-time verification codes from authenticator apps (such as Google Authenticator, Microsoft Authenticator, Authy, and similar apps).
@@ -52,7 +82,7 @@ Try the following:
 
 ## Managing devices
 
-Click **Add device** in the left sidebar to register a new SSH target. Each device requires:
+Click **Add device** in the left sidebar to register a new SSH target. In multi-user mode, each device is owned by the current signed-in user. Each device requires:
 
 | Field | Description |
 | --- | --- |

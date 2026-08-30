@@ -5,13 +5,13 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models.device import Device
 from backend.models.folder import Folder
-from backend.routers.auth import get_current_user
+from backend.routers.auth import get_current_user, get_owner_user_id
 from backend.services.folder import (
     build_folder_tree,
     get_folder_or_404,
@@ -71,12 +71,14 @@ async def create_folder(
     _: str = Depends(get_current_user),
 ):
     """Create a new folder for organizing devices."""
+    owner_user_id = await get_owner_user_id(db, _)
     if payload.parent_folder_id is not None:
-        await validate_parent_folder(db, payload.parent_folder_id)
+        await validate_parent_folder(db, payload.parent_folder_id, owner_user_id=owner_user_id)
 
     folder = Folder(
         name=payload.name,
         description=payload.description,
+        owner_user_id=owner_user_id,
         parent_folder_id=payload.parent_folder_id,
     )
     db.add(folder)
@@ -91,13 +93,15 @@ async def list_root_folders(
     _: str = Depends(get_current_user),
 ):
     """List all root-level folders with their hierarchical structure."""
+    owner_user_id = await get_owner_user_id(db, _)
     result = await db.execute(
         select(Folder)
         .where(Folder.parent_folder_id.is_(None))
+        .where(Folder.owner_user_id == owner_user_id)
         .order_by(Folder.name)
     )
     folders = result.scalars().all()
-    return [await build_folder_tree(folder, db) for folder in folders]
+    return [await build_folder_tree(folder, db, owner_user_id=owner_user_id) for folder in folders]
 
 
 @router.get("/{folder_id}", response_model=FolderWithChildrenOut)
@@ -107,8 +111,9 @@ async def get_folder(
     _: str = Depends(get_current_user),
 ):
     """Get a specific folder with its complete hierarchy."""
-    folder = await get_folder_or_404(db, folder_id)
-    return await build_folder_tree(folder, db)
+    owner_user_id = await get_owner_user_id(db, _)
+    folder = await get_folder_or_404(db, folder_id, owner_user_id=owner_user_id)
+    return await build_folder_tree(folder, db, owner_user_id=owner_user_id)
 
 
 @router.put("/{folder_id}", response_model=FolderOut)
@@ -119,10 +124,16 @@ async def update_folder(
     _: str = Depends(get_current_user),
 ):
     """Update a folder's details."""
-    folder = await get_folder_or_404(db, folder_id)
+    owner_user_id = await get_owner_user_id(db, _)
+    folder = await get_folder_or_404(db, folder_id, owner_user_id=owner_user_id)
 
     if payload.parent_folder_id is not None:
-        await validate_parent_folder(db, payload.parent_folder_id, folder_id)
+        await validate_parent_folder(
+            db,
+            payload.parent_folder_id,
+            folder_id,
+            owner_user_id=owner_user_id,
+        )
 
     if payload.name is not None:
         folder.name = payload.name
@@ -144,13 +155,20 @@ async def delete_folder(
     _: str = Depends(get_current_user),
 ):
     """Delete a folder and move its direct contents to the parent folder."""
-    folder = await get_folder_or_404(db, folder_id)
+    owner_user_id = await get_owner_user_id(db, _)
+    folder = await get_folder_or_404(db, folder_id, owner_user_id=owner_user_id)
     target_parent_id = folder.parent_folder_id
 
     # Move devices to the parent folder (or root when deleting a root folder)
     await db.execute(
         update(Device)
         .where(Device.folder_id == folder.id)
+        .where(
+            or_(
+                Device.owner_user_id == owner_user_id,
+                Device.owner_user_id.is_(None),
+            )
+        )
         .values(folder_id=target_parent_id)
     )
 
@@ -158,6 +176,12 @@ async def delete_folder(
     await db.execute(
         update(Folder)
         .where(Folder.parent_folder_id == folder.id)
+        .where(
+            or_(
+                Folder.owner_user_id == owner_user_id,
+                Folder.owner_user_id.is_(None),
+            )
+        )
         .values(parent_folder_id=target_parent_id)
     )
 

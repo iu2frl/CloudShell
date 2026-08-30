@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import get_settings
 from backend.database import get_db
 from backend.models.device import AuthType, ConnectionType, Device
-from backend.routers.auth import get_current_user
+from backend.routers.auth import get_current_user, get_owner_user_id
 from backend.services.crypto import (
     decrypt,
     encrypt,
@@ -77,9 +77,16 @@ class ImportResult(BaseModel):
 
 # -- Helpers -------------------------------------------------------------------
 
-async def _build_export_bundle(db: AsyncSession, keys_dir: str) -> ExportBundle:
+async def _build_export_bundle(
+    db: AsyncSession,
+    keys_dir: str,
+    owner_user_id: int | None = None,
+) -> ExportBundle:
     """Read all devices from the DB and decrypt their secrets."""
-    result = await db.execute(select(Device).order_by(Device.name))
+    stmt = select(Device).order_by(Device.name)
+    if owner_user_id is not None:
+        stmt = stmt.where(Device.owner_user_id == owner_user_id)
+    result = await db.execute(stmt)
     devices = result.scalars().all()
 
     exported: list[ExportedDevice] = []
@@ -125,7 +132,7 @@ async def _build_export_bundle(db: AsyncSession, keys_dir: str) -> ExportBundle:
 @router.get("/export")
 async def export_config(
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: str = Depends(get_current_user),
 ) -> Response:
     """
     Export all device configurations as a downloadable JSON file.
@@ -133,14 +140,17 @@ async def export_config(
     The returned file contains plaintext credentials and must be kept secure.
     """
     settings = get_settings()
-    return await _build_export_response(db, settings.keys_dir)
+    owner_user_id = None
+    if current_user != settings.admin_user:
+        owner_user_id = await get_owner_user_id(db, current_user)
+    return await _build_export_response(db, settings.keys_dir, owner_user_id)
 
 
 @router.post("/import", response_model=ImportResult)
 async def import_config(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: str = Depends(get_current_user),
 ) -> ImportResult:
     """
     Import device configurations from a previously exported JSON file.
@@ -173,14 +183,19 @@ async def import_config(
             ),
         )
 
-    return await _process_import_bundle(db, bundle, settings.keys_dir)
+    owner_user_id = await get_owner_user_id(db, current_user)
+    return await _process_import_bundle(db, bundle, settings.keys_dir, owner_user_id)
 
 
 # -- Internal helpers (extracted for testability / coverage) -------------------
 
-async def _build_export_response(db: AsyncSession, keys_dir: str) -> Response:
+async def _build_export_response(
+    db: AsyncSession,
+    keys_dir: str,
+    owner_user_id: int | None = None,
+) -> Response:
     """Build the JSON export Response object from the current DB state."""
-    bundle = await _build_export_bundle(db, keys_dir)
+    bundle = await _build_export_bundle(db, keys_dir, owner_user_id)
     log.info("Config export: %d device(s) exported", bundle.device_count)
     content = bundle.model_dump_json(indent=2)
     return Response(
@@ -196,6 +211,7 @@ async def _process_import_bundle(
     db: AsyncSession,
     bundle: ExportBundle,
     keys_dir: str,
+    owner_user_id: int | None = None,
 ) -> ImportResult:
     """
     Persist devices from an already-validated ExportBundle.
@@ -204,7 +220,10 @@ async def _process_import_bundle(
     not roll back previously-imported entries.
     """
     # -- Fetch existing devices to detect duplicates ---------------------------
-    result = await db.execute(select(Device))
+    stmt = select(Device)
+    if owner_user_id is not None:
+        stmt = stmt.where(Device.owner_user_id == owner_user_id)
+    result = await db.execute(stmt)
     existing = result.scalars().all()
     # Key: (name, hostname, port, username, connection_type) → device id
     existing_keys: dict[tuple[str, str, int, str, str], int] = {
@@ -239,6 +258,7 @@ async def _process_import_bundle(
                     username=entry.username,
                     auth_type=entry.auth_type,
                     connection_type=entry.connection_type,
+                    owner_user_id=owner_user_id,
                 )
 
                 if entry.auth_type == AuthType.password:
