@@ -1,0 +1,26 @@
+services:
+
+  # Local OIDC provider for manual testing
+  oidc:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    command:
+      - start-dev
+      - --http-port=8081
+      - --hostname=oidc.127.0.0.1.nip.io
+      - --hostname-strict=false
+      - --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./dev/oidc/realm-cloudshell.json:/opt/keycloak/data/import/realm-cloudshell.json:ro
+    networks:
+      - internal
+
+  # Route issuer host to Docker host gateway for backend reachability.
+  backend:
+    extra_hosts:
+      - "oidc.127.0.0.1.nip.io:host-gateway"

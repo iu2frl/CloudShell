@@ -1,0 +1,88 @@
+{
+  "realm": "cloudshell",
+  "enabled": true,
+  "registrationAllowed": false,
+  "rememberMe": true,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "clients": [
+    {
+      "clientId": "cloudshell-client",
+      "name": "CloudShell",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "cloudshell-dev-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/api/auth/oidc/callback",
+        "http://127.0.0.1:8080/api/auth/oidc/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8080/* http://127.0.0.1:8080/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "name": "cloudshell-users"
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Tester",
+      "email": "alice@example.local",
+      "groups": [
+        "cloudshell-users"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice123",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "NoGroup",
+      "email": "bob@example.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob123",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

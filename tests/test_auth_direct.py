@@ -714,7 +714,13 @@ class _FakeOIDCClient:
 
     async def post(self, url, data):
         _ = url, data
-        return _FakeOIDCResponse(status_code=200, payload={"id_token": "fake-id-token"})
+        return _FakeOIDCResponse(
+            status_code=200,
+            payload={
+                "id_token": "fake-id-token",
+                "access_token": "fake-access-token",
+            },
+        )
 
 
 async def test_exchange_oidc_code_allows_user_in_allowed_group(monkeypatch):
@@ -747,6 +753,7 @@ async def test_exchange_oidc_code_allows_user_in_allowed_group(monkeypatch):
                 "iss": "https://id.example.com",
                 "sub": "user-123",
                 "nonce": "nonce-ok",
+                "aud": ["cloudshell"],
                 "groups": ["cloudshell-users", "dev"],
             }
         ),
@@ -787,6 +794,7 @@ async def test_exchange_oidc_code_denies_user_outside_allowed_group(monkeypatch)
                 "iss": "https://id.example.com",
                 "sub": "user-999",
                 "nonce": "nonce-ok",
+                "aud": ["cloudshell"],
                 "groups": ["other-group"],
             }
         ),
@@ -796,4 +804,88 @@ async def test_exchange_oidc_code_denies_user_outside_allowed_group(monkeypatch)
         await _exchange_oidc_code("code", "nonce-ok")
     assert exc_info.value.status_code == 403
     assert "allowed group" in str(exc_info.value.detail).lower()
+    get_settings.cache_clear()
+
+
+async def test_exchange_oidc_code_accepts_client_id_in_azp(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("OIDC_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("OIDC_ISSUER_URL", "https://id.example.com")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "cloudshell")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("OIDC_REDIRECT_URI", "https://test/api/auth/oidc/callback")
+    monkeypatch.setenv("OIDC_ALLOWED_GROUP", "cloudshell-users")
+
+    monkeypatch.setattr(
+        "backend.routers.auth._get_oidc_discovery",
+        AsyncMock(
+            return_value={
+                "token_endpoint": "https://id.example.com/token",
+                "jwks_uri": "https://id.example.com/jwks",
+                "issuer": "https://id.example.com",
+            }
+        ),
+    )
+    monkeypatch.setattr("backend.routers.auth._get_oidc_jwks", AsyncMock(return_value={"keys": [{}]}))
+    monkeypatch.setattr("backend.routers.auth._select_jwk_for_token", MagicMock(return_value={"kid": "k1"}))
+    monkeypatch.setattr("backend.routers.auth.httpx.AsyncClient", _FakeOIDCClient)
+    monkeypatch.setattr(
+        "backend.routers.auth.jwt.decode",
+        MagicMock(
+            return_value={
+                "iss": "https://id.example.com",
+                "sub": "user-123",
+                "nonce": "nonce-ok",
+                "aud": ["account"],
+                "azp": "cloudshell",
+                "groups": ["cloudshell-users"],
+            }
+        ),
+    )
+
+    username = await _exchange_oidc_code("code", "nonce-ok")
+    assert username == "oidc:https://id.example.com:user-123"
+    get_settings.cache_clear()
+
+
+async def test_exchange_oidc_code_rejects_audience_mismatch(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("OIDC_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("OIDC_ISSUER_URL", "https://id.example.com")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "cloudshell")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("OIDC_REDIRECT_URI", "https://test/api/auth/oidc/callback")
+
+    monkeypatch.setattr(
+        "backend.routers.auth._get_oidc_discovery",
+        AsyncMock(
+            return_value={
+                "token_endpoint": "https://id.example.com/token",
+                "jwks_uri": "https://id.example.com/jwks",
+                "issuer": "https://id.example.com",
+            }
+        ),
+    )
+    monkeypatch.setattr("backend.routers.auth._get_oidc_jwks", AsyncMock(return_value={"keys": [{}]}))
+    monkeypatch.setattr("backend.routers.auth._select_jwk_for_token", MagicMock(return_value={"kid": "k1"}))
+    monkeypatch.setattr("backend.routers.auth.httpx.AsyncClient", _FakeOIDCClient)
+    monkeypatch.setattr(
+        "backend.routers.auth.jwt.decode",
+        MagicMock(
+            return_value={
+                "iss": "https://id.example.com",
+                "sub": "user-999",
+                "nonce": "nonce-ok",
+                "aud": ["account"],
+                "azp": "different-client",
+            }
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _exchange_oidc_code("code", "nonce-ok")
+    assert exc_info.value.status_code == 401
+    assert "audience" in str(exc_info.value.detail).lower()
     get_settings.cache_clear()

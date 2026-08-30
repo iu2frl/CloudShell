@@ -13,6 +13,7 @@ import secrets
 import uuid
 import hashlib
 import time
+import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -42,6 +43,7 @@ from backend.services.audit import (
 )
 from backend.services.rate_limit import get_limiter
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
@@ -376,6 +378,20 @@ def _extract_groups_from_claims(claims: dict) -> set[str]:
     return set()
 
 
+def _claims_match_client_audience(claims: dict, client_id: str) -> bool:
+    """Accept aud list/string or azp according to common OIDC provider behavior."""
+    aud_claim = claims.get("aud")
+    if isinstance(aud_claim, str) and aud_claim == client_id:
+        return True
+    if isinstance(aud_claim, list):
+        normalized_aud = {str(item).strip() for item in aud_claim if str(item).strip()}
+        if client_id in normalized_aud:
+            return True
+
+    azp_claim = claims.get("azp")
+    return isinstance(azp_claim, str) and azp_claim == client_id
+
+
 def _parse_oidc_username(username: str) -> tuple[str, str] | None:
     """Parse an internal OIDC username into (issuer, subject)."""
     if not username.startswith("oidc:"):
@@ -467,8 +483,11 @@ async def _exchange_oidc_code(code: str, expected_nonce: str) -> str:
 
     token_data = token_resp.json()
     id_token = token_data.get("id_token")
+    access_token = token_data.get("access_token")
     if not isinstance(id_token, str) or not id_token:
         raise HTTPException(status_code=401, detail="OIDC response missing id_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise HTTPException(status_code=401, detail="OIDC response missing access_token")
 
     jwks = await _get_oidc_jwks(jwks_uri)
     key = _select_jwk_for_token(id_token, jwks)
@@ -477,11 +496,16 @@ async def _exchange_oidc_code(code: str, expected_nonce: str) -> str:
             id_token,
             key,
             algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
-            audience=settings.oidc_client_id,
             issuer=issuer,
+            options={"verify_aud": False},
+            access_token=access_token,
         )
     except JWTError as exc:
+        logger.warning("OIDC id_token validation failed: %s", exc)
         raise HTTPException(status_code=401, detail="OIDC id_token validation failed") from exc
+
+    if not _claims_match_client_audience(claims, settings.oidc_client_id):
+        raise HTTPException(status_code=401, detail="OIDC id_token audience mismatch")
 
     nonce = claims.get("nonce")
     if nonce != expected_nonce:

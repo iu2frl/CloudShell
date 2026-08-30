@@ -161,3 +161,41 @@ docker compose logs -f        # tail logs
 docker compose down           # stop
 docker compose down -v        # stop + delete data volume
 ```
+
+## Local OIDC test server (Keycloak)
+
+This repo includes a local OIDC provider for end-to-end login testing.
+
+### 1) Configure `.env`
+
+Use these values in your project `.env`:
+
+```env
+ENVIRONMENT=development
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=http://oidc.127.0.0.1.nip.io:8081/realms/cloudshell
+OIDC_CLIENT_ID=cloudshell-client
+OIDC_CLIENT_SECRET=cloudshell-dev-secret
+OIDC_REDIRECT_URI=http://localhost:8080/api/auth/oidc/callback
+OIDC_SCOPES=openid profile email
+OIDC_ALLOWED_GROUP=cloudshell-users
+```
+
+### 2) Start CloudShell + OIDC provider
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.oidc.yml up -d --build
+```
+
+### 3) Test logins
+
+- Allowed user: `alice` / `alice123` (member of `cloudshell-users`)
+- Denied user: `bob` / `bob123` (not in allowed group)
+
+Keycloak admin console: <http://localhost:8081> with `admin` / `admin`.
+
+### 4) Clean up
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.oidc.yml down
+```
