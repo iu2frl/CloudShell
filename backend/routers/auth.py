@@ -12,10 +12,14 @@ POST /api/auth/change-password  Change admin password (persisted in DB)
 import secrets
 import uuid
 import hashlib
+import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, Form
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+import httpx
 import bcrypt
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -47,6 +51,11 @@ REMEMBER_DEVICE_MAX_AGE_SECONDS = REMEMBER_DEVICE_DAYS * 24 * 60 * 60
 REMEMBER_DEVICE_COOKIE_NAME = "cloudshell_trusted_device"
 AUTH_COOKIE_NAME = "cloudshell_auth"
 AUTH_COOKIE_MAX_AGE_SECONDS = 8 * 60 * 60  # Will be overridden by settings.token_ttl_hours
+OIDC_STATE_COOKIE_NAME = "cloudshell_oidc_state"
+OIDC_STATE_TTL_SECONDS = 300
+
+_oidc_discovery_cache: dict[str, tuple[float, dict]] = {}
+_oidc_jwks_cache: dict[str, tuple[float, dict]] = {}
 
 
 def _get_boot_id() -> str:
@@ -72,6 +81,10 @@ class MeOut(BaseModel):
 class ChangePasswordIn(BaseModel):
     current_password: str
     new_password: str
+
+
+class OIDCStatusOut(BaseModel):
+    enabled: bool
 
 
 # -- Internal helpers ----------------------------------------------------------
@@ -231,6 +244,164 @@ def _set_auth_cookie(
     )
 
 
+def _normalize_next_path(value: str | None) -> str:
+    """Return a safe relative path for post-login redirect."""
+    if not value:
+        return "/"
+    if not value.startswith("/"):
+        return "/"
+    if value.startswith("//"):
+        return "/"
+    return value
+
+
+def _make_oidc_state(next_path: str) -> str:
+    """Create short-lived signed OIDC state payload with nonce."""
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    payload = {
+        "typ": "oidc_state",
+        "nonce": secrets.token_urlsafe(32),
+        "next": _normalize_next_path(next_path),
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=OIDC_STATE_TTL_SECONDS)).timestamp()),
+        "bid": _get_boot_id(),
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+def _decode_oidc_state(state_token: str) -> dict:
+    """Decode and validate signed OIDC state token."""
+    settings = get_settings()
+    payload = jwt.decode(state_token, settings.secret_key, algorithms=[ALGORITHM])
+    if payload.get("typ") != "oidc_state":
+        raise HTTPException(status_code=400, detail="Invalid OIDC state")
+    if payload.get("bid") != _get_boot_id():
+        raise HTTPException(status_code=400, detail="OIDC state is stale after restart")
+    nonce = payload.get("nonce")
+    if not isinstance(nonce, str) or not nonce:
+        raise HTTPException(status_code=400, detail="Invalid OIDC state nonce")
+    payload["next"] = _normalize_next_path(payload.get("next"))
+    return payload
+
+
+async def _http_get_json(url: str) -> dict:
+    """Fetch and parse JSON using a short timeout."""
+    timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _get_oidc_discovery() -> dict:
+    """Return OIDC discovery document with short in-memory cache."""
+    settings = get_settings()
+    issuer = settings.oidc_issuer_url.rstrip("/")
+    now = time.time()
+
+    cached = _oidc_discovery_cache.get(issuer)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    discovery_url = f"{issuer}/.well-known/openid-configuration"
+    discovery = await _http_get_json(discovery_url)
+    ttl = max(30, settings.oidc_discovery_ttl_seconds)
+    _oidc_discovery_cache[issuer] = (now + ttl, discovery)
+    return discovery
+
+
+async def _get_oidc_jwks(jwks_uri: str) -> dict:
+    """Return OIDC JWKS with short in-memory cache."""
+    now = time.time()
+    cached = _oidc_jwks_cache.get(jwks_uri)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    jwks = await _http_get_json(jwks_uri)
+    ttl = max(30, get_settings().oidc_discovery_ttl_seconds)
+    _oidc_jwks_cache[jwks_uri] = (now + ttl, jwks)
+    return jwks
+
+
+def _select_jwk_for_token(id_token: str, jwks: dict) -> dict:
+    """Pick JWK by token kid, fail closed when missing."""
+    header = jwt.get_unverified_header(id_token)
+    kid = header.get("kid")
+    keys = jwks.get("keys") or []
+    if not isinstance(keys, list) or not keys:
+        raise HTTPException(status_code=502, detail="OIDC provider returned empty JWKS")
+
+    if kid:
+        for key in keys:
+            if isinstance(key, dict) and key.get("kid") == kid:
+                return key
+        raise HTTPException(status_code=401, detail="OIDC signing key not found")
+
+    first = keys[0]
+    if not isinstance(first, dict):
+        raise HTTPException(status_code=502, detail="OIDC JWKS key format is invalid")
+    return first
+
+
+def _resolve_oidc_username(claims: dict) -> str:
+    """Build stable internal username from OIDC claims."""
+    issuer = str(claims.get("iss") or "")
+    subject = str(claims.get("sub") or "")
+    if not issuer or not subject:
+        raise HTTPException(status_code=401, detail="OIDC token missing iss/sub")
+    return f"oidc:{issuer}:{subject}"[:128]
+
+
+async def _exchange_oidc_code(code: str, expected_nonce: str) -> str:
+    """Exchange authorization code and return internal username."""
+    settings = get_settings()
+    discovery = await _get_oidc_discovery()
+
+    token_endpoint = discovery.get("token_endpoint")
+    jwks_uri = discovery.get("jwks_uri")
+    issuer = discovery.get("issuer")
+    if not token_endpoint or not jwks_uri or not issuer:
+        raise HTTPException(status_code=502, detail="OIDC discovery document is incomplete")
+
+    form = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": settings.oidc_redirect_uri,
+        "client_id": settings.oidc_client_id,
+        "client_secret": settings.oidc_client_secret,
+    }
+    timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        token_resp = await client.post(token_endpoint, data=form)
+    if token_resp.status_code >= 400:
+        raise HTTPException(status_code=401, detail="OIDC token exchange failed")
+
+    token_data = token_resp.json()
+    id_token = token_data.get("id_token")
+    if not isinstance(id_token, str) or not id_token:
+        raise HTTPException(status_code=401, detail="OIDC response missing id_token")
+
+    jwks = await _get_oidc_jwks(jwks_uri)
+    key = _select_jwk_for_token(id_token, jwks)
+    try:
+        claims = jwt.decode(
+            id_token,
+            key,
+            algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
+            audience=settings.oidc_client_id,
+            issuer=issuer,
+        )
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail="OIDC id_token validation failed") from exc
+
+    nonce = claims.get("nonce")
+    if nonce != expected_nonce:
+        raise HTTPException(status_code=401, detail="OIDC nonce mismatch")
+
+    return _resolve_oidc_username(claims)
+
+
 # -- Shared dependency ---------------------------------------------------------
 
 async def get_current_user(
@@ -363,6 +534,7 @@ async def login(
         if not is_trusted_device:
             is_valid_totp = TOTPService.verify_token(totp_record.secret, totp_code)
             backup_code_used = False
+            remaining_codes = len(TOTPService.codes_from_json(getattr(totp_record, "backup_codes", None)))
 
             if not is_valid_totp:
                 # Check backup codes if TOTPs fail.
@@ -552,3 +724,100 @@ async def change_password(
         detail="User changed password",
         source_ip=get_client_ip(request),
     )
+
+
+@router.get("/oidc/status", response_model=OIDCStatusOut)
+async def oidc_status() -> OIDCStatusOut:
+    """Expose whether OIDC login is enabled for frontend toggles."""
+    return OIDCStatusOut(enabled=get_settings().oidc_enabled)
+
+
+@router.get("/oidc/login")
+async def oidc_login(request: Request, next_path: str | None = None):
+    """Start OIDC authorization code flow by redirecting to the provider."""
+    settings = get_settings()
+    if not settings.oidc_enabled:
+        raise HTTPException(status_code=404, detail="OIDC is disabled")
+
+    discovery = await _get_oidc_discovery()
+    authorization_endpoint = discovery.get("authorization_endpoint")
+    if not authorization_endpoint:
+        raise HTTPException(status_code=502, detail="OIDC discovery missing authorization endpoint")
+
+    normalized_next_path = _normalize_next_path(next_path) if next_path else _normalize_next_path(settings.oidc_post_login_redirect)
+    state = _make_oidc_state(normalized_next_path)
+    payload = _decode_oidc_state(state)
+
+    params = {
+        "response_type": "code",
+        "client_id": settings.oidc_client_id,
+        "redirect_uri": settings.oidc_redirect_uri,
+        "scope": settings.oidc_scopes,
+        "state": state,
+        "nonce": payload["nonce"],
+    }
+    location = f"{authorization_endpoint}?{urlencode(params)}"
+    response = RedirectResponse(url=location, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        key=OIDC_STATE_COOKIE_NAME,
+        value=state,
+        max_age=OIDC_STATE_TTL_SECONDS,
+        expires=OIDC_STATE_TTL_SECONDS,
+        httponly=True,
+        secure=_is_secure_request(request),
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@router.get("/oidc/callback")
+async def oidc_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Finish OIDC flow, issue local session cookie, then redirect to app."""
+    settings = get_settings()
+    if not settings.oidc_enabled:
+        raise HTTPException(status_code=404, detail="OIDC is disabled")
+    if error:
+        raise HTTPException(status_code=401, detail=f"OIDC authorization failed: {error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing OIDC code/state")
+
+    cookie_state = request.cookies.get(OIDC_STATE_COOKIE_NAME)
+    if not cookie_state:
+        raise HTTPException(status_code=400, detail="Missing OIDC state cookie")
+    if not secrets.compare_digest(cookie_state, state):
+        raise HTTPException(status_code=400, detail="OIDC state mismatch")
+
+    try:
+        state_payload = _decode_oidc_state(state)
+    except JWTError as exc:
+        raise HTTPException(status_code=400, detail="OIDC state is invalid or expired") from exc
+
+    username = await _exchange_oidc_code(code, state_payload["nonce"])
+    encoded, expire, _ = _make_token(username)
+
+    redirect_response = RedirectResponse(
+        url=state_payload["next"],
+        status_code=status.HTTP_302_FOUND,
+    )
+    _set_auth_cookie(redirect_response, encoded, request, settings.token_ttl_hours)
+    redirect_response.delete_cookie(
+        key=OIDC_STATE_COOKIE_NAME,
+        path="/",
+        secure=_is_secure_request(request),
+        samesite="lax",
+    )
+    await write_audit(
+        db,
+        username,
+        ACTION_LOGIN,
+        detail=f"User logged in via OIDC, expires at {expire.isoformat()}",
+        source_ip=get_client_ip(request),
+    )
+    return redirect_response

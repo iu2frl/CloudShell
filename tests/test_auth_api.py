@@ -32,6 +32,7 @@ Tests cover:
 """
 from datetime import datetime, timezone
 import hashlib
+from urllib.parse import parse_qs, urlparse
 
 import pyotp
 
@@ -301,6 +302,123 @@ async def test_login_empty_credentials(client):
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert resp.status_code in (401, 422)
+
+
+# -- OIDC endpoints ------------------------------------------------------------
+
+async def test_oidc_status_disabled_by_default(client):
+    """OIDC status should be disabled when OIDC_ENABLED is not set."""
+    resp = await client.get("/api/auth/oidc/status")
+    assert resp.status_code == 200
+    assert resp.json() == {"enabled": False}
+
+
+async def test_oidc_login_disabled_returns_404(client):
+    """OIDC login endpoint must be unavailable when OIDC is disabled."""
+    resp = await client.get("/api/auth/oidc/login", follow_redirects=False)
+    assert resp.status_code == 404
+
+
+async def test_oidc_login_redirects_with_state_cookie(client, monkeypatch):
+    """OIDC login must redirect to provider and set signed state cookie."""
+    monkeypatch.setenv("OIDC_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("OIDC_ISSUER_URL", "https://id.example.com")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "cloudshell")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "super-secret")
+    monkeypatch.setenv("OIDC_REDIRECT_URI", "https://test/api/auth/oidc/callback")
+
+    from backend.config import get_settings
+    get_settings.cache_clear()
+
+    from backend.routers import auth
+
+    async def _fake_discovery():
+        return {"authorization_endpoint": "https://id.example.com/authorize"}
+
+    monkeypatch.setattr(auth, "_get_oidc_discovery", _fake_discovery)
+
+    resp = await client.get("/api/auth/oidc/login", follow_redirects=False)
+    assert resp.status_code == 302
+    location = resp.headers["location"]
+    parsed = urlparse(location)
+    query = parse_qs(parsed.query)
+
+    assert f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == "https://id.example.com/authorize"
+    assert "state" in query
+    assert "nonce" in query
+    assert "cloudshell_oidc_state" in resp.cookies
+    assert resp.cookies["cloudshell_oidc_state"] == query["state"][0]
+
+
+async def test_oidc_callback_creates_local_session_cookie(client, monkeypatch):
+    """Valid OIDC callback should create a local CloudShell session cookie."""
+    monkeypatch.setenv("OIDC_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("OIDC_ISSUER_URL", "https://id.example.com")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "cloudshell")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "super-secret")
+    monkeypatch.setenv("OIDC_REDIRECT_URI", "https://test/api/auth/oidc/callback")
+
+    from backend.config import get_settings
+    get_settings.cache_clear()
+
+    from backend.routers import auth
+
+    async def _fake_discovery():
+        return {"authorization_endpoint": "https://id.example.com/authorize"}
+
+    async def _fake_exchange(code: str, expected_nonce: str) -> str:
+        assert code == "test-code"
+        assert expected_nonce
+        return "oidc:https://id.example.com:user-123"
+
+    monkeypatch.setattr(auth, "_get_oidc_discovery", _fake_discovery)
+    monkeypatch.setattr(auth, "_exchange_oidc_code", _fake_exchange)
+
+    start_resp = await client.get("/api/auth/oidc/login", follow_redirects=False)
+    state = parse_qs(urlparse(start_resp.headers["location"]).query)["state"][0]
+
+    callback_resp = await client.get(
+        f"/api/auth/oidc/callback?code=test-code&state={state}",
+        follow_redirects=False,
+    )
+    assert callback_resp.status_code == 302
+    assert callback_resp.headers["location"] == "/"
+
+    me_resp = await client.get("/api/auth/me")
+    assert me_resp.status_code == 200
+    assert me_resp.json()["username"] == "oidc:https://id.example.com:user-123"
+
+
+async def test_oidc_callback_rejects_state_mismatch(client, monkeypatch):
+    """OIDC callback must reject mismatched state values."""
+    monkeypatch.setenv("OIDC_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("OIDC_ISSUER_URL", "https://id.example.com")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "cloudshell")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "super-secret")
+    monkeypatch.setenv("OIDC_REDIRECT_URI", "https://test/api/auth/oidc/callback")
+
+    from backend.config import get_settings
+    get_settings.cache_clear()
+
+    from backend.routers import auth
+
+    async def _fake_discovery():
+        return {"authorization_endpoint": "https://id.example.com/authorize"}
+
+    monkeypatch.setattr(auth, "_get_oidc_discovery", _fake_discovery)
+
+    start_resp = await client.get("/api/auth/oidc/login", follow_redirects=False)
+    assert start_resp.status_code == 302
+
+    bad_state = "not-the-cookie-state"
+    callback_resp = await client.get(
+        f"/api/auth/oidc/callback?code=test-code&state={bad_state}",
+        follow_redirects=False,
+    )
+    assert callback_resp.status_code == 400
 
 
 async def test_login_remember_device_skips_future_2fa(client, db_session):

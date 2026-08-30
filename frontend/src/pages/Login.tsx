@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { login } from "../api/client";
+import { getOidcStatus, login, startOidcLogin } from "../api/client";
 import { Terminal } from "lucide-react";
 
 interface Props {
@@ -15,12 +15,17 @@ export function Login({ onLogin }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
+  const [oidcEnabled, setOidcEnabled] = useState(false);
 
   useEffect(() => {
     fetch("/api/health")
       .then((r) => r.json())
       .then((d) => setVersion(d.version ?? null))
       .catch(() => { /* version stays null */ });
+
+    getOidcStatus()
+      .then((d) => setOidcEnabled(Boolean(d?.enabled)))
+      .catch(() => setOidcEnabled(false));
   }, []);
 
   const submit = async (e: React.FormEvent) => {
@@ -151,6 +156,26 @@ export function Login({ onLogin }: Props) {
               >
                 Back to login
               </button>
+            )}
+
+            {!requires2FA && oidcEnabled && (
+              <>
+                <div className="relative py-1">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-slate-700" />
+                  </div>
+                  <div className="relative flex justify-center">
+                    <span className="bg-slate-900 px-2 text-xs text-slate-500">or</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn-ghost w-full"
+                  onClick={() => startOidcLogin(window.location.pathname || "/")}
+                >
+                  Sign in with Pocket ID
+                </button>
+              </>
             )}
           </form>
         </div>

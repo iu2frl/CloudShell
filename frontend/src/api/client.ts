@@ -133,7 +133,24 @@ export interface MeInfo {
   expires_at: string;
 }
 
-export const getMe = (): Promise<MeInfo> => request("/auth/me");
+export async function getMe(): Promise<MeInfo> {
+  const me = await request<MeInfo>("/auth/me");
+  if (me?.expires_at) {
+    _storeTokenExpiry(me.expires_at);
+  }
+  return me;
+}
+
+export interface OIDCStatus {
+  enabled: boolean;
+}
+
+export const getOidcStatus = (): Promise<OIDCStatus> => request("/auth/oidc/status");
+
+export function startOidcLogin(nextPath = "/"): void {
+  const params = new URLSearchParams({ next_path: nextPath });
+  window.location.assign(`${BASE}/auth/oidc/login?${params.toString()}`);
+}
 
 export async function changePassword(
   currentPassword: string,

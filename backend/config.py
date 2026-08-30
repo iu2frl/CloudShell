@@ -19,6 +19,16 @@ class Settings(BaseSettings):
     audit_retention_days: int = int(os.getenv("AUDIT_RETENTION_DAYS", "7"))
     data_dir: str = os.getenv("DATA_DIR", "/data")
     trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "")
+    oidc_enabled: bool = os.getenv("OIDC_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    oidc_issuer_url: str = os.getenv("OIDC_ISSUER_URL", "").strip()
+    oidc_client_id: str = os.getenv("OIDC_CLIENT_ID", "").strip()
+    oidc_client_secret: str = os.getenv("OIDC_CLIENT_SECRET", "").strip()
+    oidc_redirect_uri: str = os.getenv("OIDC_REDIRECT_URI", "").strip()
+    oidc_scopes: str = os.getenv("OIDC_SCOPES", "openid profile email groups").strip()
+    oidc_discovery_ttl_seconds: int = int(os.getenv("OIDC_DISCOVERY_TTL_SECONDS", "300"))
+    oidc_post_login_redirect: str = os.getenv("OIDC_POST_LOGIN_REDIRECT", "/").strip() or "/"
     ftps_allow_insecure: bool = os.getenv("FTPS_ALLOW_INSECURE", "false").strip().lower() in {
         "1", "true", "yes", "on"
     }
@@ -60,10 +70,39 @@ class Settings(BaseSettings):
                 "Refusing startup with FTPS_ALLOW_INSECURE enabled in non-development environment"
             )
 
-    def model_post_init(self, __context) -> None:
+    def _validate_oidc(self) -> None:
+        """Validate OIDC settings when OIDC mode is enabled."""
+        if not self.oidc_enabled:
+            return
+
+        required_fields = {
+            "OIDC_ISSUER_URL": self.oidc_issuer_url,
+            "OIDC_CLIENT_ID": self.oidc_client_id,
+            "OIDC_CLIENT_SECRET": self.oidc_client_secret,
+            "OIDC_REDIRECT_URI": self.oidc_redirect_uri,
+        }
+        missing = [name for name, value in required_fields.items() if not value]
+        if missing:
+            raise ValueError(f"OIDC is enabled but missing required settings: {', '.join(missing)}")
+
+        if not self.oidc_redirect_uri.startswith(("http://", "https://")):
+            raise ValueError("OIDC_REDIRECT_URI must start with http:// or https://")
+
+        if not self.oidc_issuer_url.startswith(("http://", "https://")):
+            raise ValueError("OIDC_ISSUER_URL must start with http:// or https://")
+
+        if not self._is_development_environment():
+            if not self.oidc_redirect_uri.startswith("https://"):
+                raise ValueError("OIDC_REDIRECT_URI must use https:// outside development")
+            if not self.oidc_issuer_url.startswith("https://"):
+                raise ValueError("OIDC_ISSUER_URL must use https:// outside development")
+
+    def __init__(self, **values):
+        super().__init__(**values)
         self._validate_secret_key()
         self._validate_admin_password()
         self._validate_ftps_mode()
+        self._validate_oidc()
         if not self.db_path:
             self.db_path = os.path.join(self.data_dir, "cloudshell.db")
         if not self.keys_dir:
