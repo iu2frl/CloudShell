@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import get_settings
 from backend.database import AsyncSessionLocal, get_db
 from backend.models.device import AuthType, Device
-from backend.routers.auth import get_current_user
+from backend.routers.auth import get_current_user, get_owner_user_id
 from backend.services.audit import (
     ACTION_SESSION_ENDED,
     ACTION_SESSION_STARTED,
@@ -30,6 +30,7 @@ from backend.services.ssh import (
     probe_ssh_host_fingerprint,
     stream_session,
 )
+from sqlalchemy import select
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/terminal", tags=["terminal"])
@@ -88,7 +89,16 @@ async def open_session(
 ):
     """Create an SSH session and return a session_id for WebSocket use."""
     settings = get_settings()
-    device: Device | None = await db.get(Device, device_id)
+    if isinstance(db, AsyncSession):
+        owner_user_id = await get_owner_user_id(db, current_user)
+        result = await db.execute(
+            select(Device)
+            .where(Device.id == device_id)
+            .where(Device.owner_user_id == owner_user_id)
+        )
+        device: Device | None = result.scalar_one_or_none()
+    else:
+        device = await db.get(Device, device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 

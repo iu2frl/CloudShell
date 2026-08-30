@@ -23,12 +23,13 @@ import httpx
 import bcrypt
 from jose import JWTError, jwt
 from pydantic import BaseModel
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.database import get_db
 from backend.models.auth import AdminCredential, RevokedToken, AdminTOTPSecret, AdminTrustedDevice
+from backend.models.user import User
 from backend.services.audit import (
     ACTION_LOGIN,
     ACTION_LOGOUT,
@@ -353,6 +354,71 @@ def _resolve_oidc_username(claims: dict) -> str:
     return f"oidc:{issuer}:{subject}"[:128]
 
 
+def _parse_oidc_username(username: str) -> tuple[str, str] | None:
+    """Parse an internal OIDC username into (issuer, subject)."""
+    if not username.startswith("oidc:"):
+        return None
+    parts = username.split(":", maxsplit=3)
+    if len(parts) != 4:
+        return None
+    issuer = f"{parts[1]}:{parts[2]}"
+    subject = parts[3]
+    if not issuer or not subject:
+        return None
+    return issuer, subject
+
+
+async def ensure_user_for_username(db: AsyncSession, username: str) -> User:
+    """Fetch or create a user identity row for a token subject."""
+    if not isinstance(db, AsyncSession):
+        settings = get_settings()
+        return User(
+            id=0,
+            username=username,
+            auth_provider="local",
+            provider_issuer=None,
+            provider_subject=None,
+            is_admin=username == settings.admin_user,
+        )
+
+    result = await db.execute(select(User).where(User.username == username))
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing
+
+    settings = get_settings()
+    oidc_identity = _parse_oidc_username(username)
+    if oidc_identity:
+        provider = "oidc"
+        issuer, subject = oidc_identity
+        provider_issuer = issuer
+        provider_subject = subject
+        is_admin = False
+    else:
+        provider = "local"
+        provider_issuer = None
+        provider_subject = None
+        is_admin = username == settings.admin_user
+
+    user = User(
+        username=username,
+        auth_provider=provider,
+        provider_issuer=provider_issuer,
+        provider_subject=provider_subject,
+        is_admin=is_admin,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def get_owner_user_id(db: AsyncSession, username: str) -> int:
+    """Resolve numeric owner id for a username, creating a row when needed."""
+    user = await ensure_user_for_username(db, username)
+    return user.id
+
+
 async def _exchange_oidc_code(code: str, expected_nonce: str) -> str:
     """Exchange authorization code and return internal username."""
     settings = get_settings()
@@ -595,6 +661,7 @@ async def login(
             if _is_truthy_form_flag(remember_device):
                 await _remember_trusted_device(form_data.username, response, request, db)
 
+    await ensure_user_for_username(db, form_data.username)
     encoded, expire, _ = _make_token(form_data.username)
     settings = get_settings()
     _set_auth_cookie(response, encoded, request, settings.token_ttl_hours)
@@ -800,6 +867,7 @@ async def oidc_callback(
         raise HTTPException(status_code=400, detail="OIDC state is invalid or expired") from exc
 
     username = await _exchange_oidc_code(code, state_payload["nonce"])
+    await ensure_user_for_username(db, username)
     encoded, expire, _ = _make_token(username)
 
     redirect_response = RedirectResponse(

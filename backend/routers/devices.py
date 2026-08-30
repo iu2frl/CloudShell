@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models.device import AuthType, ConnectionType, Device
-from backend.routers.auth import get_current_user
+from backend.routers.auth import get_current_user, get_owner_user_id
 from backend.services.crypto import (
     delete_key_file,
     encrypt,
@@ -79,7 +79,12 @@ async def list_devices(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    result = await db.execute(select(Device).order_by(Device.name))
+    owner_user_id = await get_owner_user_id(db, _)
+    result = await db.execute(
+        select(Device)
+        .where(Device.owner_user_id == owner_user_id)
+        .order_by(Device.name)
+    )
     return result.scalars().all()
 
 
@@ -92,8 +97,10 @@ async def create_device(
     from backend.config import get_settings
     settings = get_settings()
 
+    owner_user_id = await get_owner_user_id(db, _)
+
     if payload.folder_id is not None:
-        await validate_folder_exists(db, payload.folder_id)
+        await validate_folder_exists(db, payload.folder_id, owner_user_id=owner_user_id)
 
     device = Device(
         name=payload.name,
@@ -102,6 +109,7 @@ async def create_device(
         username=payload.username,
         auth_type=payload.auth_type,
         connection_type=payload.connection_type,
+        owner_user_id=owner_user_id,
         folder_id=payload.folder_id,
     )
     if payload.auth_type == AuthType.password:
@@ -128,7 +136,13 @@ async def get_device(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    device = await db.get(Device, device_id)
+    owner_user_id = await get_owner_user_id(db, _)
+    result = await db.execute(
+        select(Device)
+        .where(Device.id == device_id)
+        .where(Device.owner_user_id == owner_user_id)
+    )
+    device = result.scalar_one_or_none()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     return device
@@ -144,7 +158,13 @@ async def update_device(
     from backend.config import get_settings
     settings = get_settings()
 
-    device = await db.get(Device, device_id)
+    owner_user_id = await get_owner_user_id(db, _)
+    result = await db.execute(
+        select(Device)
+        .where(Device.id == device_id)
+        .where(Device.owner_user_id == owner_user_id)
+    )
+    device = result.scalar_one_or_none()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
@@ -169,7 +189,7 @@ async def update_device(
             continue
         if field == "folder_id":
             if val is not None and "folder_id" in provided_fields:
-                await validate_folder_exists(db, val)
+                await validate_folder_exists(db, val, owner_user_id=owner_user_id)
                 device.folder_id = val
             continue
         if val is not None:
@@ -196,7 +216,13 @@ async def delete_device(
     from backend.config import get_settings
     settings = get_settings()
 
-    device = await db.get(Device, device_id)
+    owner_user_id = await get_owner_user_id(db, _)
+    result = await db.execute(
+        select(Device)
+        .where(Device.id == device_id)
+        .where(Device.owner_user_id == owner_user_id)
+    )
+    device = result.scalar_one_or_none()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 

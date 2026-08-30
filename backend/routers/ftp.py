@@ -22,10 +22,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from backend.database import get_db
 from backend.models.device import ConnectionType, Device
-from backend.routers.auth import get_current_user
+from backend.routers.auth import get_current_user, get_owner_user_id
 from backend.services.audit import (
     ACTION_SESSION_ENDED,
     ACTION_SESSION_STARTED,
@@ -81,7 +82,16 @@ async def open_session(
     current_user: str = Depends(get_current_user),
 ):
     """Open an FTP/FTPS session for a device and return a session_id."""
-    device: Device | None = await db.get(Device, device_id)
+    if isinstance(db, AsyncSession):
+        owner_user_id = await get_owner_user_id(db, current_user)
+        result = await db.execute(
+            select(Device)
+            .where(Device.id == device_id)
+            .where(Device.owner_user_id == owner_user_id)
+        )
+        device: Device | None = result.scalar_one_or_none()
+    else:
+        device = await db.get(Device, device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 

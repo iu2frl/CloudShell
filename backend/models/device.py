@@ -39,6 +39,12 @@ class Device(Base):
         default=ConnectionType.ssh,
         server_default=text("'ssh'"),  # backfills existing rows on ALTER TABLE
     )
+    owner_user_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     folder_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("folders.id", ondelete="SET NULL"), nullable=True
     )
