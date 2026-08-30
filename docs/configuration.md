@@ -18,6 +18,7 @@ All configuration is via environment variables (or a `.env` file):
 | `OIDC_CLIENT_SECRET` | *(required when OIDC enabled)* | OAuth/OIDC client secret configured in your provider. |
 | `OIDC_REDIRECT_URI` | *(required when OIDC enabled)* | Redirect/callback URL registered in your provider (usually `https://<host>/api/auth/oidc/callback`). |
 | `OIDC_SCOPES` | `openid profile email groups` | Space-separated scopes requested during OIDC authorization. |
+| `OIDC_ALLOWED_GROUP` | *(unset)* | If set, OIDC login is allowed only when the token `groups` claim contains this value. |
 | `OIDC_DISCOVERY_TTL_SECONDS` | `300` | Discovery/JWKS cache TTL in seconds. |
 | `OIDC_POST_LOGIN_REDIRECT` | `/` | Relative path to redirect after successful OIDC callback when no explicit `next_path` is provided. |
 
@@ -31,6 +32,7 @@ When `OIDC_ENABLED=true`, CloudShell exposes:
 
 The frontend login page will show a **Sign in with Pocket ID** button if OIDC is enabled and reachable.
 Local username/password login remains available in this phase.
+If `OIDC_ALLOWED_GROUP` is set, users outside that group are denied at callback.
 
 ## Secret key generation
 

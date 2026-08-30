@@ -354,6 +354,28 @@ def _resolve_oidc_username(claims: dict) -> str:
     return f"oidc:{issuer}:{subject}"[:128]
 
 
+def _extract_groups_from_claims(claims: dict) -> set[str]:
+    """Normalize OIDC groups claim to a lowercase set for matching."""
+    raw_groups = claims.get("groups")
+    if raw_groups is None:
+        return set()
+
+    if isinstance(raw_groups, str):
+        values = [item.strip() for item in raw_groups.replace(",", " ").split()]
+        return {item.lower() for item in values if item}
+
+    if isinstance(raw_groups, list):
+        normalized: set[str] = set()
+        for value in raw_groups:
+            if isinstance(value, str):
+                item = value.strip().lower()
+                if item:
+                    normalized.add(item)
+        return normalized
+
+    return set()
+
+
 def _parse_oidc_username(username: str) -> tuple[str, str] | None:
     """Parse an internal OIDC username into (issuer, subject)."""
     if not username.startswith("oidc:"):
@@ -464,6 +486,12 @@ async def _exchange_oidc_code(code: str, expected_nonce: str) -> str:
     nonce = claims.get("nonce")
     if nonce != expected_nonce:
         raise HTTPException(status_code=401, detail="OIDC nonce mismatch")
+
+    allowed_group = settings.oidc_allowed_group.strip().lower()
+    if allowed_group:
+        groups = _extract_groups_from_claims(claims)
+        if allowed_group not in groups:
+            raise HTTPException(status_code=403, detail="OIDC user is not in allowed group")
 
     return _resolve_oidc_username(claims)
 

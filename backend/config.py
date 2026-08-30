@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     oidc_client_secret: str = os.getenv("OIDC_CLIENT_SECRET", "").strip()
     oidc_redirect_uri: str = os.getenv("OIDC_REDIRECT_URI", "").strip()
     oidc_scopes: str = os.getenv("OIDC_SCOPES", "openid profile email groups").strip()
+    oidc_allowed_group: str = os.getenv("OIDC_ALLOWED_GROUP", "").strip()
     oidc_discovery_ttl_seconds: int = int(os.getenv("OIDC_DISCOVERY_TTL_SECONDS", "300"))
     oidc_post_login_redirect: str = os.getenv("OIDC_POST_LOGIN_REDIRECT", "/").strip() or "/"
     ftps_allow_insecure: bool = os.getenv("FTPS_ALLOW_INSECURE", "false").strip().lower() in {
