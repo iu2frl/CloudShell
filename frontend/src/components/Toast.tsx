@@ -15,16 +15,22 @@ import { X, CheckCircle2, AlertCircle, Info } from "lucide-react";
 
 type Variant = "success" | "error" | "info";
 
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface Toast {
   id: number;
   message: string;
   variant: Variant;
+  action?: ToastAction;
 }
 
 interface ToastAPI {
-  success: (msg: string) => void;
-  error:   (msg: string) => void;
-  info:    (msg: string) => void;
+  success: (msg: string, action?: ToastAction) => void;
+  error:   (msg: string, action?: ToastAction) => void;
+  info:    (msg: string, action?: ToastAction) => void;
 }
 
 const ToastContext = createContext<ToastAPI | null>(null);
@@ -40,16 +46,16 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     if (t) { clearTimeout(t); timers.current.delete(id); }
   }, []);
 
-  const push = useCallback((message: string, variant: Variant) => {
+  const push = useCallback((message: string, variant: Variant, action?: ToastAction) => {
     const id = ++_nextId;
-    setToasts((prev) => [...prev.slice(-4), { id, message, variant }]);
+    setToasts((prev) => [...prev.slice(-4), { id, message, variant, action }]);
     timers.current.set(id, setTimeout(() => dismiss(id), variant === "error" ? 6000 : 3500));
   }, [dismiss]);
 
   const api: ToastAPI = {
-    success: (msg) => push(msg, "success"),
-    error:   (msg) => push(msg, "error"),
-    info:    (msg) => push(msg, "info"),
+    success: (msg, action) => push(msg, "success", action),
+    error:   (msg, action) => push(msg, "error", action),
+    info:    (msg, action) => push(msg, "info", action),
   };
 
   const icons: Record<Variant, React.ReactNode> = {
@@ -78,6 +84,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           >
             {icons[t.variant]}
             <span className="flex-1 leading-snug">{t.message}</span>
+            {t.action && (
+              <button
+                onClick={t.action.onClick}
+                className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 transition-colors"
+              >
+                {t.action.label}
+              </button>
+            )}
             <button
               onClick={() => dismiss(t.id)}
               className="text-slate-500 hover:text-slate-300 transition-colors ml-1 flex-shrink-0"

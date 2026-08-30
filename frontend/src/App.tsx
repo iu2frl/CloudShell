@@ -2,12 +2,35 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getMe, getTokenExpiry, isLoggedIn, refreshToken } from "./api/client";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
-import { ToastProvider } from "./components/Toast";
+import { ToastProvider, useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { PWA_UPDATE_READY_EVENT, type PwaUpdateReadyDetail } from "./pwa";
 
 /** Refresh the token when less than this many ms remain. */
 const REFRESH_BEFORE_EXPIRY_MS = 10 * 60 * 1000; // 10 min
 const HEALTH_CHECK_INTERVAL_MS = 5000;
+
+function PwaUpdateNotifier() {
+  const toast = useToast();
+
+  useEffect(() => {
+    const onPwaUpdateReady = (event: Event) => {
+      const customEvent = event as CustomEvent<PwaUpdateReadyDetail>;
+      toast.info("New app version ready", {
+        label: "Reload",
+        onClick: () => customEvent.detail.applyUpdate(),
+      });
+    };
+
+    window.addEventListener(PWA_UPDATE_READY_EVENT, onPwaUpdateReady);
+
+    return () => {
+      window.removeEventListener(PWA_UPDATE_READY_EVENT, onPwaUpdateReady);
+    };
+  }, [toast]);
+
+  return null;
+}
 
 function App() {
   const [authed, setAuthed] = useState(isLoggedIn);
@@ -136,6 +159,7 @@ function App() {
   return (
     <ErrorBoundary>
       <ToastProvider>
+        <PwaUpdateNotifier />
         {connectionLost && (
           <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-6">
             <div className="w-full max-w-md rounded-xl border border-red-700 bg-red-950/70 p-5 text-center">

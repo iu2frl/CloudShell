@@ -24,6 +24,7 @@ function ToastTrigger() {
       <button onClick={() => toast.success('Saved!')}>success</button>
       <button onClick={() => toast.error('Boom!')}>error</button>
       <button onClick={() => toast.info('Connecting...')}>info</button>
+      <button onClick={() => toast.info('Update ready', { label: 'Reload', onClick: () => {} })}>info-action</button>
     </>
   );
 }
@@ -65,6 +66,12 @@ describe('ToastProvider', () => {
     expect(screen.getByText('Connecting...')).toBeInTheDocument();
   });
 
+  it('renders action button when provided', async () => {
+    setup();
+    await userEvent.click(screen.getByText('info-action'));
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+  });
+
   it('applies the error border class for error toasts', async () => {
     const { container } = render(
       <ToastProvider>
@@ -97,14 +104,15 @@ describe('ToastProvider', () => {
   });
 
   it('removes the toast when the dismiss button is clicked', async () => {
-    setup();
+    const { container } = render(
+      <ToastProvider>
+        <ToastTrigger />
+      </ToastProvider>,
+    );
     await userEvent.click(screen.getByText('success'));
     expect(screen.getByText('Saved!')).toBeInTheDocument();
-    // The dismiss button is the X icon button inside the toast
-    const dismissBtns = screen.getAllByRole('button').filter(
-      (b) => !['success', 'error', 'info'].includes(b.textContent ?? ''),
-    );
-    await userEvent.click(dismissBtns[0]);
+    const dismissBtn = container.querySelector('button.text-slate-500') as HTMLButtonElement;
+    await userEvent.click(dismissBtn);
     expect(screen.queryByText('Saved!')).not.toBeInTheDocument();
   });
 
@@ -162,14 +170,16 @@ describe('ToastProvider', () => {
 
   it('handles timeout callback after manual dismiss without crashing', async () => {
     vi.useFakeTimers();
-    setup();
+    const { container } = render(
+      <ToastProvider>
+        <ToastTrigger />
+      </ToastProvider>,
+    );
     act(() => { fireEvent.click(screen.getByText('success')); });
     expect(screen.getByText('Saved!')).toBeInTheDocument();
 
-    const dismissBtns = screen.getAllByRole('button').filter(
-      (b) => !['success', 'error', 'info'].includes(b.textContent ?? ''),
-    );
-    act(() => { fireEvent.click(dismissBtns[0]); });
+    const dismissBtn = container.querySelector('button.text-slate-500') as HTMLButtonElement;
+    act(() => { fireEvent.click(dismissBtn); });
     expect(screen.queryByText('Saved!')).not.toBeInTheDocument();
 
     act(() => { vi.advanceTimersByTime(4000); });
@@ -187,16 +197,18 @@ describe('ToastProvider', () => {
       }) as unknown as typeof setTimeout);
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(() => {});
 
-    setup();
+    const { container } = render(
+      <ToastProvider>
+        <ToastTrigger />
+      </ToastProvider>,
+    );
     act(() => {
       fireEvent.click(screen.getByText('success'));
     });
 
-    const dismissBtns = screen.getAllByRole('button').filter(
-      (b) => !['success', 'error', 'info'].includes(b.textContent ?? ''),
-    );
+    const dismissBtn = container.querySelector('button.text-slate-500') as HTMLButtonElement;
     act(() => {
-      fireEvent.click(dismissBtns[0]);
+      fireEvent.click(dismissBtn);
     });
     expect(screen.queryByText('Saved!')).not.toBeInTheDocument();
 
