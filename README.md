@@ -48,6 +48,7 @@ Supports connections audit:
 - **Recursive FTP delete**: securely remove entire directories and their contents in one action, with confirmation prompts to prevent accidents.
 - **Configuration import/export**: easily import and export device configurations in standard JSON format.
 - **Quick commands**: define up to 8 per-terminal one-click buttons that instantly send a preset command to the active SSH session, persisted across page reloads.
+- **Progressive Web App (PWA)**: install CloudShell on desktop/mobile with offline-ready cached frontend assets and automatic service worker updates.
 
 Please note: all sessions are initiated on the server side and not the client.
 
