@@ -839,3 +839,32 @@ export const disable2FA = (token: string): Promise<void> =>
     method: "POST",
     body: JSON.stringify({ token }),
   });
+
+// -- Quick Commands -------------------------------------------------------------
+
+export interface QuickCommand {
+  id: string;
+  label: string;
+  command: string;
+}
+
+export interface QuickCommandsResponse {
+  commands: QuickCommand[];
+}
+
+/** Fetch quick commands for a device from the server. */
+export async function getQuickCommands(deviceId: number): Promise<QuickCommand[]> {
+  const data = await request<QuickCommandsResponse>(`/quick_commands/${deviceId}`);
+  return data.commands;
+}
+
+/** Save quick commands for a device to the server. */
+export async function saveQuickCommands(
+  deviceId: number,
+  commands: QuickCommand[],
+): Promise<void> {
+  await request<void>(`/quick_commands/${deviceId}`, {
+    method: "PUT",
+    body: JSON.stringify({ commands }),
+  });
+}
