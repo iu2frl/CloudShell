@@ -2,7 +2,7 @@ fastapi==0.162.5
 uvicorn[standard]==0.54.0
 asyncssh==2.24.1
 aioftp>=0.28.3
-sqlalchemy==2.1.8
+sqlalchemy[asyncio]==2.1.8
 aiosqlite==0.22.1
 python-jose[cryptography]==3.5.0
 bcrypt==5.0.0
