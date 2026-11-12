@@ -3,7 +3,7 @@ FROM node:26-slim AS build
 WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
-RUN npm ci --silent
+RUN npm ci
 
 COPY frontend/ ./
 RUN DOCKER_BUILD=1 npm run build
