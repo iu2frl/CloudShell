@@ -3,16 +3,13 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { Device, SshHostChallengeDetail, SshHostChallengeError, createTerminalWsTicket, openSession, terminalWsUrl } from "../api/client";
+import { Device, SshHostChallengeDetail, SshHostChallengeError, createTerminalWsTicket, openSession, terminalWsUrl, getQuickCommands, saveQuickCommands, QuickCommand } from "../api/client";
 import { RefreshCw, Wifi, WifiOff, Loader, Copy, Plus, Settings2, Send, Trash2 } from "lucide-react";
 import { useToast } from "./Toast";
 import { FingerprintTrustModal } from "./FingerprintTrustModal";
 import {
   MAX_QUICK_COMMANDS,
-  QuickCommand,
-  buildQuickCommandsStorageKey,
   normalizeQuickCommands,
-  parseQuickCommands,
 } from "./terminalQuickCommands";
 
 type ConnState = "connecting" | "connected" | "disconnected" | "error" | "failed";
@@ -21,10 +18,9 @@ const MAX_RETRIES = 3;
 
 interface TerminalProps {
   device: Device;
-  terminalKey: number;
 }
 
-export function Terminal({ device, terminalKey }: TerminalProps) {
+export function Terminal({ device }: TerminalProps) {
   const containerRef   = useRef<HTMLDivElement>(null);
   const xtermRef       = useRef<XTerm | null>(null);
   const fitRef         = useRef<FitAddon | null>(null);
@@ -64,28 +60,30 @@ export function Terminal({ device, terminalKey }: TerminalProps) {
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   };
 
+  // Load quick commands from the server when the device changes.
   useEffect(() => {
-    const storageKey = buildQuickCommandsStorageKey(terminalKey);
-    let loaded: QuickCommand[] = [];
-    try {
-      loaded = parseQuickCommands(localStorage.getItem(storageKey));
-    } catch {
-      loaded = [];
-    }
-    setQuickCommands(loaded);
-    setQuickDrafts(loaded);
-    setShowQuickEditor(false);
-  }, [terminalKey]);
+    let cancelled = false;
+    void getQuickCommands(device.id).then((loaded) => {
+      if (cancelled) return;
+      const normalized = normalizeQuickCommands(loaded);
+      setQuickCommands(normalized);
+      setQuickDrafts(normalized);
+      setShowQuickEditor(false);
+    });
+    return () => { cancelled = true; };
+  }, [device.id]);
 
-  const persistQuickCommands = useCallback((commands: QuickCommand[]) => {
-    const storageKey = buildQuickCommandsStorageKey(terminalKey);
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(commands));
-    } catch {
-      toastRef.current.error("Could not save quick commands");
-    }
-    setQuickCommands(commands);
-  }, [terminalKey]);
+  const persistQuickCommands = useCallback(
+    async (commands: QuickCommand[]) => {
+      try {
+        await saveQuickCommands(device.id, commands);
+        setQuickCommands(commands);
+      } catch {
+        toastRef.current.error("Could not save quick commands");
+      }
+    },
+    [device.id],
+  );
 
   const addQuickDraft = () => {
     setQuickDrafts((prev) => {

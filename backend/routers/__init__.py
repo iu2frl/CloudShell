@@ -6,6 +6,7 @@ from backend.routers.devices import router as devices_router
 from backend.routers.folders import router as folders_router
 from backend.routers.ftp import router as ftp_router
 from backend.routers.keys import router as keys_router
+from backend.routers.quick_commands import router as quick_commands_router
 from backend.routers.sftp import router as sftp_router
 from backend.routers.terminal import router as terminal_router
 
@@ -18,6 +19,7 @@ __all__ = [
     "folders_router",
     "ftp_router",
     "keys_router",
+    "quick_commands_router",
     "sftp_router",
     "terminal_router",
 ]
