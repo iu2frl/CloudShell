@@ -2,7 +2,7 @@
  * Vitest global setup — imported before every test file.
  * Extends expect() with @testing-library/jest-dom matchers.
  */
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 
 /**
  * React (in development mode) re-throws component render errors through
